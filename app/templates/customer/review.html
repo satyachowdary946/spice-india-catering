@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Review quote request · {{ business.company_name or 'Catering' }}{% endblock %}
+{% block body %}
+<main class="section" data-review-root>
+  <div class="container" style="max-width:820px">
+    <div class="stepbar"><span>Event</span><span>›</span><span>Menu</span><span>›</span><span class="current">Review</span></div>
+    <div class="admin-title" style="margin-top:16px"><div><div class="eyebrow">Final check</div><h1 style="font-size:2.25rem">Review before sending</h1><p class="lead">No price is charged here. This sends your selection to the catering team for a quote.</p></div></div>
+    <section class="card"><div class="admin-title"><h2 style="font-size:1.25rem">Event details</h2><a class="btn secondary small" href="/order?next=/review">Edit</a></div><div data-review-details></div></section>
+    <section class="card" style="margin-top:14px"><div class="admin-title"><h2 style="font-size:1.25rem">Selected menu</h2><a class="btn secondary small" href="/menu">Edit menu</a></div><div data-review-items></div></section>
+    <section class="card" style="margin-top:14px"><div class="admin-title"><div><h2 style="font-size:1.25rem">Requested extra dishes</h2><p class="muted">The catering team will confirm whether each requested dish can be prepared.</p></div><a class="btn secondary small" href="/menu">Edit requests</a></div><div data-review-requests></div></section>
+    <section class="card" style="margin-top:14px">
+      <h2 style="font-size:1.25rem">Notes or special requests</h2>
+      <p class="muted">Add anything else the catering team should know before preparing your quote.</p>
+      <div class="field" style="margin-top:10px"><label for="customer-notes">Comments / notes</label><textarea id="customer-notes" data-customer-notes maxlength="2000" placeholder="Allergies, serving notes, timing, access details, or other requests"></textarea><div class="help">Maximum 2,000 characters.</div></div>
+    </section>
+    <div class="notice error" data-submit-error hidden style="margin-top:14px"></div>
+    <button class="btn block" data-submit-quote style="margin-top:14px">Send quote request</button>
+    <button class="btn ghost block" type="button" data-clear-draft style="margin-top:6px">Cancel and clear draft</button>
+  </div>
+</main>
+{% endblock %}

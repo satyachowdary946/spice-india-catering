@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Catering menu · {{ business.company_name or 'Catering' }}{% endblock %}
+{% block body %}
+<main class="menu-shell" data-menu-root>
+  <div class="filter-block">
+    <div class="container">
+      <div class="stepbar" style="padding:0 0 8px"><span>Event</span><span>›</span><span class="current">Menu</span><span>›</span><span>Review</span></div>
+      <div class="segment" role="group" aria-label="Cuisine">
+        {% for menu in menus %}<button type="button" data-menu-choice="{{ menu.id }}">{{ menu.name }}</button>{% endfor %}
+      </div>
+      <div class="segment three" role="group" aria-label="Dietary menu">
+        <button type="button" data-diet-choice="veg">Veg only</button>
+        <button type="button" data-diet-choice="nonveg">Non veg</button>
+        <button type="button" data-diet-choice="combo">Veg & non veg</button>
+      </div>
+      <div class="category-tabs" data-category-tabs aria-label="Menu categories"></div>
+    </div>
+  </div>
+  <div class="container">
+    <section class="special-request-banner" aria-labelledby="special-request-title">
+      <div>
+        <div class="eyebrow">Something missing?</div>
+        <h2 id="special-request-title">Want a dish that is not on the menu?</h2>
+        <p>Ask us for extra dishes. Add the names here and the catering team will confirm what can be prepared.</p>
+      </div>
+      <button class="btn secondary small" type="button" data-open-request-dialog>Request a dish <span data-request-count></span></button>
+    </section>
+    <div data-menu-content></div>
+  </div>
+  <dialog class="request-dialog" data-request-dialog aria-labelledby="request-dialog-title">
+    <form method="dialog" class="request-dialog-card">
+      <div class="admin-title">
+        <div><div class="eyebrow">Special request</div><h2 id="request-dialog-title">Request dishes not listed</h2></div>
+        <button class="icon-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <p class="muted">Enter one dish per line. These are requests only; the owner will approve or reject each one before the order is final.</p>
+      <div class="field" style="margin-top:12px">
+        <label for="requested-dishes-input">Dish names</label>
+        <textarea id="requested-dishes-input" data-request-input maxlength="3800" placeholder="Example:
+Paneer 65
+Special chicken curry"></textarea>
+        <div class="help">Maximum 20 requested dishes.</div>
+      </div>
+      <div class="request-dialog-actions">
+        <button class="btn secondary" value="cancel">Cancel</button>
+        <button class="btn" type="button" data-save-requests>Save requests</button>
+      </div>
+    </form>
+  </dialog>
+  <div class="basket-bar">
+    <div class="basket-inner">
+      <div><div class="basket-count" data-basket-count>0 items selected</div><div class="basket-sub">Saved automatically on this device</div></div>
+      <a class="btn" href="/review">Review basket</a>
+    </div>
+  </div>
+  <script id="menu-data" type="application/json">{{ menu_data | tojson }}</script>
+</main>
+{% endblock %}

@@ -1,0 +1,903 @@
+from __future__ import annotations
+
+import io
+import json
+import os
+import re
+import secrets
+from datetime import date, datetime, time
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from reportlab.lib.pagesizes import A5
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib import colors
+from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy.orm import Session, selectinload
+from starlette.middleware.sessions import SessionMiddleware
+
+from .auth import ensure_csrf, hash_password, valid_csrf, verify_password
+from .db import Base, SessionLocal, engine, get_db
+from .models import (
+    Admin,
+    BusinessSettings,
+    Category,
+    Customer,
+    Menu,
+    MenuItem,
+    QuoteItem,
+    QuoteRequest,
+    RequestedDish,
+    StatusHistory,
+    Subcategory,
+)
+from .notifications import notify_admin_new_quote, whatsapp_cloud_configured
+from .seed import ensure_seed_data
+
+BASE_DIR = Path(__file__).resolve().parent
+app = FastAPI(title="Catering Quote Portal", version="1.0.0")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(32)),
+    same_site="lax",
+    https_only=os.getenv("COOKIE_SECURE", "0") == "1",
+    max_age=60 * 60 * 12,
+)
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+ALLOWED_STATUSES = ["new", "contacted", "negotiating", "quoted", "confirmed", "completed", "cancelled"]
+DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non Veg"}
+REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
+
+
+def ensure_schema_compatibility() -> None:
+    """Small additive migrations so an existing local/hosted database stays usable."""
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    if "quote_requests" in tables:
+        columns = {c["name"] for c in inspector.get_columns("quote_requests")}
+        if "customer_notes" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_requests ADD COLUMN customer_notes TEXT DEFAULT ''"))
+
+    if "business_settings" in tables:
+        columns = {c["name"] for c in inspector.get_columns("business_settings")}
+        additions = {
+            "branch_label": "VARCHAR(120) DEFAULT 'Athlone Branch'",
+            "announcement_enabled": "BOOLEAN DEFAULT TRUE",
+            "announcement_title": "VARCHAR(120) DEFAULT 'New site'",
+            "announcement_text": "TEXT DEFAULT 'Catering all over Ireland from the heart of Ireland (Athlone Branch)'",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE business_settings ADD COLUMN {name} {ddl}"))
+
+
+@app.on_event("startup")
+def startup() -> None:
+    Base.metadata.create_all(bind=engine)
+    ensure_schema_compatibility()
+    with SessionLocal() as db:
+        ensure_seed_data(db)
+
+
+def business(db: Session) -> BusinessSettings:
+    obj = db.get(BusinessSettings, 1)
+    if not obj:
+        obj = BusinessSettings(id=1)
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+    return obj
+
+
+def render(request: Request, db: Session, template: str, **context: Any):
+    context.update({
+        "request": request,
+        "business": business(db),
+        "admin_logged_in": bool(request.session.get("admin_id")),
+        "csrf_token": ensure_csrf(request.session),
+        "status_labels": {s: s.replace("_", " ").title() for s in ALLOWED_STATUSES},
+    })
+    return templates.TemplateResponse(template, context)
+
+
+def slugify(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+    return value or secrets.token_hex(3)
+
+
+def require_admin(request: Request, db: Session) -> Admin:
+    admin_id = request.session.get("admin_id")
+    if not admin_id:
+        raise HTTPException(status_code=401, detail="Admin login required")
+    admin = db.get(Admin, int(admin_id))
+    if not admin:
+        request.session.clear()
+        raise HTTPException(status_code=401, detail="Admin login required")
+    return admin
+
+
+def admin_or_redirect(request: Request, db: Session):
+    try:
+        return require_admin(request, db), None
+    except HTTPException:
+        return None, RedirectResponse("/admin/login", status_code=303)
+
+
+def check_csrf(request: Request, token: str | None) -> None:
+    if not valid_csrf(request.session, token):
+        raise HTTPException(status_code=400, detail="Invalid form token. Refresh and try again.")
+
+
+def parse_int(value: Any, field: str, minimum: int = 0) -> int:
+    try:
+        result = int(value)
+    except Exception:
+        raise ValueError(f"{field} must be a whole number.")
+    if result < minimum:
+        raise ValueError(f"{field} must be at least {minimum}.")
+    return result
+
+
+def clean_phone(value: str) -> str:
+    return re.sub(r"[^0-9+]", "", (value or "").strip())
+
+
+def order_groups(order: QuoteRequest):
+    groups: dict[str, dict[str, dict[str, list[QuoteItem]]]] = {}
+    for item in order.items:
+        groups.setdefault(item.menu_name, {}).setdefault(item.category_name, {}).setdefault(item.subcategory_name, []).append(item)
+    return groups
+
+
+def public_order_url(request: Request, token: str) -> str:
+    return str(request.base_url).rstrip("/") + f"/orders/{token}"
+
+
+def admin_order_url(request: Request, order_id: int) -> str:
+    return str(request.base_url).rstrip("/") + f"/admin/orders/{order_id}"
+
+
+@app.exception_handler(401)
+async def unauthorized_handler(request: Request, exc: HTTPException):
+    if request.url.path.startswith("/admin"):
+        return RedirectResponse("/admin/login", status_code=303)
+    return JSONResponse({"detail": exc.detail}, status_code=401)
+
+
+# ---------- Public/customer ----------
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request, db: Session = Depends(get_db)):
+    return render(request, db, "customer/home.html")
+
+
+@app.get("/order", response_class=HTMLResponse)
+def order_details(request: Request, next: str = "/menu", db: Session = Depends(get_db)):
+    if not next.startswith("/"):
+        next = "/menu"
+    return render(request, db, "customer/details.html", next_url=next)
+
+
+@app.get("/menu", response_class=HTMLResponse)
+def public_menu(request: Request, db: Session = Depends(get_db)):
+    menus = db.scalars(
+        select(Menu)
+        .where(Menu.active.is_(True))
+        .options(selectinload(Menu.categories).selectinload(Category.subcategories).selectinload(Subcategory.items))
+        .order_by(Menu.sort_order, Menu.name)
+    ).all()
+    menu_data = []
+    for m in menus:
+        categories = []
+        for c in sorted([c for c in m.categories if c.active], key=lambda x: (x.sort_order, x.name)):
+            subs = []
+            for s in sorted([s for s in c.subcategories if s.active], key=lambda x: (x.sort_order, x.name)):
+                items = [
+                    {"id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary, "sort_order": i.sort_order}
+                    for i in sorted([i for i in s.items if i.active], key=lambda x: (x.sort_order, x.name))
+                ]
+                subs.append({"id": s.id, "name": s.name, "items": items, "sort_order": s.sort_order})
+            categories.append({"id": c.id, "name": c.name, "subcategories": subs, "sort_order": c.sort_order})
+        menu_data.append({"id": m.id, "name": m.name, "slug": m.slug, "categories": categories, "sort_order": m.sort_order})
+    return render(request, db, "customer/menu.html", menu_data=menu_data, menus=menus)
+
+
+@app.get("/api/menu-items")
+def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
+    try:
+        item_ids = [int(x) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        return JSONResponse([], status_code=400)
+    if not item_ids:
+        return []
+    items = db.scalars(
+        select(MenuItem)
+        .where(MenuItem.id.in_(item_ids))
+        .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu))
+    ).all()
+    by_id = {i.id: i for i in items}
+    result = []
+    for item_id in item_ids:
+        i = by_id.get(item_id)
+        if not i:
+            continue
+        s = i.subcategory; c = s.category; m = c.menu
+        result.append({
+            "id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary,
+            "menu": m.name, "category": c.name, "subcategory": s.name
+        })
+    return result
+
+
+@app.get("/review", response_class=HTMLResponse)
+def review(request: Request, db: Session = Depends(get_db)):
+    return render(request, db, "customer/review.html")
+
+
+@app.post("/api/quotes")
+async def create_quote(request: Request, db: Session = Depends(get_db)):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid request data."}, status_code=400)
+
+    details = payload.get("details") or {}
+    item_ids = payload.get("item_ids") or []
+    raw_requested_dishes = payload.get("requested_dishes") or []
+    customer_notes = str(payload.get("customer_notes") or "").strip()
+    errors: dict[str, str] = {}
+
+    requested_dishes: list[str] = []
+    seen_requested: set[str] = set()
+    if isinstance(raw_requested_dishes, list):
+        for raw in raw_requested_dishes:
+            dish = re.sub(r"\s+", " ", str(raw or "")).strip()
+            if not dish:
+                continue
+            if len(dish) > 180:
+                errors["requested_dishes"] = "Each requested dish must be 180 characters or less."
+                break
+            key = dish.casefold()
+            if key not in seen_requested:
+                seen_requested.add(key)
+                requested_dishes.append(dish)
+    if len(requested_dishes) > 20:
+        errors["requested_dishes"] = "Please request no more than 20 extra dishes in one quote."
+    if len(customer_notes) > 2000:
+        errors["customer_notes"] = "Notes must be 2,000 characters or less."
+
+    name = str(details.get("name", "")).strip()
+    phone = clean_phone(str(details.get("phone", "")))
+    whatsapp = clean_phone(str(details.get("whatsapp", "")))
+    event_name = str(details.get("event_name", "")).strip()
+    address = str(details.get("address", "")).strip()
+    eircode = str(details.get("eircode", "")).strip().upper()
+
+    if len(name) < 2: errors["name"] = "Enter the customer's name."
+    if len(phone) < 7: errors["phone"] = "Enter a valid phone number."
+    if len(whatsapp) < 7: errors["whatsapp"] = "Enter a valid WhatsApp number."
+    if not event_name: errors["event_name"] = "Enter the event name."
+    if not address: errors["address"] = "Enter the event address."
+    if not eircode: errors["eircode"] = "Enter the Eircode."
+
+    try:
+        event_date = date.fromisoformat(str(details.get("event_date", "")))
+        if event_date < date.today(): errors["event_date"] = "Event date cannot be in the past."
+    except Exception:
+        event_date = date.today()
+        errors["event_date"] = "Choose a valid event date."
+    try:
+        event_time = time.fromisoformat(str(details.get("event_time", "")))
+    except Exception:
+        event_time = time(12, 0)
+        errors["event_time"] = "Choose a valid event time."
+    try:
+        adults = parse_int(details.get("adults", 0), "Adults", 0)
+        kids = parse_int(details.get("kids", 0), "Kids", 0)
+        if adults + kids < 1:
+            errors["guests"] = "Enter at least one guest."
+    except ValueError as exc:
+        adults, kids = 0, 0
+        errors["guests"] = str(exc)
+
+    try:
+        unique_ids = list(dict.fromkeys(int(i) for i in item_ids))
+    except Exception:
+        unique_ids = []
+    if not unique_ids and not requested_dishes:
+        errors["items"] = "Add at least one menu item or request an extra dish."
+
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors, "error": "Please fix the highlighted details."}, status_code=422)
+
+    items = db.scalars(
+        select(MenuItem)
+        .where(MenuItem.id.in_(unique_ids), MenuItem.active.is_(True))
+        .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu))
+    ).all()
+    if len(items) != len(unique_ids):
+        return JSONResponse({"ok": False, "error": "One or more menu items are no longer available. Refresh the menu and review your basket."}, status_code=409)
+
+    customer = db.scalar(select(Customer).where(Customer.phone == phone).order_by(Customer.id.asc()).limit(1))
+    if not customer:
+        customer = Customer(customer_number=f"TMP-{secrets.token_hex(8)}", name=name, phone=phone, whatsapp=whatsapp)
+        db.add(customer)
+        db.flush()
+        customer.customer_number = f"CUS-{customer.id:05d}"
+    else:
+        customer.name = name
+        customer.whatsapp = whatsapp
+
+    order = QuoteRequest(
+        order_number=f"TMP-{secrets.token_hex(8)}",
+        public_token=secrets.token_urlsafe(24),
+        customer_id=customer.id,
+        event_name=event_name,
+        event_date=event_date,
+        event_time=event_time,
+        adults=adults,
+        kids=kids,
+        address=address,
+        eircode=eircode,
+        status="new",
+        customer_notes=customer_notes,
+    )
+    db.add(order)
+    db.flush()
+    order.order_number = f"CAT-{datetime.utcnow().year}-{order.id:05d}"
+
+    item_by_id = {i.id: i for i in items}
+    for sort_index, item_id in enumerate(unique_ids):
+        item = item_by_id[item_id]
+        sub = item.subcategory
+        cat = sub.category
+        menu = cat.menu
+        db.add(QuoteItem(
+            order_id=order.id,
+            item_id=item.id,
+            item_name=item.name,
+            menu_name=menu.name,
+            category_name=cat.name,
+            subcategory_name=sub.name,
+            dietary=item.dietary,
+            sort_order=sort_index,
+        ))
+    for dish_name in requested_dishes:
+        db.add(RequestedDish(order_id=order.id, name=dish_name, status="pending"))
+    db.add(StatusHistory(order_id=order.id, status="new", note="Quote request submitted by customer."))
+    db.commit()
+    db.refresh(order)
+
+    sent, notify_message = await notify_admin_new_quote(
+        order.order_number,
+        customer.name,
+        adults + kids,
+        admin_order_url(request, order.id),
+    )
+    return {"ok": True, "order_number": order.order_number, "token": order.public_token, "notification_sent": sent, "notification_message": notify_message}
+
+
+@app.get("/orders/{token}", response_class=HTMLResponse)
+def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.public_token == token)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes))
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return render(
+        request,
+        db,
+        "customer/order_status.html",
+        order=order,
+        groups=order_groups(order),
+        public_url=public_order_url(request, token),
+    )
+
+
+@app.post("/orders/{token}/cancel")
+def customer_cancel(token: str, request: Request, db: Session = Depends(get_db)):
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.public_token == token))
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status in {"completed", "cancelled"}:
+        return RedirectResponse(f"/orders/{token}", status_code=303)
+    order.status = "cancelled"
+    db.add(StatusHistory(order_id=order.id, status="cancelled", note="Cancelled from customer order page."))
+    db.commit()
+    return RedirectResponse(f"/orders/{token}?cancelled=1", status_code=303)
+
+
+# ---------- Admin auth ----------
+@app.get("/admin/setup", response_class=HTMLResponse)
+def admin_setup(request: Request, db: Session = Depends(get_db)):
+    if db.scalar(select(func.count(Admin.id))) > 0:
+        return RedirectResponse("/admin/login", status_code=303)
+    return render(request, db, "admin/setup.html")
+
+
+@app.post("/admin/setup")
+def admin_setup_post(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    check_csrf(request, csrf_token)
+    if db.scalar(select(func.count(Admin.id))) > 0:
+        return RedirectResponse("/admin/login", status_code=303)
+    email = email.strip().lower()
+    if "@" not in email:
+        return render(request, db, "admin/setup.html", error="Enter a valid email address.")
+    if password != confirm_password:
+        return render(request, db, "admin/setup.html", error="Passwords do not match.")
+    try:
+        password_hash = hash_password(password)
+    except ValueError as exc:
+        return render(request, db, "admin/setup.html", error=str(exc))
+    admin = Admin(email=email, password_hash=password_hash)
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    request.session["admin_id"] = admin.id
+    return RedirectResponse("/admin", status_code=303)
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login(request: Request, db: Session = Depends(get_db)):
+    if db.scalar(select(func.count(Admin.id))) == 0:
+        return RedirectResponse("/admin/setup", status_code=303)
+    if request.session.get("admin_id"):
+        return RedirectResponse("/admin", status_code=303)
+    return render(request, db, "admin/login.html")
+
+
+@app.post("/admin/login")
+def admin_login_post(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    check_csrf(request, csrf_token)
+    admin = db.scalar(select(Admin).where(Admin.email == email.strip().lower()))
+    if not admin or not verify_password(password, admin.password_hash):
+        return render(request, db, "admin/login.html", error="Email or password is incorrect.")
+    request.session["admin_id"] = admin.id
+    return RedirectResponse("/admin", status_code=303)
+
+
+@app.post("/admin/logout")
+def admin_logout(request: Request, csrf_token: str = Form(...)):
+    check_csrf(request, csrf_token)
+    request.session.clear()
+    return RedirectResponse("/admin/login", status_code=303)
+
+
+# ---------- Admin dashboard ----------
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    status_counts = dict(db.execute(select(QuoteRequest.status, func.count(QuoteRequest.id)).group_by(QuoteRequest.status)).all())
+    upcoming = db.scalar(select(func.count(QuoteRequest.id)).where(QuoteRequest.event_date >= date.today(), QuoteRequest.status.not_in(["cancelled", "completed"]))) or 0
+    recent = db.scalars(
+        select(QuoteRequest)
+        .options(selectinload(QuoteRequest.customer))
+        .order_by(QuoteRequest.created_at.desc())
+        .limit(8)
+    ).all()
+    return render(
+        request, db, "admin/dashboard.html", admin=admin, status_counts=status_counts,
+        upcoming=upcoming, recent=recent, whatsapp_configured=whatsapp_cloud_configured()
+    )
+
+
+@app.get("/admin/settings", response_class=HTMLResponse)
+def admin_settings(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    return render(request, db, "admin/settings.html", admin=admin)
+
+
+@app.post("/admin/settings")
+async def admin_settings_post(
+    request: Request,
+    company_name: str = Form(""), owner_name: str = Form(""), phone: str = Form(""), whatsapp: str = Form(""),
+    email: str = Form(""), address: str = Form(""), eircode: str = Form(""), footer_note: str = Form(""),
+    branch_label: str = Form("Athlone Branch"), announcement_enabled: bool = Form(False),
+    announcement_title: str = Form(""), announcement_text: str = Form(""),
+    csrf_token: str = Form(...), logo: UploadFile | None = File(None),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    obj = business(db)
+    obj.company_name = company_name.strip()
+    obj.owner_name = owner_name.strip()
+    obj.phone = phone.strip()
+    obj.whatsapp = whatsapp.strip()
+    obj.email = email.strip()
+    obj.address = address.strip()
+    obj.eircode = eircode.strip().upper()
+    obj.footer_note = footer_note.strip()
+    obj.branch_label = branch_label.strip() or "Athlone Branch"
+    obj.announcement_enabled = bool(announcement_enabled)
+    obj.announcement_title = announcement_title.strip()
+    obj.announcement_text = announcement_text.strip()
+    if logo and logo.filename:
+        allowed = {"image/png", "image/jpeg", "image/webp"}
+        if logo.content_type not in allowed:
+            return render(request, db, "admin/settings.html", admin=admin, error="Logo must be PNG, JPEG or WebP.")
+        data = await logo.read()
+        if len(data) > 2 * 1024 * 1024:
+            return render(request, db, "admin/settings.html", admin=admin, error="Logo must be smaller than 2 MB.")
+        obj.logo_blob = data
+        obj.logo_content_type = logo.content_type
+    db.commit()
+    return RedirectResponse("/admin/settings?saved=1", status_code=303)
+
+
+@app.get("/business-logo")
+def business_logo(db: Session = Depends(get_db)):
+    obj = business(db)
+    if not obj.logo_blob:
+        raise HTTPException(status_code=404)
+    return Response(content=obj.logo_blob, media_type=obj.logo_content_type or "image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/admin/share", response_class=HTMLResponse)
+def admin_share(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    base = str(request.base_url).rstrip("/")
+    return render(request, db, "admin/share.html", admin=admin, order_link=f"{base}/order", menu_link=f"{base}/menu")
+
+
+# ---------- Menu management ----------
+@app.get("/admin/menus", response_class=HTMLResponse)
+def admin_menus(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    menus = db.scalars(select(Menu).options(selectinload(Menu.categories)).order_by(Menu.sort_order, Menu.name)).all()
+    return render(request, db, "admin/menus.html", admin=admin, menus=menus)
+
+
+@app.post("/admin/menus")
+def admin_menu_create(
+    request: Request,
+    name: str = Form(...), sort_order: int = Form(0), csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    name = name.strip()
+    if not name:
+        return RedirectResponse("/admin/menus?error=Menu+name+is+required", status_code=303)
+    slug = slugify(name)
+    base = slug
+    n = 2
+    while db.scalar(select(Menu.id).where(Menu.slug == slug)):
+        slug = f"{base}-{n}"; n += 1
+    menu = Menu(name=name, slug=slug, sort_order=sort_order)
+    db.add(menu); db.commit(); db.refresh(menu)
+    return RedirectResponse(f"/admin/menus/{menu.id}", status_code=303)
+
+
+@app.get("/admin/menus/{menu_id}", response_class=HTMLResponse)
+def admin_menu_detail(menu_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    menu = db.scalar(
+        select(Menu).where(Menu.id == menu_id)
+        .options(selectinload(Menu.categories).selectinload(Category.subcategories).selectinload(Subcategory.items))
+    )
+    if not menu: raise HTTPException(status_code=404)
+    return render(request, db, "admin/menu_detail.html", admin=admin, menu=menu)
+
+
+@app.post("/admin/menus/{menu_id}/edit")
+def admin_menu_edit(
+    menu_id: int, request: Request, name: str = Form(...), sort_order: int = Form(0), active: str | None = Form(None), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    menu = db.get(Menu, menu_id)
+    if not menu: raise HTTPException(status_code=404)
+    menu.name = name.strip() or menu.name
+    menu.sort_order = sort_order
+    menu.active = active == "on"
+    db.commit()
+    return RedirectResponse(f"/admin/menus/{menu_id}?saved=1", status_code=303)
+
+
+@app.post("/admin/menus/{menu_id}/category")
+def admin_category_create(
+    menu_id: int, request: Request, name: str = Form(...), sort_order: int = Form(0), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    if not db.get(Menu, menu_id): raise HTTPException(status_code=404)
+    db.add(Category(menu_id=menu_id, name=name.strip(), sort_order=sort_order)); db.commit()
+    return RedirectResponse(f"/admin/menus/{menu_id}", status_code=303)
+
+
+@app.post("/admin/categories/{category_id}/edit")
+def admin_category_edit(
+    category_id: int, request: Request, name: str = Form(...), sort_order: int = Form(0), active: str | None = Form(None), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    cat = db.get(Category, category_id)
+    if not cat: raise HTTPException(status_code=404)
+    cat.name = name.strip() or cat.name; cat.sort_order = sort_order; cat.active = active == "on"
+    menu_id = cat.menu_id; db.commit()
+    return RedirectResponse(f"/admin/menus/{menu_id}", status_code=303)
+
+
+@app.post("/admin/categories/{category_id}/subcategory")
+def admin_subcategory_create(
+    category_id: int, request: Request, name: str = Form(...), sort_order: int = Form(0), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    cat = db.get(Category, category_id)
+    if not cat: raise HTTPException(status_code=404)
+    db.add(Subcategory(category_id=category_id, name=name.strip(), sort_order=sort_order)); db.commit()
+    return RedirectResponse(f"/admin/menus/{cat.menu_id}", status_code=303)
+
+
+@app.post("/admin/subcategories/{sub_id}/edit")
+def admin_subcategory_edit(
+    sub_id: int, request: Request, name: str = Form(...), sort_order: int = Form(0), active: str | None = Form(None), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    sub = db.scalar(select(Subcategory).where(Subcategory.id == sub_id).options(selectinload(Subcategory.category)))
+    if not sub: raise HTTPException(status_code=404)
+    sub.name = name.strip() or sub.name; sub.sort_order = sort_order; sub.active = active == "on"
+    menu_id = sub.category.menu_id; db.commit()
+    return RedirectResponse(f"/admin/menus/{menu_id}", status_code=303)
+
+
+@app.post("/admin/subcategories/{sub_id}/item")
+def admin_item_create(
+    sub_id: int, request: Request, name: str = Form(...), description: str = Form(""), dietary: str = Form("veg"), sort_order: int = Form(0), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    sub = db.scalar(select(Subcategory).where(Subcategory.id == sub_id).options(selectinload(Subcategory.category)))
+    if not sub: raise HTTPException(status_code=404)
+    if dietary not in {"veg", "nonveg"}: dietary = "veg"
+    db.add(MenuItem(subcategory_id=sub_id, name=name.strip(), description=description.strip(), dietary=dietary, sort_order=sort_order)); db.commit()
+    return RedirectResponse(f"/admin/menus/{sub.category.menu_id}", status_code=303)
+
+
+@app.post("/admin/items/{item_id}/edit")
+def admin_item_edit(
+    item_id: int, request: Request, name: str = Form(...), description: str = Form(""), dietary: str = Form("veg"), sort_order: int = Form(0), active: str | None = Form(None), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    item = db.scalar(select(MenuItem).where(MenuItem.id == item_id).options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category)))
+    if not item: raise HTTPException(status_code=404)
+    item.name = name.strip() or item.name; item.description = description.strip(); item.dietary = dietary if dietary in {"veg", "nonveg"} else "veg"; item.sort_order = sort_order; item.active = active == "on"
+    menu_id = item.subcategory.category.menu_id; db.commit()
+    return RedirectResponse(f"/admin/menus/{menu_id}", status_code=303)
+
+
+# ---------- Orders/customers ----------
+@app.get("/admin/orders", response_class=HTMLResponse)
+def admin_orders(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    stmt = select(QuoteRequest).options(selectinload(QuoteRequest.customer)).order_by(QuoteRequest.created_at.desc())
+    if status in ALLOWED_STATUSES:
+        stmt = stmt.where(QuoteRequest.status == status)
+    if q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.join(Customer).where(or_(QuoteRequest.order_number.ilike(like), Customer.customer_number.ilike(like), Customer.name.ilike(like), Customer.phone.ilike(like), QuoteRequest.event_name.ilike(like)))
+    orders = db.scalars(stmt).all()
+    return render(request, db, "admin/orders.html", admin=admin, orders=orders, q=q, selected_status=status, statuses=ALLOWED_STATUSES)
+
+
+@app.get("/admin/orders/{order_id}", response_class=HTMLResponse)
+def admin_order_detail(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    order = db.scalar(
+        select(QuoteRequest).where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes))
+    )
+    if not order: raise HTTPException(status_code=404)
+    purl = public_order_url(request, order.public_token)
+    share_text = f"Catering order {order.order_number}: {purl}"
+    wa_url = "https://wa.me/?text=" + quote(share_text)
+    return render(request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order), statuses=ALLOWED_STATUSES, public_url=purl, whatsapp_share_url=wa_url)
+
+
+@app.post("/admin/orders/{order_id}")
+def admin_order_update(
+    order_id: int, request: Request, status: str = Form(...), final_price: str = Form(""), admin_notes: str = Form(""), customer_message: str = Form(""), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order: raise HTTPException(status_code=404)
+    if status not in ALLOWED_STATUSES:
+        status = order.status
+    old_status = order.status
+    order.status = status
+    order.admin_notes = admin_notes.strip()
+    order.customer_message = customer_message.strip()
+    if final_price.strip():
+        try:
+            amount = Decimal(final_price.strip())
+            if amount < 0: raise InvalidOperation
+            order.final_price = amount.quantize(Decimal("0.01"))
+        except Exception:
+            return RedirectResponse(f"/admin/orders/{order_id}?error=Invalid+price", status_code=303)
+    else:
+        order.final_price = None
+    if status == "confirmed" and not order.confirmed_at:
+        order.confirmed_at = datetime.utcnow()
+    if old_status != status:
+        db.add(StatusHistory(order_id=order.id, status=status, note=f"Status changed by admin from {old_status} to {status}."))
+    db.commit()
+    return RedirectResponse(f"/admin/orders/{order_id}?saved=1", status_code=303)
+
+
+@app.post("/admin/requested-dishes/{dish_id}")
+def admin_requested_dish_update(
+    dish_id: int, request: Request, status: str = Form(...), admin_response: str = Form(""), csrf_token: str = Form(...), db: Session = Depends(get_db)
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    dish = db.get(RequestedDish, dish_id)
+    if not dish:
+        raise HTTPException(status_code=404)
+    if status not in REQUESTED_DISH_STATUSES:
+        status = dish.status
+    old_status = dish.status
+    dish.status = status
+    dish.admin_response = admin_response.strip()[:1000]
+    if old_status != status:
+        db.add(StatusHistory(order_id=dish.order_id, status=db.get(QuoteRequest, dish.order_id).status, note=f'Requested dish "{dish.name}" marked {status} by admin.'))
+    db.commit()
+    return RedirectResponse(f"/admin/orders/{dish.order_id}?saved=1#requested-dishes", status_code=303)
+
+
+@app.get("/admin/orders/{order_id}/print", response_class=HTMLResponse)
+def admin_order_print(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id).options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes)))
+    if not order: raise HTTPException(status_code=404)
+    approved_requests = [d for d in order.requested_dishes if d.status == "approved"]
+    return render(request, db, "admin/order_print.html", admin=admin, order=order, groups=order_groups(order), approved_requests=approved_requests)
+
+
+def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=22, leftMargin=22, topMargin=22, bottomMargin=22)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("TitleCustom", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, alignment=TA_CENTER, textColor=colors.HexColor("#111111"), spaceAfter=12)
+    h2 = ParagraphStyle("H2Custom", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=colors.white, backColor=colors.HexColor("#333333"), borderPadding=6, spaceBefore=10, spaceAfter=6)
+    h3 = ParagraphStyle("H3Custom", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10, leading=13, textColor=colors.HexColor("#444444"), spaceBefore=6, spaceAfter=4)
+    item_style = ParagraphStyle("ItemCustom", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10, leading=14, leftIndent=8, spaceAfter=3)
+    body = styles["BodyText"]
+
+    story = []
+    name = biz.company_name.strip() or "Catering Order"
+    story.append(Paragraph(name, title))
+    story.append(Paragraph(f"<b>Order:</b> {order.order_number} &nbsp;&nbsp; <b>Status:</b> {order.status.title()}", body))
+    story.append(Spacer(1, 8))
+    details = [
+        ["Customer", order.customer.name], ["Customer No.", order.customer.customer_number],
+        ["Phone", order.customer.phone], ["WhatsApp", order.customer.whatsapp],
+        ["Event", order.event_name], ["Date", order.event_date.strftime("%d %b %Y")],
+        ["Day", order.event_date.strftime("%A")], ["Time", order.event_time.strftime("%H:%M")],
+        ["Adults", str(order.adults)], ["Kids", str(order.kids)],
+        ["Address", f"{order.address}, {order.eircode}"],
+    ]
+    if order.final_price is not None:
+        details.append(["Final price", f"€{order.final_price:.2f}"])
+    table = Table(details, colWidths=[76, 299])
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"), ("FONTNAME", (1,0), (1,-1), "Helvetica"),
+        ("FONTSIZE", (0,0), (-1,-1), 9), ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5), ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#DDDDDD")),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Selected menu", title))
+
+    for menu_name, categories in order_groups(order).items():
+        story.append(Paragraph(menu_name, h2))
+        for cat_name, subs in categories.items():
+            story.append(Paragraph(cat_name, h3))
+            for sub_name, items in subs.items():
+                if sub_name and sub_name != "Main Selection":
+                    story.append(Paragraph(sub_name, body))
+                for item in items:
+                    story.append(Paragraph(f"• {item.item_name}", item_style))
+    approved_requests = [d for d in order.requested_dishes if d.status == "approved"]
+    if approved_requests:
+        story.append(Paragraph("Approved special requests", h2))
+        for dish in approved_requests:
+            story.append(Paragraph(f"• {dish.name}", item_style))
+    comments = [x for x in [order.customer_notes, order.customer_message] if x]
+    if comments:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Comments / notes", h2))
+        for comment in comments:
+            story.append(Paragraph(comment, body))
+    doc.build(story)
+    return buffer.getvalue()
+
+
+@app.get("/admin/orders/{order_id}/pdf")
+def admin_order_pdf(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id).options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes)))
+    if not order: raise HTTPException(status_code=404)
+    pdf = build_order_pdf(order, business(db))
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{order.order_number}.pdf"'})
+
+
+@app.get("/admin/customers", response_class=HTMLResponse)
+def admin_customers(request: Request, q: str = "", db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    stmt = select(Customer).options(selectinload(Customer.orders)).order_by(Customer.updated_at.desc())
+    if q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(Customer.customer_number.ilike(like), Customer.name.ilike(like), Customer.phone.ilike(like), Customer.whatsapp.ilike(like)))
+    customers = db.scalars(stmt).all()
+    return render(request, db, "admin/customers.html", admin=admin, customers=customers, q=q)
+
+
+# ---------- SEO/system ----------
+@app.get("/robots.txt")
+def robots():
+    return Response("User-agent: *\nAllow: /\nDisallow: /admin/\n", media_type="text/plain")
+
+
+@app.get("/sitemap.xml")
+def sitemap(request: Request):
+    base = str(request.base_url).rstrip("/")
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>{base}/</loc></url>\n  <url><loc>{base}/menu</loc></url>\n  <url><loc>{base}/order</loc></url>\n</urlset>'''
+    return Response(xml, media_type="application/xml")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "app": "catering-quote-portal"}

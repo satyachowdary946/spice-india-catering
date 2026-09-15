@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+catering.db
+.pytest_cache/
+.DS_Store

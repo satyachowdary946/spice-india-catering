@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: catering-quote-portal
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: catering-db
+          property: connectionString
+
+databases:
+  - name: catering-db
+    # Small persistent paid database. Do not use Render Free Postgres for real orders because it expires after 30 days.
+    plan: 0.1c-256mb

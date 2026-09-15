@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{% block title %}Catering Ordering{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}Browse catering menus and request a tailored quote for your event.{% endblock %}">
+  <meta property="og:title" content="{% block og_title %}Catering Ordering{% endblock %}">
+  <meta property="og:description" content="Browse menus, choose dishes and send your event details for a catering quote.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#0d0f12">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header no-print">
+    <div class="container header-row">
+      <a class="brand" href="/" aria-label="Home">
+        {% if business.logo_blob %}<img class="brand-logo" src="/business-logo" alt="{{ business.company_name or 'Catering business' }} logo">{% else %}<span class="brand-mark" aria-hidden="true">C</span>{% endif %}
+        <span class="branch-label">{{ business.branch_label or 'Athlone Branch' }}</span>
+      </a>
+      <nav class="nav" aria-label="Primary navigation">
+        <a href="/menu">Menu</a>
+        <a href="/order" class="mobile-hide">Request quote</a>
+        {% if admin_logged_in %}<a href="/admin">Admin</a>{% endif %}
+      </nav>
+    </div>
+  </header>
+  {% if business.announcement_enabled and business.announcement_text %}
+  <aside class="site-announcement no-print" aria-label="Catering announcement">
+    <div class="container announcement-row">
+      {% if business.announcement_title %}<span class="announcement-label">{{ business.announcement_title }}</span>{% endif %}
+      <strong>{{ business.announcement_text }}</strong>
+    </div>
+  </aside>
+  {% endif %}
+  {% block body %}{% endblock %}
+  <footer class="footer no-print">
+    <div class="container">
+      <strong>{{ business.company_name or 'Catering Service' }}</strong>
+      {% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}
+      {% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}
+    </div>
+  </footer>
+  <script src="/static/js/customer.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

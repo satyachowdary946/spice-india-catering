@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{% block title %}Admin · Catering{% endblock %}</title>
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0d0f12">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="admin-body">
+  <header class="admin-header no-print">
+    <div class="container header-row">
+      <a class="brand" href="/admin"><span class="brand-mark" style="background:#fff;color:#111">A</span><span>{{ business.company_name or 'Catering Admin' }}</span></a>
+      <div class="admin-nav"><a class="btn small secondary" href="/" target="_blank">View site</a><form method="post" action="/admin/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn small" type="submit">Log out</button></form></div>
+    </div>
+  </header>
+  <div class="admin-shell">
+    <aside class="admin-sidebar no-print" aria-label="Admin navigation">
+      <a href="/admin" class="{% if request.url.path == '/admin' %}active{% endif %}">Dashboard</a>
+      <a href="/admin/orders" class="{% if request.url.path.startswith('/admin/orders') %}active{% endif %}">Orders & quotes</a>
+      <a href="/admin/customers" class="{% if request.url.path.startswith('/admin/customers') %}active{% endif %}">Customers</a>
+      <a href="/admin/menus" class="{% if request.url.path.startswith('/admin/menus') %}active{% endif %}">Menus</a>
+      <a href="/admin/share" class="{% if request.url.path.startswith('/admin/share') %}active{% endif %}">Share links</a>
+      <a href="/admin/settings" class="{% if request.url.path.startswith('/admin/settings') %}active{% endif %}">Business settings</a>
+    </aside>
+    <main class="admin-main"><div class="container">{% block body %}{% endblock %}</div></main>
+  </div>
+  <nav class="admin-bottom-nav no-print" aria-label="Admin mobile navigation">
+    <a href="/admin" class="{% if request.url.path == '/admin' %}active{% endif %}"><span>⌂</span>Home</a>
+    <a href="/admin/orders" class="{% if request.url.path.startswith('/admin/orders') %}active{% endif %}"><span>▤</span>Orders</a>
+    <a href="/admin/customers" class="{% if request.url.path.startswith('/admin/customers') %}active{% endif %}"><span>◉</span>Customers</a>
+    <a href="/admin/menus" class="{% if request.url.path.startswith('/admin/menus') %}active{% endif %}"><span>≡</span>Menus</a>
+    <a href="/admin/settings" class="{% if request.url.path.startswith('/admin/settings') %}active{% endif %}"><span>⚙</span>Settings</a>
+  </nav>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
