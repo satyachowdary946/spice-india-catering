@@ -40,7 +40,11 @@ from .models import (
     StatusHistory,
     Subcategory,
 )
-from .notifications import notify_admin_new_quote, whatsapp_cloud_configured
+from .notifications import (
+    notify_admin_new_quote,
+    notify_admin_new_quote_email,
+    whatsapp_cloud_configured,
+)
 from .seed import ensure_seed_data
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -412,9 +416,27 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         adults + kids,
         admin_order_url(request, order.id),
     )
-    return {"ok": True, "order_number": order.order_number, "token": order.public_token, "notification_sent": sent, "notification_message": notify_message}
+    email_sent, email_message = await notify_admin_new_quote_email(
+    order.order_number,
+    customer.name,
+    customer.phone,
+    order.event_name,
+    order.event_date.strftime("%d %b %Y"),
+    order.event_time.strftime("%H:%M"),
+    adults + kids,
+    admin_order_url(request, order.id),
+)
+    return {
+    "ok": True,
+    "order_number": order.order_number,
+    "token": order.public_token,
 
+    "notification_sent": sent,
+    "notification_message": notify_message,
 
+    "email_sent": email_sent,
+    "email_message": email_message,
+}
 @app.get("/orders/{token}", response_class=HTMLResponse)
 def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
     order = db.scalar(
