@@ -1,45 +1,916 @@
-{% extends "admin/admin_base.html" %}{% block title %}{{ menu.name }} · Menu Admin{% endblock %}{% block body %}
-<div class="admin-title"><div><div class="eyebrow">Menu builder</div><h1>{{ menu.name }}</h1><p class="muted">Edit the structure customers see. Dietary type is set per item; the customer can switch Veg, Non Veg or combined.</p></div><a class="btn secondary" href="/admin/menus">Back to menus</a></div>
-{% if request.query_params.get('saved') %}<div class="notice success">Menu saved.</div>{% endif %}
-{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error') }}</div>{% endif %}
-<form class="card compact" method="post" action="/admin/menus/{{ menu.id }}/edit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="admin-form-grid two"><div class="field"><label>Menu name</label><input name="name" value="{{ menu.name }}" required></div><div class="field"><label>Sort order</label><input name="sort_order" type="number" value="{{ menu.sort_order }}"></div></div><div class="checkbox-row visibility-control" style="margin-top:10px"><input id="menu-active" name="active" type="checkbox" {% if menu.active %}checked{% endif %}><label for="menu-active">Visible to customers</label><span class="badge {{ 'state-active' if menu.active else 'state-hidden' }}">{{ 'Active' if menu.active else 'Hidden' }}</span></div><button class="btn small" type="submit" style="margin-top:10px">Save menu</button></form>
-<section style="margin-top:16px">
-{% for cat in menu.categories|sort(attribute='sort_order') %}
-<div class="menu-admin-section">
-  <div class="menu-admin-head"><strong>{{ cat.name }}</strong><span class="badge {{ 'state-active' if cat.active else 'state-hidden' }}">{{ 'Active' if cat.active else 'Hidden' }}</span></div>
-  <div class="menu-admin-body">
-    <form class="compact" method="post" action="/admin/categories/{{ cat.id }}/edit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="inline-fields"><div class="field"><label>Category name</label><input name="name" value="{{ cat.name }}" required></div><div class="field"><label>Order</label><input name="sort_order" type="number" value="{{ cat.sort_order }}"></div></div><div class="inline-actions" style="margin-top:8px"><div class="checkbox-row visibility-control"><input id="cat-{{cat.id}}" name="active" type="checkbox" {% if cat.active %}checked{% endif %}><label for="cat-{{cat.id}}">Active</label><span class="badge {{ 'state-active' if cat.active else 'state-hidden' }}">{{ 'Active' if cat.active else 'Hidden' }}</span></div><button class="btn secondary small" type="submit">Save category</button></div></form>
-    {% for sub in cat.subcategories|sort(attribute='sort_order') %}
-    <div class="sub-admin">
-      <form class="compact" method="post" action="/admin/subcategories/{{ sub.id }}/edit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="inline-fields"><div class="field"><label>Subcategory</label><input name="name" value="{{ sub.name }}" required></div><div class="field"><label>Order</label><input name="sort_order" type="number" value="{{ sub.sort_order }}"></div></div><div class="inline-actions" style="margin-top:8px"><div class="checkbox-row visibility-control"><input id="sub-{{sub.id}}" name="active" type="checkbox" {% if sub.active %}checked{% endif %}><label for="sub-{{sub.id}}">Active</label><span class="badge {{ 'state-active' if sub.active else 'state-hidden' }}">{{ 'Active' if sub.active else 'Hidden' }}</span></div><button class="btn secondary small" type="submit">Save subcategory</button></div></form>
-      {% for item in sub.items|sort(attribute='sort_order') %}
-      <div class="item-admin">
-        <form class="compact" method="post" action="/admin/items/{{ item.id }}/edit" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <div class="item-admin-grid">
-            {% if item.image_blob %}<div class="admin-item-image"><img src="/menu-item-image/{{ item.id }}" alt="{{ item.name }}"></div>{% endif %}
-            <div class="admin-form-grid two" style="flex:1">
-              <div class="field"><label>Item</label><input name="name" value="{{ item.name }}" required></div>
-              <div class="field"><label>Dietary</label><select name="dietary"><option value="veg" {% if item.dietary=='veg' %}selected{% endif %}>Veg</option><option value="nonveg" {% if item.dietary=='nonveg' %}selected{% endif %}>Non Veg</option></select></div>
-              <div class="field"><label>Description</label><input name="description" value="{{ item.description }}"></div>
-              <div class="field"><label>Order</label><input name="sort_order" type="number" value="{{ item.sort_order }}"></div>
-              <div class="field"><label>Menu item picture</label><input name="image" type="file" accept="image/png,image/jpeg,image/webp"><span class="help">Optional · PNG, JPEG or WebP · max 3 MB.</span></div>
-            </div>
-          </div>
-          <div class="inline-actions" style="margin-top:8px">
-            <div class="checkbox-row visibility-control"><input id="item-{{item.id}}" name="active" type="checkbox" {% if item.active %}checked{% endif %}><label for="item-{{item.id}}">Active</label><span class="badge {{ 'state-active' if item.active else 'state-hidden' }}">{{ 'Active' if item.active else 'Hidden' }}</span></div>
-            {% if item.image_blob %}<div class="checkbox-row"><input id="remove-image-{{item.id}}" name="remove_image" type="checkbox"><label for="remove-image-{{item.id}}">Remove picture</label></div>{% endif %}
-            <button class="btn secondary small" type="submit">Save item</button>
-          </div>
-        </form>
-      </div>
-      {% endfor %}
-      <details style="margin-top:8px"><summary><strong>+ Add item</strong></summary><form class="compact" method="post" action="/admin/subcategories/{{ sub.id }}/item" enctype="multipart/form-data" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="admin-form-grid two"><div class="field"><label>Item name</label><input name="name" required></div><div class="field"><label>Dietary</label><select name="dietary"><option value="veg">Veg</option><option value="nonveg">Non Veg</option></select></div><div class="field"><label>Description</label><input name="description"></div><div class="field"><label>Order</label><input name="sort_order" type="number" value="0"></div><div class="field"><label>Menu item picture</label><input name="image" type="file" accept="image/png,image/jpeg,image/webp"><span class="help">Optional · PNG, JPEG or WebP · max 3 MB.</span></div></div><button class="btn small" type="submit" style="margin-top:8px">Add item</button></form></details>
+{% extends "admin/admin_base.html" %}
+
+{% block title %}
+{{ menu.name }} · Menu Admin
+{% endblock %}
+
+{% block body %}
+
+
+<div class="admin-title">
+
+  <div>
+
+    <div class="eyebrow">
+      Menu builder
     </div>
-    {% endfor %}
-    <details><summary><strong>+ Add subcategory</strong></summary><form class="compact" method="post" action="/admin/categories/{{ cat.id }}/subcategory" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="inline-fields"><div class="field"><label>Name</label><input name="name" required placeholder="e.g. Biryani"></div><div class="field"><label>Order</label><input name="sort_order" type="number" value="0"></div></div><button class="btn small" type="submit" style="margin-top:8px">Add subcategory</button></form></details>
+
+    <h1>
+      {{ menu.name }}
+    </h1>
+
+    <p class="muted">
+      Edit the structure customers see. Dietary type is set per item.
+      Customers can switch between Veg, Non Veg or combined.
+    </p>
+
   </div>
+
+  <a
+    class="btn secondary"
+    href="/admin/menus"
+  >
+    Back to menus
+  </a>
+
 </div>
+
+
+{% if request.query_params.get('saved') %}
+
+<div class="notice success">
+  Menu saved.
+</div>
+
+{% endif %}
+
+
+{% if request.query_params.get('error') %}
+
+<div class="notice error">
+  {{ request.query_params.get('error') }}
+</div>
+
+{% endif %}
+
+
+
+<!-- ======================================================
+     MENU SETTINGS
+====================================================== -->
+
+<form
+  class="card compact"
+  method="post"
+  action="/admin/menus/{{ menu.id }}/edit"
+>
+
+  <input
+    type="hidden"
+    name="csrf_token"
+    value="{{ csrf_token }}"
+  >
+
+
+  <div class="admin-form-grid two">
+
+    <div class="field">
+
+      <label for="menu-name">
+        Menu name
+      </label>
+
+      <input
+        id="menu-name"
+        name="name"
+        value="{{ menu.name }}"
+        required
+      >
+
+    </div>
+
+
+    <div class="field">
+
+      <label for="menu-order">
+        Sort order
+      </label>
+
+      <input
+        id="menu-order"
+        name="sort_order"
+        type="number"
+        value="{{ menu.sort_order }}"
+      >
+
+    </div>
+
+  </div>
+
+
+  <div
+    class="checkbox-row visibility-control"
+    style="margin-top:14px"
+  >
+
+    <input
+      id="menu-active"
+      name="active"
+      type="checkbox"
+      {% if menu.active %}checked{% endif %}
+    >
+
+    <label for="menu-active">
+      Visible to customers
+    </label>
+
+
+    {% if menu.active %}
+
+    <span class="status-badge status-badge-active">
+      Active
+    </span>
+
+    {% else %}
+
+    <span class="status-badge status-badge-inactive">
+      Inactive
+    </span>
+
+    {% endif %}
+
+  </div>
+
+
+  <button
+    class="btn small"
+    type="submit"
+    style="margin-top:12px"
+  >
+    Save menu
+  </button>
+
+</form>
+
+
+
+<!-- ======================================================
+     CATEGORIES
+====================================================== -->
+
+<section style="margin-top:16px">
+
+{% for cat in menu.categories|sort(attribute='sort_order') %}
+
+
+<div class="menu-admin-section">
+
+
+  <!-- CATEGORY HEADER -->
+
+  <div class="menu-admin-head">
+
+    <strong>
+      {{ cat.name }}
+    </strong>
+
+
+    {% if cat.active %}
+
+    <span class="status-badge status-badge-active">
+      Active
+    </span>
+
+    {% else %}
+
+    <span class="status-badge status-badge-inactive">
+      Inactive
+    </span>
+
+    {% endif %}
+
+  </div>
+
+
+
+  <div class="menu-admin-body">
+
+
+    <!-- CATEGORY FORM -->
+
+    <form
+      class="compact"
+      method="post"
+      action="/admin/categories/{{ cat.id }}/edit"
+    >
+
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token }}"
+      >
+
+
+      <div class="inline-fields">
+
+        <div class="field">
+
+          <label for="category-name-{{ cat.id }}">
+            Category name
+          </label>
+
+          <input
+            id="category-name-{{ cat.id }}"
+            name="name"
+            value="{{ cat.name }}"
+            required
+          >
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="category-order-{{ cat.id }}">
+            Order
+          </label>
+
+          <input
+            id="category-order-{{ cat.id }}"
+            name="sort_order"
+            type="number"
+            value="{{ cat.sort_order }}"
+          >
+
+        </div>
+
+      </div>
+
+
+
+      <div
+        class="inline-actions"
+        style="margin-top:10px"
+      >
+
+        <div class="checkbox-row visibility-control">
+
+          <input
+            id="cat-{{ cat.id }}"
+            name="active"
+            type="checkbox"
+            {% if cat.active %}checked{% endif %}
+          >
+
+          <label for="cat-{{ cat.id }}">
+            Active
+          </label>
+
+
+          {% if cat.active %}
+
+          <span class="status-badge status-badge-active">
+            Active
+          </span>
+
+          {% else %}
+
+          <span class="status-badge status-badge-inactive">
+            Inactive
+          </span>
+
+          {% endif %}
+
+        </div>
+
+
+        <button
+          class="btn secondary small"
+          type="submit"
+        >
+          Save category
+        </button>
+
+      </div>
+
+    </form>
+
+
+
+    <!-- ======================================================
+         SUBCATEGORIES
+    ====================================================== -->
+
+    {% for sub in cat.subcategories|sort(attribute='sort_order') %}
+
+
+    <div class="sub-admin">
+
+
+      <form
+        class="compact"
+        method="post"
+        action="/admin/subcategories/{{ sub.id }}/edit"
+      >
+
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token }}"
+        >
+
+
+        <div class="inline-fields">
+
+          <div class="field">
+
+            <label for="subcategory-name-{{ sub.id }}">
+              Subcategory
+            </label>
+
+            <input
+              id="subcategory-name-{{ sub.id }}"
+              name="name"
+              value="{{ sub.name }}"
+              required
+            >
+
+          </div>
+
+
+          <div class="field">
+
+            <label for="subcategory-order-{{ sub.id }}">
+              Order
+            </label>
+
+            <input
+              id="subcategory-order-{{ sub.id }}"
+              name="sort_order"
+              type="number"
+              value="{{ sub.sort_order }}"
+            >
+
+          </div>
+
+        </div>
+
+
+        <div
+          class="inline-actions"
+          style="margin-top:10px"
+        >
+
+          <div class="checkbox-row visibility-control">
+
+            <input
+              id="sub-{{ sub.id }}"
+              name="active"
+              type="checkbox"
+              {% if sub.active %}checked{% endif %}
+            >
+
+            <label for="sub-{{ sub.id }}">
+              Active
+            </label>
+
+
+            {% if sub.active %}
+
+            <span class="status-badge status-badge-active">
+              Active
+            </span>
+
+            {% else %}
+
+            <span class="status-badge status-badge-inactive">
+              Inactive
+            </span>
+
+            {% endif %}
+
+          </div>
+
+
+          <button
+            class="btn secondary small"
+            type="submit"
+          >
+            Save subcategory
+          </button>
+
+        </div>
+
+      </form>
+
+
+
+      <!-- ======================================================
+           MENU ITEMS
+      ====================================================== -->
+
+      {% for item in sub.items|sort(attribute='sort_order') %}
+
+
+      <div class="item-admin">
+
+        <form
+          class="compact"
+          method="post"
+          action="/admin/items/{{ item.id }}/edit"
+          enctype="multipart/form-data"
+        >
+
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token }}"
+          >
+
+
+          <div class="item-admin-grid">
+
+
+            {% if item.image_blob %}
+
+            <div class="admin-item-image">
+
+              <img
+                src="/menu-item-image/{{ item.id }}"
+                alt="{{ item.name }}"
+                loading="lazy"
+              >
+
+            </div>
+
+            {% endif %}
+
+
+
+            <div
+              class="admin-form-grid two"
+              style="flex:1"
+            >
+
+
+              <div class="field">
+
+                <label for="item-name-{{ item.id }}">
+                  Item
+                </label>
+
+                <input
+                  id="item-name-{{ item.id }}"
+                  name="name"
+                  value="{{ item.name }}"
+                  required
+                >
+
+              </div>
+
+
+              <div class="field">
+
+                <label for="item-dietary-{{ item.id }}">
+                  Dietary
+                </label>
+
+                <select
+                  id="item-dietary-{{ item.id }}"
+                  name="dietary"
+                >
+
+                  <option
+                    value="veg"
+                    {% if item.dietary == 'veg' %}selected{% endif %}
+                  >
+                    Veg
+                  </option>
+
+                  <option
+                    value="nonveg"
+                    {% if item.dietary == 'nonveg' %}selected{% endif %}
+                  >
+                    Non Veg
+                  </option>
+
+                </select>
+
+              </div>
+
+
+              <div class="field">
+
+                <label for="item-description-{{ item.id }}">
+                  Description
+                </label>
+
+                <input
+                  id="item-description-{{ item.id }}"
+                  name="description"
+                  value="{{ item.description or '' }}"
+                >
+
+              </div>
+
+
+              <div class="field">
+
+                <label for="item-order-{{ item.id }}">
+                  Order
+                </label>
+
+                <input
+                  id="item-order-{{ item.id }}"
+                  name="sort_order"
+                  type="number"
+                  value="{{ item.sort_order }}"
+                >
+
+              </div>
+
+
+              <div class="field">
+
+                <label for="item-image-{{ item.id }}">
+                  Menu item picture
+                </label>
+
+                <input
+                  id="item-image-{{ item.id }}"
+                  name="image"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                >
+
+                <span class="help">
+                  Optional · PNG, JPEG or WebP · maximum 3 MB.
+                </span>
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+
+          <div
+            class="inline-actions"
+            style="margin-top:10px"
+          >
+
+
+            <div class="checkbox-row visibility-control">
+
+              <input
+                id="item-{{ item.id }}"
+                name="active"
+                type="checkbox"
+                {% if item.active %}checked{% endif %}
+              >
+
+              <label for="item-{{ item.id }}">
+                Active
+              </label>
+
+
+              {% if item.active %}
+
+              <span class="status-badge status-badge-active">
+                Active
+              </span>
+
+              {% else %}
+
+              <span class="status-badge status-badge-inactive">
+                Inactive
+              </span>
+
+              {% endif %}
+
+            </div>
+
+
+
+            {% if item.image_blob %}
+
+            <div class="checkbox-row">
+
+              <input
+                id="remove-image-{{ item.id }}"
+                name="remove_image"
+                type="checkbox"
+              >
+
+              <label for="remove-image-{{ item.id }}">
+                Remove picture
+              </label>
+
+            </div>
+
+            {% endif %}
+
+
+
+            <button
+              class="btn secondary small"
+              type="submit"
+            >
+              Save item
+            </button>
+
+          </div>
+
+        </form>
+
+      </div>
+
+
+      {% endfor %}
+
+
+
+      <!-- ADD MENU ITEM -->
+
+      <details style="margin-top:10px">
+
+        <summary>
+          <strong>+ Add item</strong>
+        </summary>
+
+
+        <form
+          class="compact"
+          method="post"
+          action="/admin/subcategories/{{ sub.id }}/item"
+          enctype="multipart/form-data"
+          style="margin-top:12px"
+        >
+
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf_token }}"
+          >
+
+
+          <div class="admin-form-grid two">
+
+
+            <div class="field">
+
+              <label>
+                Item name
+              </label>
+
+              <input
+                name="name"
+                required
+              >
+
+            </div>
+
+
+            <div class="field">
+
+              <label>
+                Dietary
+              </label>
+
+              <select name="dietary">
+
+                <option value="veg">
+                  Veg
+                </option>
+
+                <option value="nonveg">
+                  Non Veg
+                </option>
+
+              </select>
+
+            </div>
+
+
+            <div class="field">
+
+              <label>
+                Description
+              </label>
+
+              <input name="description">
+
+            </div>
+
+
+            <div class="field">
+
+              <label>
+                Order
+              </label>
+
+              <input
+                name="sort_order"
+                type="number"
+                value="0"
+              >
+
+            </div>
+
+
+            <div class="field">
+
+              <label>
+                Menu item picture
+              </label>
+
+              <input
+                name="image"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+              >
+
+              <span class="help">
+                Optional · PNG, JPEG or WebP · maximum 3 MB.
+              </span>
+
+            </div>
+
+          </div>
+
+
+          <button
+            class="btn small"
+            type="submit"
+            style="margin-top:10px"
+          >
+            Add item
+          </button>
+
+        </form>
+
+      </details>
+
+
+    </div>
+
+    {% endfor %}
+
+
+
+    <!-- ADD SUBCATEGORY -->
+
+    <details>
+
+      <summary>
+        <strong>+ Add subcategory</strong>
+      </summary>
+
+
+      <form
+        class="compact"
+        method="post"
+        action="/admin/categories/{{ cat.id }}/subcategory"
+        style="margin-top:12px"
+      >
+
+        <input
+          type="hidden"
+          name="csrf_token"
+          value="{{ csrf_token }}"
+        >
+
+
+        <div class="inline-fields">
+
+
+          <div class="field">
+
+            <label>
+              Name
+            </label>
+
+            <input
+              name="name"
+              required
+              placeholder="e.g. Biryani"
+            >
+
+          </div>
+
+
+          <div class="field">
+
+            <label>
+              Order
+            </label>
+
+            <input
+              name="sort_order"
+              type="number"
+              value="0"
+            >
+
+          </div>
+
+        </div>
+
+
+        <button
+          class="btn small"
+          type="submit"
+          style="margin-top:10px"
+        >
+          Add subcategory
+        </button>
+
+      </form>
+
+    </details>
+
+
+  </div>
+
+</div>
+
+
 {% endfor %}
+
 </section>
-<section class="card"><h2 style="font-size:1.2rem">Add category</h2><form class="compact" method="post" action="/admin/menus/{{ menu.id }}/category"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="inline-fields"><div class="field"><label>Category name</label><input name="name" required placeholder="e.g. Welcome Drink"></div><div class="field"><label>Order</label><input name="sort_order" type="number" value="0"></div></div><button class="btn small" type="submit" style="margin-top:10px">Add category</button></form></section>
+
+
+
+<!-- ======================================================
+     ADD CATEGORY
+====================================================== -->
+
+<section class="card">
+
+  <h2 style="font-size:1.2rem">
+    Add category
+  </h2>
+
+
+  <form
+    class="compact"
+    method="post"
+    action="/admin/menus/{{ menu.id }}/category"
+  >
+
+    <input
+      type="hidden"
+      name="csrf_token"
+      value="{{ csrf_token }}"
+    >
+
+
+    <div class="inline-fields">
+
+
+      <div class="field">
+
+        <label>
+          Category name
+        </label>
+
+        <input
+          name="name"
+          required
+          placeholder="e.g. Welcome Drink"
+        >
+
+      </div>
+
+
+      <div class="field">
+
+        <label>
+          Order
+        </label>
+
+        <input
+          name="sort_order"
+          type="number"
+          value="0"
+        >
+
+      </div>
+
+    </div>
+
+
+    <button
+      class="btn small"
+      type="submit"
+      style="margin-top:10px"
+    >
+      Add category
+    </button>
+
+  </form>
+
+</section>
+
+
 {% endblock %}
