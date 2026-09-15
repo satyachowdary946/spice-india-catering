@@ -4,7 +4,7 @@
 <main class="menu-shell" data-menu-root>
   <div class="filter-block">
     <div class="container">
-      <div class="stepbar" style="padding:0 0 8px"><span>Event</span><span>›</span><span class="current">Menu</span><span>›</span><span>Review</span></div>
+      <nav class="stepbar" style="padding:0 0 8px" aria-label="Quote request steps"><a href="/order?next=/menu">1 Event details</a><span aria-hidden="true">›</span><a class="current" href="/menu" aria-current="step">2 Menu</a><span aria-hidden="true">›</span><a href="/review">3 Review</a></nav>
       <div class="segment" role="group" aria-label="Cuisine">
         {% for menu in menus %}<button type="button" data-menu-choice="{{ menu.id }}">{{ menu.name }}</button>{% endfor %}
       </div>

@@ -5,11 +5,12 @@ import json
 import os
 import re
 import secrets
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
@@ -21,7 +22,7 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib import colors
 from sqlalchemy import func, inspect, or_, select, text
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, load_only
 from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import ensure_csrf, hash_password, valid_csrf, verify_password
@@ -68,6 +69,17 @@ def ensure_schema_compatibility() -> None:
         if "customer_notes" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE quote_requests ADD COLUMN customer_notes TEXT DEFAULT ''"))
+
+    if "menu_items" in tables:
+        columns = {c["name"] for c in inspector.get_columns("menu_items")}
+        additions = {
+            "image_blob": "BYTEA" if engine.dialect.name == "postgresql" else "BLOB",
+            "image_content_type": "VARCHAR(100)",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE menu_items ADD COLUMN {name} {ddl}"))
 
     if "business_settings" in tables:
         columns = {c["name"] for c in inspector.get_columns("business_settings")}
@@ -195,7 +207,12 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
     menus = db.scalars(
         select(Menu)
         .where(Menu.active.is_(True))
-        .options(selectinload(Menu.categories).selectinload(Category.subcategories).selectinload(Subcategory.items))
+        .options(
+            selectinload(Menu.categories)
+            .selectinload(Category.subcategories)
+            .selectinload(Subcategory.items)
+            .load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.dietary, MenuItem.active, MenuItem.sort_order, MenuItem.image_content_type)
+        )
         .order_by(Menu.sort_order, Menu.name)
     ).all()
     menu_data = []
@@ -205,7 +222,7 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
             subs = []
             for s in sorted([s for s in c.subcategories if s.active], key=lambda x: (x.sort_order, x.name)):
                 items = [
-                    {"id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary, "sort_order": i.sort_order}
+                    {"id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary, "sort_order": i.sort_order, "image_url": f"/menu-item-image/{i.id}" if i.image_content_type else ""}
                     for i in sorted([i for i in s.items if i.active], key=lambda x: (x.sort_order, x.name))
                 ]
                 subs.append({"id": s.id, "name": s.name, "items": items, "sort_order": s.sort_order})
@@ -225,7 +242,10 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
     items = db.scalars(
         select(MenuItem)
         .where(MenuItem.id.in_(item_ids))
-        .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu))
+        .options(
+            load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.dietary, MenuItem.image_content_type),
+            selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu),
+        )
     ).all()
     by_id = {i.id: i for i in items}
     result = []
@@ -236,7 +256,8 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
         s = i.subcategory; c = s.category; m = c.menu
         result.append({
             "id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary,
-            "menu": m.name, "category": c.name, "subcategory": s.name
+            "menu": m.name, "category": c.name, "subcategory": s.name,
+            "image_url": f"/menu-item-image/{i.id}" if i.image_content_type else ""
         })
     return result
 
@@ -294,7 +315,6 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
 
     try:
         event_date = date.fromisoformat(str(details.get("event_date", "")))
-        if event_date < date.today(): errors["event_date"] = "Event date cannot be in the past."
     except Exception:
         event_date = date.today()
         errors["event_date"] = "Choose a valid event date."
@@ -303,6 +323,12 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     except Exception:
         event_time = time(12, 0)
         errors["event_time"] = "Choose a valid event time."
+    if "event_date" not in errors and "event_time" not in errors:
+        ireland = ZoneInfo("Europe/Dublin")
+        event_dt = datetime.combine(event_date, event_time, tzinfo=ireland)
+        minimum_dt = datetime.now(ireland) + timedelta(hours=24)
+        if event_dt < minimum_dt:
+            errors["event_datetime"] = "Catering requests must be made at least 24 hours before the event date and time."
     try:
         adults = parse_int(details.get("adults", 0), "Adults", 0)
         kids = parse_int(details.get("kids", 0), "Kids", 0)
@@ -320,7 +346,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         errors["items"] = "Add at least one menu item or request an extra dish."
 
     if errors:
-        return JSONResponse({"ok": False, "errors": errors, "error": "Please fix the highlighted details."}, status_code=422)
+        return JSONResponse({"ok": False, "errors": errors, "error": "Please fix the following details."}, status_code=422)
 
     items = db.scalars(
         select(MenuItem)
@@ -563,6 +589,18 @@ def business_logo(db: Session = Depends(get_db)):
     return Response(content=obj.logo_blob, media_type=obj.logo_content_type or "image/png", headers={"Cache-Control": "public, max-age=3600"})
 
 
+@app.get("/menu-item-image/{item_id}")
+def menu_item_image(item_id: int, db: Session = Depends(get_db)):
+    item = db.get(MenuItem, item_id)
+    if not item or not item.image_blob:
+        raise HTTPException(status_code=404)
+    return Response(
+        content=item.image_blob,
+        media_type=item.image_content_type or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 @app.get("/admin/share", response_class=HTMLResponse)
 def admin_share(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
@@ -572,6 +610,21 @@ def admin_share(request: Request, db: Session = Depends(get_db)):
 
 
 # ---------- Menu management ----------
+MENU_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+MAX_MENU_IMAGE_BYTES = 3 * 1024 * 1024
+
+
+async def read_menu_image(image: UploadFile | None) -> tuple[bytes | None, str | None]:
+    if not image or not image.filename:
+        return None, None
+    if image.content_type not in MENU_IMAGE_TYPES:
+        raise ValueError("Menu item image must be PNG, JPEG or WebP.")
+    data = await image.read()
+    if len(data) > MAX_MENU_IMAGE_BYTES:
+        raise ValueError("Menu item image must be smaller than 3 MB.")
+    return data, image.content_type
+
+
 @app.get("/admin/menus", response_class=HTMLResponse)
 def admin_menus(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
@@ -684,8 +737,8 @@ def admin_subcategory_edit(
 
 
 @app.post("/admin/subcategories/{sub_id}/item")
-def admin_item_create(
-    sub_id: int, request: Request, name: str = Form(...), description: str = Form(""), dietary: str = Form("veg"), sort_order: int = Form(0), csrf_token: str = Form(...), db: Session = Depends(get_db)
+async def admin_item_create(
+    sub_id: int, request: Request, name: str = Form(...), description: str = Form(""), dietary: str = Form("veg"), sort_order: int = Form(0), csrf_token: str = Form(...), image: UploadFile | None = File(None), db: Session = Depends(get_db)
 ):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
@@ -693,21 +746,44 @@ def admin_item_create(
     sub = db.scalar(select(Subcategory).where(Subcategory.id == sub_id).options(selectinload(Subcategory.category)))
     if not sub: raise HTTPException(status_code=404)
     if dietary not in {"veg", "nonveg"}: dietary = "veg"
-    db.add(MenuItem(subcategory_id=sub_id, name=name.strip(), description=description.strip(), dietary=dietary, sort_order=sort_order)); db.commit()
+    try:
+        image_blob, image_content_type = await read_menu_image(image)
+    except ValueError as exc:
+        return RedirectResponse(f"/admin/menus/{sub.category.menu_id}?error={quote(str(exc))}", status_code=303)
+    db.add(MenuItem(
+        subcategory_id=sub_id, name=name.strip(), description=description.strip(), dietary=dietary, sort_order=sort_order,
+        image_blob=image_blob, image_content_type=image_content_type
+    ))
+    db.commit()
     return RedirectResponse(f"/admin/menus/{sub.category.menu_id}", status_code=303)
 
 
 @app.post("/admin/items/{item_id}/edit")
-def admin_item_edit(
-    item_id: int, request: Request, name: str = Form(...), description: str = Form(""), dietary: str = Form("veg"), sort_order: int = Form(0), active: str | None = Form(None), csrf_token: str = Form(...), db: Session = Depends(get_db)
+async def admin_item_edit(
+    item_id: int, request: Request, name: str = Form(...), description: str = Form(""), dietary: str = Form("veg"), sort_order: int = Form(0), active: str | None = Form(None), remove_image: str | None = Form(None), csrf_token: str = Form(...), image: UploadFile | None = File(None), db: Session = Depends(get_db)
 ):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
     check_csrf(request, csrf_token)
     item = db.scalar(select(MenuItem).where(MenuItem.id == item_id).options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category)))
     if not item: raise HTTPException(status_code=404)
-    item.name = name.strip() or item.name; item.description = description.strip(); item.dietary = dietary if dietary in {"veg", "nonveg"} else "veg"; item.sort_order = sort_order; item.active = active == "on"
-    menu_id = item.subcategory.category.menu_id; db.commit()
+    item.name = name.strip() or item.name
+    item.description = description.strip()
+    item.dietary = dietary if dietary in {"veg", "nonveg"} else "veg"
+    item.sort_order = sort_order
+    item.active = active == "on"
+    if remove_image == "on":
+        item.image_blob = None
+        item.image_content_type = None
+    elif image and image.filename:
+        try:
+            image_blob, image_content_type = await read_menu_image(image)
+        except ValueError as exc:
+            return RedirectResponse(f"/admin/menus/{item.subcategory.category.menu_id}?error={quote(str(exc))}", status_code=303)
+        item.image_blob = image_blob
+        item.image_content_type = image_content_type
+    menu_id = item.subcategory.category.menu_id
+    db.commit()
     return RedirectResponse(f"/admin/menus/{menu_id}", status_code=303)
 
 

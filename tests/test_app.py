@@ -37,6 +37,21 @@ def test_end_to_end_quote_and_admin_flow():
             # seed IDs can vary by database engine; use IDs embedded in menu page via API not required here
             raise AssertionError('Seed menu items missing')
         ids=[x['id'] for x in available]
+
+        too_soon_payload={
+            'details':{
+                'name':'Test Customer','phone':'+353871234567','whatsapp':'+353871234567',
+                'event_date':str(date.today()),'event_name':'Too Soon Event','event_time':'23:59',
+                'adults':'1','kids':'0','address':'Test address','eircode':'N37 TEST'
+            },
+            'item_ids':ids,
+            'requested_dishes':[],
+            'customer_notes':''
+        }
+        too_soon=client.post('/api/quotes', json=too_soon_payload)
+        assert too_soon.status_code==422
+        assert '24 hours' in too_soon.text
+
         payload={
             'details':{
                 'name':'Test Customer','phone':'+353871234567','whatsapp':'+353871234567',
@@ -70,6 +85,26 @@ def test_end_to_end_quote_and_admin_flow():
         home=client.get('/')
         assert 'Athlone Branch' in home.text
         assert 'Catering all over Ireland from the heart of Ireland (Athlone Branch)' in home.text
+
+        menu_detail=client.get('/admin/menus/1')
+        assert menu_detail.status_code==200
+        menu_csrf=csrf_from(menu_detail.text)
+        tiny_png=(
+            b'\x89PNG\r\n\x1a\n'
+            b'\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+            b'\x00\x00\x00\rIDAT\x08\xd7c\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d'
+            b'\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        image_save=client.post('/admin/items/1/edit', data={
+            'csrf_token':menu_csrf,'name':'Lime Mint Cooler','description':'Fresh mint and lime.',
+            'dietary':'veg','sort_order':'0','active':'on'
+        }, files={'image':('cooler.png',tiny_png,'image/png')}, follow_redirects=False)
+        assert image_save.status_code==303
+        image=client.get('/menu-item-image/1')
+        assert image.status_code==200
+        assert image.headers['content-type']=='image/png'
+        menu_page=client.get('/menu')
+        assert '/menu-item-image/1' in menu_page.text
 
         orders=client.get('/admin/orders')
         assert orders.status_code==200

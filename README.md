@@ -6,7 +6,7 @@ A phone-first catering website focused on a fast customer quote flow and a pract
 
 ### Customer
 - Two entry paths: **event details first** (`/order`) or **browse menu first** (`/menu`).
-- Event form: name, phone, WhatsApp, same-as-phone toggle, event date/name/time, adults, kids under 12, address and Eircode.
+- Event form: name, phone, WhatsApp, same-as-phone toggle, event date/name/time, adults, kids under 12, address and Eircode. All event fields are required, with native date/time pickers and a strict minimum 24-hour booking notice.
 - Menu filtering by top-level menu (seeded with South Indian / North Indian), dietary mode (Veg / Non Veg / combined), category and subcategory.
 - Basket saved in browser storage across refreshes and browser restarts until submitted or explicitly cleared.
 - Review screen before sending the quote, including customer comments/notes.
@@ -25,7 +25,8 @@ A phone-first catering website focused on a fast customer quote flow and a pract
 - Customer database with automatically generated customer numbers.
 - Search/filter orders and customers.
 - Full editable menu hierarchy: Menu → Category → Subcategory → Item.
-- Active/hidden controls and sort orders; no item price field.
+- Active/hidden controls and sort orders with high-contrast status badges; no item price field.
+- Optional menu item pictures (PNG/JPEG/WebP, max 3 MB) uploaded from Admin and stored in the database so they work on Render/PostgreSQL without a separate upload disk.
 - Business/owner settings including company name, owner/contact, address, phone, WhatsApp, email, Eircode, footer note and uploaded logo/profile image stored in the database.
 - Public order/menu links with copy and WhatsApp share actions.
 
@@ -92,7 +93,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ## Editing content
 Open **Admin → Menus**. The included South Indian / North Indian structure and sample items are demo content only and are explicitly named `Sample ... — edit me`. Replace them with the real catering menu before launch.
 
-The customer menu automatically updates as the admin changes active menus, categories, subcategories and items.
+The customer menu automatically updates as the admin changes active menus, categories, subcategories and items. Customer step navigation is clickable, so Event details and Menu can be revisited before submission.
 
 ## Branding and images
 Open **Admin → Business settings**. Upload a PNG/JPEG/WebP logo or owner/business profile image (max 2 MB), and fill company/contact details. The image is stored in the database, so it also works with a persistent PostgreSQL database without a separate upload disk.
@@ -119,7 +120,7 @@ Without these WhatsApp variables, orders still work fully and appear in Admin. A
 pytest -q
 ```
 
-The automated test covers health, public pages, first admin setup, menu API, quote submission, extra-dish requests, customer notes, admin approval of a requested dish, confirmation/final price, customer status update and PDF generation.
+The automated test covers health, public pages, first admin setup, the 24-hour event rule, menu API, menu-item image upload/serving, quote submission, extra-dish requests, customer notes, admin approval of a requested dish, confirmation/final price, customer status update and PDF generation.
 
 ## Deployment
 

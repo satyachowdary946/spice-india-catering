@@ -78,6 +78,8 @@ class MenuItem(Base):
     dietary: Mapped[str] = mapped_column(String(20), default="veg")  # veg | nonveg
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    image_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    image_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     subcategory: Mapped[Subcategory] = relationship(back_populates="items")
 
 

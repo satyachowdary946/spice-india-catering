@@ -25,15 +25,47 @@ function initDetailsForm(){
   Object.entries(draft.details||{}).forEach(([k,v])=>{ const el=form.elements[k]; if(el && !['submit'].includes(el.type)) el.value=v ?? ''; });
   const same=document.getElementById('same-whatsapp');
   const phone=form.elements.phone, wa=form.elements.whatsapp;
+  const dateInput=form.elements.event_date, timeInput=form.elements.event_time;
+  const errorBox=document.querySelector('[data-details-error]');
+
+  const minimumEventDateTime=()=>new Date(Date.now()+24*60*60*1000);
+  const toDateInput=(d)=>{
+    const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  };
+  if(dateInput) dateInput.min=toDateInput(minimumEventDateTime());
+
+  document.querySelectorAll('[data-picker-button]').forEach(btn=>btn.addEventListener('click',()=>{
+    const input=document.getElementById(btn.dataset.pickerButton);
+    if(!input) return;
+    if(typeof input.showPicker==='function'){ try{ input.showPicker(); }catch{} } else { input.focus(); input.click(); }
+  }));
+  document.querySelectorAll('[data-native-picker]').forEach(input=>input.addEventListener('click',()=>{
+    if(typeof input.showPicker==='function'){ try{ input.showPicker(); }catch{} }
+  }));
+
   if(phone && wa && phone.value && phone.value===wa.value) same.checked=true;
   same?.addEventListener('change',()=>{ if(same.checked) wa.value=phone.value; });
   phone?.addEventListener('input',()=>{ if(same?.checked) wa.value=phone.value; });
+
+  function showDetailsError(message,field){
+    if(errorBox){ errorBox.textContent=message; errorBox.hidden=false; } else alert(message);
+    const target=field&&form.elements[field];
+    target?.focus();
+  }
+
   form.addEventListener('submit',(e)=>{
     e.preventDefault();
+    if(errorBox) errorBox.hidden=true;
     if(!form.reportValidity()) return;
     const fd=new FormData(form); const details={};
     ['name','phone','whatsapp','event_date','event_name','event_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
-    if((Number(details.adults)||0)+(Number(details.kids)||0)<1){ alert('Enter at least one guest.'); return; }
+    if((Number(details.adults)||0)+(Number(details.kids)||0)<1){ showDetailsError('Enter at least one guest in Adults or Kids.','adults'); return; }
+    const eventDateTime=new Date(`${details.event_date}T${details.event_time}:00`);
+    if(!Number.isFinite(eventDateTime.getTime()) || eventDateTime.getTime()<minimumEventDateTime().getTime()){
+      showDetailsError('Please choose an event date and time at least 24 hours from now.','event_date');
+      return;
+    }
     DraftStore.setDetails(details);
     location.href=form.dataset.next||'/menu';
   });
@@ -94,7 +126,7 @@ function initMenu(){
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{ DraftStore.toggleItem(Number(btn.dataset.addItem)); render(); updateBasketBar(); }));
     updateBasketBar();
   }
-  function itemCard(i,selected){return `<article class="menu-item ${selected?'selected':''}"><div><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${i.dietary}">${i.dietary==='veg'?'Veg':'Non Veg'}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
+  function itemCard(i,selected){return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${i.dietary}">${i.dietary==='veg'?'Veg':'Non Veg'}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
   menuBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=Number(b.dataset.menuChoice); activeCategory=null; render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice; activeCategory=null; render();}));
   updateRequestCount();
@@ -131,9 +163,20 @@ function initReview(){
     const errorBox=document.querySelector('[data-submit-error]'); errorBox.hidden=true;
     try{
       const res=await fetch('/api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});
-      const body=await res.json(); if(!res.ok||!body.ok) throw new Error(body.error||'Could not send quote.');
+      const body=await res.json();
+      if(!res.ok||!body.ok){
+        const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];
+        const message=errors.length?errors.join(' '):(body.error||'Could not send quote.');
+        throw new Error(message);
+      }
       localStorage.setItem('lastCateringOrderToken',body.token); DraftStore.clear(); location.href='/orders/'+body.token+'?submitted=1';
-    }catch(err){ errorBox.textContent=err.message||'Could not send quote. Try again.'; errorBox.hidden=false; submit.disabled=false; submit.textContent=original; }
+    }catch(err){
+      errorBox.textContent=err.message||'Could not send quote. Try again.';
+      errorBox.hidden=false;
+      errorBox.insertAdjacentHTML('beforeend',' <a class="error-fix-link" href="/order?next=/review">Edit event details</a>');
+      errorBox.scrollIntoView({behavior:'smooth',block:'center'});
+      submit.disabled=false; submit.textContent=original;
+    }
   });
 }
 
