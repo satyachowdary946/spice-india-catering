@@ -1,11 +1,13 @@
-{% extends "admin/admin_base.html" %}{% block title %}Business settings · Catering Admin{% endblock %}{% block body %}
-<div class="admin-title"><div><div class="eyebrow">Website identity</div><h1>Business settings</h1><p class="muted">Update owner and public business details used across the website and order documents.</p></div></div>
+{% extends "admin/admin_base.html" %}
+{% block title %}Business settings · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title"><div><div class="eyebrow">Website identity</div><h1>Business settings</h1><p class="muted">Update the public business details, branding and homepage presentation.</p></div></div>
 {% if request.query_params.get('saved') %}<div class="notice success">Business settings saved.</div>{% endif %}{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
 <form class="card" method="post" action="/admin/settings" enctype="multipart/form-data">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="admin-form-grid two">
     <div class="field"><label>Company name</label><input name="company_name" value="{{ business.company_name }}" placeholder="Your catering company"></div>
-    <div class="field"><label>Header branch label</label><input name="branch_label" value="{{ business.branch_label or 'Athlone Branch' }}" placeholder="Athlone Branch"><span class="help">Shown beside the large logo on the customer website.</span></div>
+    <div class="field"><label>Header branch label</label><input name="branch_label" value="{{ business.branch_label or 'Athlone Branch' }}" placeholder="Athlone Branch"><span class="help">Shown beside the logo on the customer website.</span></div>
     <div class="field"><label>Owner / contact name</label><input name="owner_name" value="{{ business.owner_name }}"></div>
     <div class="field"><label>Phone</label><input name="phone" type="tel" value="{{ business.phone }}"></div>
     <div class="field"><label>WhatsApp</label><input name="whatsapp" type="tel" value="{{ business.whatsapp }}"></div>
@@ -15,16 +17,18 @@
   <div class="field" style="margin-top:12px"><label>Address</label><textarea name="address">{{ business.address }}</textarea></div>
 
   <section class="settings-section">
-    <div>
-      <div class="eyebrow">Customer website banner</div>
-      <h2>Announcement / ad display</h2>
-      <p class="muted">Change this whenever you want. It appears directly below the customer website header.</p>
-    </div>
+    <div class="eyebrow">Homepage</div>
+    <h2>Food background image</h2>
+    <p class="muted">Upload the food image used behind the main homepage buttons. A dark overlay is applied automatically so the text stays readable.</p>
+    {% if business.hero_image_blob %}<img src="/homepage-food-image" alt="Current homepage food background" class="settings-hero-preview">{% endif %}
+    <div class="field"><label>Replace homepage background</label><input name="hero_image" type="file" accept="image/png,image/jpeg,image/webp"><span class="help">PNG, JPEG or WebP. Maximum 5 MB. A wide landscape food photo works best.</span></div>
+    {% if business.hero_image_blob %}<label class="checkbox-row" style="margin-top:12px"><input name="remove_hero_image" type="checkbox" value="true"><span><strong>Remove custom background</strong><span class="help">The site will fall back to an available menu-item image or the dark background.</span></span></label>{% endif %}
+  </section>
+
+  <section class="settings-section">
+    <div><div class="eyebrow">Customer website banner</div><h2>Announcement / ad display</h2><p class="muted">Change this whenever you want. It appears directly below the customer website header.</p></div>
     <label class="checkbox-row announcement-toggle"><input name="announcement_enabled" type="checkbox" value="true" {% if business.announcement_enabled %}checked{% endif %}><span><strong>Show announcement</strong><span class="help">Turn the banner on or off without deleting the message.</span></span></label>
-    <div class="admin-form-grid two">
-      <div class="field"><label>Small label</label><input name="announcement_title" value="{{ business.announcement_title or '' }}" placeholder="New site"></div>
-      <div class="field"><label>Announcement text</label><input name="announcement_text" value="{{ business.announcement_text or '' }}" placeholder="Catering all over Ireland from the heart of Ireland (Athlone Branch)"></div>
-    </div>
+    <div class="admin-form-grid two"><div class="field"><label>Small label</label><input name="announcement_title" value="{{ business.announcement_title or '' }}" placeholder="New site"></div><div class="field"><label>Announcement text</label><input name="announcement_text" value="{{ business.announcement_text or '' }}" placeholder="Catering all over Ireland from the heart of Ireland (Athlone Branch)"></div></div>
   </section>
 
   <div class="field" style="margin-top:12px"><label>Footer note</label><textarea name="footer_note" placeholder="Optional short note shown in the website footer">{{ business.footer_note }}</textarea></div>

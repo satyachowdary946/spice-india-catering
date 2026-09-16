@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice_number }} · Catering invoice{% endblock %}
+{% block body %}
+<main class="section invoice-page">
+  <div class="container invoice-document">
+    <header class="invoice-header">
+      <div><div class="eyebrow">Catering invoice</div><h1>{{ business.company_name or 'Catering' }}</h1>{% if business.address %}<p>{{ business.address }}{% if business.eircode %}, {{ business.eircode }}{% endif %}</p>{% endif %}<p class="muted">{% if business.phone %}{{ business.phone }}{% endif %}{% if business.email %}{% if business.phone %} · {% endif %}{{ business.email }}{% endif %}</p></div>
+      <div class="invoice-meta"><div><span>Invoice</span><strong>{{ invoice_number }}</strong></div><div><span>Date</span><strong>{{ invoice_date.strftime('%d %b %Y') }}</strong></div><div><span>Status</span><strong>{{ invoice_status }}</strong></div><div><span>Order</span><strong>{{ order.order_number }}</strong></div></div>
+    </header>
+
+    <section class="invoice-grid">
+      <div class="invoice-panel"><h2>Customer</h2><strong>{{ order.customer.name }}</strong><p>{{ order.customer.customer_number }}</p><p>{{ order.customer.phone }}</p></div>
+      <div class="invoice-panel"><h2>Event</h2><strong>{{ order.event_name }}</strong><p>{{ order.event_date.strftime('%A, %d %b %Y') }} · {{ order.event_time.strftime('%H:%M') }}</p><p>{{ order.address }}, {{ order.eircode }}</p></div>
+    </section>
+
+    <section class="invoice-panel invoice-menu"><h2>Confirmed catering menu</h2>{% for menu_name, categories in groups.items() %}<h3>{{ menu_name }}</h3>{% for cat_name, subs in categories.items() %}<div class="invoice-menu-row"><strong>{{ cat_name }}</strong><span>{% set ns=namespace(names=[]) %}{% for sub_name, items in subs.items() %}{% for item in items %}{% set ns.names = ns.names + [item.item_name] %}{% endfor %}{% endfor %}{{ ns.names|join(', ') }}</span></div>{% endfor %}{% endfor %}{% set approved=order.requested_dishes|selectattr('status','equalto','approved')|list %}{% if approved %}<div class="invoice-menu-row"><strong>Approved special requests</strong><span>{{ approved|map(attribute='name')|join(', ') }}</span></div>{% endif %}</section>
+
+    <section class="invoice-totals">
+      <div><span>Final catering price</span><strong>€{{ '%.2f'|format(finance.final_price) }}</strong></div>
+      <div><span>Payments received</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div>
+      <div class="invoice-balance"><span>Balance due</span><strong>€{{ '%.2f'|format(finance.balance_due) }}</strong></div>
+    </section>
+
+    {% if order.payments %}<section class="invoice-panel"><h2>Payment history</h2><div class="invoice-payment-list">{% for payment in order.payments %}<div><span>{{ payment.payment_date.strftime('%d %b %Y') }}{% if payment.method %} · {{ payment.method }}{% endif %}</span><strong>€{{ '%.2f'|format(payment.amount) }}</strong></div>{% endfor %}</div></section>{% endif %}
+
+    <div class="actions no-print invoice-actions"><a class="btn" href="/orders/{{ order.public_token }}/invoice.pdf">Download PDF</a><button class="btn secondary" type="button" onclick="window.print()">Print invoice</button><a class="btn ghost" href="/orders/{{ order.public_token }}">Back to order</a></div>
+  </div>
+</main>
+{% endblock %}

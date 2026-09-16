@@ -73,3 +73,36 @@ The Build 2 automated test covers the customer quote flow, admin confirmation, m
 The project remains compatible with the existing GitHub → Render deployment. Copy these files over the current repository, commit and push `main`. Render will deploy automatically.
 
 Do not commit `.env`, API keys, database credentials or other secrets.
+
+## Build 3 finance and homepage upgrade
+
+Build 3 adds a production-focused finance and presentation layer without replacing existing customer/order data.
+
+### Finance
+- Transactions page with search plus dropdown filters for period, payment status, expenses, and sorting.
+- Period choices include This month, Last 30 days, 3 months, 6 months, 12 months, This year, and All time.
+- High-level finance cards for order value, collected money, outstanding balances, and expenses.
+- Highest-paid-order highlight for the selected transaction period.
+- Reports page with a professional period dropdown and KPI cards for orders, customers, booked revenue, collected money, outstanding balances, expenses, expected profit, and cash profit.
+- Report insight cards for highest-paid order, most profitable order, and top customer by booked revenue.
+
+### Customer invoices
+- Customer invoice page linked to the secure public order token.
+- Downloadable PDF invoice.
+- Payment history, total paid, and balance due are shown to the customer.
+- Admin can open/copy the invoice link, download the invoice PDF, and mark an invoice as sent.
+- Invoice data is derived from the existing final price and payment records; catering expenses remain private to admin.
+
+### Homepage
+- Cleaner centered homepage actions with stronger spacing.
+- Dedicated homepage food background upload in Admin -> Business settings.
+- PNG, JPEG, or WebP up to 5 MB.
+- If no dedicated image is uploaded, the app can fall back to an available menu-item image, otherwise the dark branded background remains.
+
+### Additive database compatibility
+On startup the app safely adds these fields to existing databases when missing:
+- `business_settings.hero_image_blob`
+- `business_settings.hero_image_content_type`
+- `quote_requests.invoice_sent_at`
+
+Existing orders, customers, menus, payments, expenses, and admin accounts are preserved.

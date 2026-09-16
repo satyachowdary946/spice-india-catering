@@ -106,6 +106,23 @@ def test_end_to_end_quote_and_admin_flow():
         menu_page=client.get('/menu')
         assert '/menu-item-image/1' in menu_page.text
 
+        # Build 3: admin-controlled homepage food background
+        settings=client.get('/admin/settings')
+        hero_csrf=csrf_from(settings.text)
+        hero_save=client.post('/admin/settings', data={
+            'csrf_token':hero_csrf,
+            'company_name':'Spice India','branch_label':'Athlone Branch','owner_name':'',
+            'phone':'','whatsapp':'','email':'','address':'','eircode':'','footer_note':'',
+            'announcement_enabled':'true','announcement_title':'New site',
+            'announcement_text':'Catering all over Ireland from the heart of Ireland (Athlone Branch)'
+        }, files={'hero_image':('hero.png',tiny_png,'image/png')}, follow_redirects=False)
+        assert hero_save.status_code==303
+        hero_image=client.get('/homepage-food-image')
+        assert hero_image.status_code==200
+        assert hero_image.headers['content-type']=='image/png'
+        home=client.get('/')
+        assert "has-food-bg" in home.text
+
         orders=client.get('/admin/orders')
         assert orders.status_code==200
         assert 'Test Customer' in orders.text
@@ -183,10 +200,36 @@ def test_end_to_end_quote_and_admin_flow():
         assert '175.00' in transaction.text  # cash profit: 300 - 125
         assert 'Part Paid' in transaction.text
 
-        reports=client.get('/admin/reports?period=12m')
+        # Build 3: professional finance filters and invoice
+        filtered_transactions=client.get('/admin/transactions?period=all&payment_status=part_paid&expense_filter=with_expenses&sort=highest_paid')
+        assert filtered_transactions.status_code==200
+        assert body['order_number'] in filtered_transactions.text
+        assert 'Highest paid order' in filtered_transactions.text
+        assert 'Apply filters' in filtered_transactions.text
+
+        invoice=client.get('/orders/'+body['token']+'/invoice')
+        assert invoice.status_code==200
+        assert 'INV-'+body['order_number'] in invoice.text
+        assert 'Balance due' in invoice.text
+        invoice_pdf=client.get('/orders/'+body['token']+'/invoice.pdf')
+        assert invoice_pdf.status_code==200
+        assert invoice_pdf.headers['content-type']=='application/pdf'
+        assert invoice_pdf.content.startswith(b'%PDF')
+
+        transaction=client.get('/admin/transactions/1')
+        invoice_csrf=csrf_from(transaction.text)
+        mark_sent=client.post('/admin/orders/1/invoice/mark-sent', data={'csrf_token':invoice_csrf}, follow_redirects=False)
+        assert mark_sent.status_code==303
+        invoice=client.get('/orders/'+body['token']+'/invoice')
+        assert 'Sent' in invoice.text or 'Part Paid' in invoice.text
+
+        reports=client.get('/admin/reports?period=all')
         assert reports.status_code==200
         assert 'Booked revenue' in reports.text
         assert 'Money collected' in reports.text
+        assert 'Highest paid order' in reports.text
+        assert 'Most profitable order' in reports.text
+        assert 'Reporting period' in reports.text
 
 
 def teardown_module():

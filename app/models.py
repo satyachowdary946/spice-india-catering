@@ -34,6 +34,8 @@ class BusinessSettings(Base):
     announcement_text: Mapped[str] = mapped_column(Text, default="Catering all over Ireland from the heart of Ireland (Athlone Branch)")
     logo_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     logo_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    hero_image_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    hero_image_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -116,6 +118,7 @@ class QuoteRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    invoice_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     customer: Mapped[Customer] = relationship(back_populates="orders")
     items: Mapped[list[QuoteItem]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="QuoteItem.sort_order")
     history: Mapped[list[StatusHistory]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="StatusHistory.created_at")

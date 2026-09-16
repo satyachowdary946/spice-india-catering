@@ -2,12 +2,12 @@
 {% block title %}{{ business.company_name or 'Catering Ordering' }}{% endblock %}
 {% block body %}
 <main>
-  <section class="hero home-hero {% if hero_item_id %}has-food-bg{% endif %}" {% if hero_item_id %}style="--home-food-image:url('/homepage-food-image')"{% endif %}>
+  <section class="hero home-hero {% if hero_image_available %}has-food-bg{% endif %}" {% if hero_image_available %}style="--home-food-image:url('/homepage-food-image')"{% endif %}>
     <div class="container home-hero-inner">
       <div class="home-hero-copy">
         <div class="eyebrow">Catering ordering</div>
-        <h1>Plan your catering in a few simple steps.</h1>
-        <p class="lead">Choose your menu, send your event details and receive a confirmed quote from the catering team.</p>
+        <h1>Choose your menu. Tell us your event. Request your quote.</h1>
+        <p class="lead">Simple catering ordering from menu selection to confirmation.</p>
         <div class="home-primary-actions" aria-label="Catering actions">
           <a class="btn home-main-btn" href="/order">Start catering request</a>
           <a class="btn secondary home-main-btn" href="/menu">Browse menu first</a>

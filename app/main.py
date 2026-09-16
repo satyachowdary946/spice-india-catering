@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile, 
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from reportlab.lib.pagesizes import A5
+from reportlab.lib.pagesizes import A4, A5
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
@@ -75,6 +75,9 @@ def ensure_schema_compatibility() -> None:
         if "customer_notes" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE quote_requests ADD COLUMN customer_notes TEXT DEFAULT ''"))
+        if "invoice_sent_at" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_requests ADD COLUMN invoice_sent_at TIMESTAMP"))
 
     if "menu_items" in tables:
         columns = {c["name"] for c in inspector.get_columns("menu_items")}
@@ -94,6 +97,8 @@ def ensure_schema_compatibility() -> None:
             "announcement_enabled": "BOOLEAN DEFAULT TRUE",
             "announcement_title": "VARCHAR(120) DEFAULT 'New site'",
             "announcement_text": "TEXT DEFAULT 'Catering all over Ireland from the heart of Ireland (Athlone Branch)'",
+            "hero_image_blob": "BYTEA" if engine.dialect.name == "postgresql" else "BLOB",
+            "hero_image_content_type": "VARCHAR(100)",
         }
         for name, ddl in additions.items():
             if name not in columns:
@@ -213,6 +218,38 @@ def months_ago(day: date, months: int) -> date:
     return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
 
 
+def period_bounds(period: str) -> tuple[date | None, date, str]:
+    end_date = date.today()
+    if period == "this_month":
+        return date(end_date.year, end_date.month, 1), end_date, "This month"
+    if period == "30d":
+        return end_date - timedelta(days=29), end_date, "Last 30 days"
+    if period == "3m":
+        return months_ago(end_date, 3), end_date, "Last 3 months"
+    if period == "6m":
+        return months_ago(end_date, 6), end_date, "Last 6 months"
+    if period == "12m":
+        return months_ago(end_date, 12), end_date, "Last 12 months"
+    if period == "this_year":
+        return date(end_date.year, 1, 1), end_date, "This year"
+    if period == "all":
+        return None, end_date, "All time"
+    return end_date - timedelta(days=29), end_date, "Last 30 days"
+
+
+def invoice_status(order: QuoteRequest) -> str:
+    finance = finance_summary(order)
+    if order.final_price is None:
+        return "Draft"
+    if finance["payment_status"] == "paid":
+        return "Paid"
+    if finance["payment_status"] == "part_paid":
+        return "Part Paid"
+    if order.invoice_sent_at:
+        return "Sent"
+    return "Draft"
+
+
 def order_groups(order: QuoteRequest):
     groups: dict[str, dict[str, dict[str, list[QuoteItem]]]] = {}
     for item in order.items:
@@ -238,17 +275,33 @@ async def unauthorized_handler(request: Request, exc: HTTPException):
 # ---------- Public/customer ----------
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
-    hero_item_id = db.scalar(
-        select(MenuItem.id)
-        .where(MenuItem.active.is_(True), MenuItem.image_blob.is_not(None))
-        .order_by(MenuItem.sort_order, MenuItem.id)
-        .limit(1)
+    biz = business(db)
+    fallback_item_id = None
+    if not biz.hero_image_blob:
+        fallback_item_id = db.scalar(
+            select(MenuItem.id)
+            .where(MenuItem.active.is_(True), MenuItem.image_blob.is_not(None))
+            .order_by(MenuItem.sort_order, MenuItem.id)
+            .limit(1)
+        )
+    return render(
+        request,
+        db,
+        "customer/home.html",
+        hero_image_available=bool(biz.hero_image_blob or fallback_item_id),
+        hero_image_custom=bool(biz.hero_image_blob),
     )
-    return render(request, db, "customer/home.html", hero_item_id=hero_item_id)
 
 
 @app.get("/homepage-food-image")
 def homepage_food_image(db: Session = Depends(get_db)):
+    biz = business(db)
+    if biz.hero_image_blob:
+        return Response(
+            content=biz.hero_image_blob,
+            media_type=biz.hero_image_content_type or "image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
     item = db.scalar(
         select(MenuItem)
         .where(MenuItem.active.is_(True), MenuItem.image_blob.is_not(None))
@@ -260,7 +313,7 @@ def homepage_food_image(db: Session = Depends(get_db)):
     return Response(
         content=item.image_blob,
         media_type=item.image_content_type or "image/jpeg",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -552,6 +605,8 @@ def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
         order=order,
         groups=order_groups(order),
         public_url=public_order_url(request, token),
+        finance=finance_summary(order),
+        invoice_status=invoice_status(order),
     )
 
 
@@ -670,7 +725,8 @@ async def admin_settings_post(
     email: str = Form(""), address: str = Form(""), eircode: str = Form(""), footer_note: str = Form(""),
     branch_label: str = Form("Athlone Branch"), announcement_enabled: bool = Form(False),
     announcement_title: str = Form(""), announcement_text: str = Form(""),
-    csrf_token: str = Form(...), logo: UploadFile | None = File(None),
+    remove_hero_image: bool = Form(False),
+    csrf_token: str = Form(...), logo: UploadFile | None = File(None), hero_image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ):
     admin, redirect = admin_or_redirect(request, db)
@@ -689,8 +745,8 @@ async def admin_settings_post(
     obj.announcement_enabled = bool(announcement_enabled)
     obj.announcement_title = announcement_title.strip()
     obj.announcement_text = announcement_text.strip()
+    allowed = {"image/png", "image/jpeg", "image/webp"}
     if logo and logo.filename:
-        allowed = {"image/png", "image/jpeg", "image/webp"}
         if logo.content_type not in allowed:
             return render(request, db, "admin/settings.html", admin=admin, error="Logo must be PNG, JPEG or WebP.")
         data = await logo.read()
@@ -698,6 +754,18 @@ async def admin_settings_post(
             return render(request, db, "admin/settings.html", admin=admin, error="Logo must be smaller than 2 MB.")
         obj.logo_blob = data
         obj.logo_content_type = logo.content_type
+
+    if remove_hero_image:
+        obj.hero_image_blob = None
+        obj.hero_image_content_type = None
+    if hero_image and hero_image.filename:
+        if hero_image.content_type not in allowed:
+            return render(request, db, "admin/settings.html", admin=admin, error="Homepage background must be PNG, JPEG or WebP.")
+        hero_data = await hero_image.read()
+        if len(hero_data) > 5 * 1024 * 1024:
+            return render(request, db, "admin/settings.html", admin=admin, error="Homepage background must be smaller than 5 MB.")
+        obj.hero_image_blob = hero_data
+        obj.hero_image_content_type = hero_image.content_type
     db.commit()
     return RedirectResponse("/admin/settings?saved=1", status_code=303)
 
@@ -1167,6 +1235,188 @@ def admin_order_pdf(order_id: int, request: Request, db: Session = Depends(get_d
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{order.order_number}.pdf"'})
 
 
+def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
+    finance = finance_summary(order)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("InvoiceTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=24, leading=28, textColor=colors.HexColor("#111111"), alignment=0)
+    heading = ParagraphStyle("InvoiceHeading", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=colors.HexColor("#111111"), spaceBefore=10, spaceAfter=6)
+    body = styles["BodyText"]
+    small = ParagraphStyle("InvoiceSmall", parent=body, fontSize=8, leading=10, textColor=colors.HexColor("#666666"))
+
+    company = biz.company_name.strip() or "Catering"
+    invoice_no = f"INV-{order.order_number}"
+    invoice_date = (order.invoice_sent_at or order.confirmed_at or order.updated_at or order.created_at).date()
+    status = invoice_status(order)
+
+    company_lines = [Paragraph(company, title)]
+    if biz.address:
+        company_lines.append(Paragraph(biz.address, body))
+    contact = " · ".join([x for x in [biz.phone, biz.email] if x])
+    if contact:
+        company_lines.append(Paragraph(contact, small))
+
+    invoice_meta = Table([
+        [Paragraph("INVOICE", small), Paragraph(invoice_no, body)],
+        [Paragraph("DATE", small), Paragraph(invoice_date.strftime("%d %b %Y"), body)],
+        [Paragraph("STATUS", small), Paragraph(status, body)],
+        [Paragraph("ORDER", small), Paragraph(order.order_number, body)],
+    ], colWidths=[60, 150])
+    invoice_meta.setStyle(TableStyle([
+        ("FONTNAME", (1,0), (1,-1), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LINEBELOW", (0,0), (-1,-1), 0.3, colors.HexColor("#DDDDDD")),
+    ]))
+    header = Table([[company_lines, invoice_meta]], colWidths=[310, 210])
+    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"), ("LINEBELOW", (0,0), (-1,-1), 1.5, colors.HexColor("#111111")), ("BOTTOMPADDING", (0,0), (-1,-1), 12)]))
+
+    story = [header, Spacer(1, 14), Paragraph("BILL TO", heading)]
+    customer_rows = [
+        ["Customer", order.customer.name],
+        ["Customer No.", order.customer.customer_number],
+        ["Phone", order.customer.phone],
+        ["Event", order.event_name],
+        ["Event date", f"{order.event_date.strftime('%d %b %Y')} · {order.event_time.strftime('%H:%M')}"],
+        ["Event address", f"{order.address}, {order.eircode}"],
+    ]
+    customer_table = Table(customer_rows, colWidths=[95, 425])
+    customer_table.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#E5E5E5")),
+    ]))
+    story.extend([customer_table, Spacer(1, 14), Paragraph("CATERING SUMMARY", heading)])
+
+    menu_lines = []
+    for menu_name, categories in order_groups(order).items():
+        menu_lines.append(Paragraph(f"<b>{menu_name}</b>", body))
+        for cat_name, subs in categories.items():
+            items = [item.item_name for sub_items in subs.values() for item in sub_items]
+            if items:
+                menu_lines.append(Paragraph(f"<b>{cat_name}:</b> " + ", ".join(items), body))
+    approved = [dish.name for dish in order.requested_dishes if dish.status == "approved"]
+    if approved:
+        menu_lines.append(Paragraph("<b>Approved special requests:</b> " + ", ".join(approved), body))
+    if not menu_lines:
+        menu_lines.append(Paragraph("Confirmed catering order", body))
+    story.extend(menu_lines)
+
+    story.extend([Spacer(1, 16), Paragraph("PAYMENT SUMMARY", heading)])
+    amount_rows = [
+        ["Final catering price", f"€{finance['final_price']:.2f}" if order.final_price is not None else "Not priced"],
+        ["Payments received", f"€{finance['total_paid']:.2f}"],
+        ["Balance due", f"€{finance['balance_due']:.2f}"],
+    ]
+    amount_table = Table(amount_rows, colWidths=[360, 160])
+    amount_table.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTNAME", (1,0), (1,-1), "Helvetica-Bold"),
+        ("ALIGN", (1,0), (1,-1), "RIGHT"),
+        ("FONTSIZE", (0,0), (-1,-1), 10),
+        ("BACKGROUND", (0,-1), (-1,-1), colors.HexColor("#EEF8F5")),
+        ("BOX", (0,0), (-1,-1), 0.6, colors.HexColor("#999999")),
+        ("INNERGRID", (0,0), (-1,-1), 0.3, colors.HexColor("#DDDDDD")),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story.append(amount_table)
+
+    if order.payments:
+        story.extend([Spacer(1, 12), Paragraph("PAYMENT HISTORY", heading)])
+        payment_rows = [["Date", "Amount", "Method / reference"]]
+        for payment in order.payments:
+            detail = " · ".join([x for x in [payment.method, payment.reference] if x]) or "—"
+            payment_rows.append([payment.payment_date.strftime("%d %b %Y"), f"€{payment.amount:.2f}", detail])
+        payment_table = Table(payment_rows, colWidths=[110, 100, 310])
+        payment_table.setStyle(TableStyle([
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#F1F3F3")),
+            ("FONTSIZE", (0,0), (-1,-1), 9),
+            ("BOX", (0,0), (-1,-1), 0.5, colors.HexColor("#BBBBBB")),
+            ("INNERGRID", (0,0), (-1,-1), 0.25, colors.HexColor("#DDDDDD")),
+            ("TOPPADDING", (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ]))
+        story.append(payment_table)
+
+    story.extend([Spacer(1, 18), Paragraph("This invoice reflects the catering price and payments recorded for this order. Contact the catering team if any detail needs correction.", small)])
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def invoice_order_query():
+    return (
+        select(QuoteRequest)
+        .options(
+            selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.items),
+            selectinload(QuoteRequest.requested_dishes),
+            selectinload(QuoteRequest.payments),
+            selectinload(QuoteRequest.expenses),
+        )
+    )
+
+
+@app.get("/orders/{token}/invoice", response_class=HTMLResponse)
+def customer_invoice(token: str, request: Request, db: Session = Depends(get_db)):
+    order = db.scalar(invoice_order_query().where(QuoteRequest.public_token == token))
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.final_price is None:
+        raise HTTPException(status_code=404, detail="Invoice is not available until the final price is agreed.")
+    return render(
+        request, db, "customer/invoice.html",
+        order=order, finance=finance_summary(order), invoice_status=invoice_status(order),
+        invoice_number=f"INV-{order.order_number}",
+        invoice_date=(order.invoice_sent_at or order.confirmed_at or order.updated_at or order.created_at).date(),
+        groups=order_groups(order),
+    )
+
+
+@app.get("/orders/{token}/invoice.pdf")
+def customer_invoice_pdf(token: str, db: Session = Depends(get_db)):
+    order = db.scalar(invoice_order_query().where(QuoteRequest.public_token == token))
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.final_price is None:
+        raise HTTPException(status_code=404, detail="Invoice is not available until the final price is agreed.")
+    pdf = build_invoice_pdf(order, business(db))
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="INV-{order.order_number}.pdf"'})
+
+
+@app.get("/admin/orders/{order_id}/invoice.pdf")
+def admin_invoice_pdf(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    order = db.scalar(invoice_order_query().where(QuoteRequest.id == order_id))
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.final_price is None:
+        raise HTTPException(status_code=400, detail="Set the final price before generating an invoice.")
+    pdf = build_invoice_pdf(order, business(db))
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="INV-{order.order_number}.pdf"'})
+
+
+@app.post("/admin/orders/{order_id}/invoice/mark-sent")
+def admin_invoice_mark_sent(order_id: int, request: Request, csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.final_price is None:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Set+the+final+price+before+marking+the+invoice+sent", status_code=303)
+    order.invoice_sent_at = datetime.utcnow()
+    db.commit()
+    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#invoice", status_code=303)
+
+
 @app.get("/admin/customers", response_class=HTMLResponse)
 def admin_customers(request: Request, q: str = "", db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
@@ -1185,12 +1435,17 @@ def admin_customers(request: Request, q: str = "", db: Session = Depends(get_db)
 def admin_transactions(
     request: Request,
     q: str = "",
+    period: str = "all",
     payment_status: str = "",
+    expense_filter: str = "",
+    sort: str = "latest",
     db: Session = Depends(get_db),
 ):
     admin, redirect = admin_or_redirect(request, db)
     if redirect:
         return redirect
+
+    start_date, end_date, period_label = period_bounds(period)
     stmt = (
         select(QuoteRequest)
         .options(
@@ -1198,8 +1453,17 @@ def admin_transactions(
             selectinload(QuoteRequest.payments),
             selectinload(QuoteRequest.expenses),
         )
-        .order_by(QuoteRequest.event_date.desc(), QuoteRequest.id.desc())
     )
+    if period == "this_month":
+        import calendar
+        month_end = date(end_date.year, end_date.month, calendar.monthrange(end_date.year, end_date.month)[1])
+        stmt = stmt.where(QuoteRequest.event_date >= start_date, QuoteRequest.event_date <= month_end)
+        end_date = month_end
+    elif period != "all":
+        if start_date:
+            stmt = stmt.where(QuoteRequest.event_date >= start_date)
+        stmt = stmt.where(QuoteRequest.event_date <= end_date)
+
     if q.strip():
         like = f"%{q.strip()}%"
         stmt = stmt.join(Customer).where(
@@ -1208,14 +1472,53 @@ def admin_transactions(
                 Customer.customer_number.ilike(like),
                 Customer.name.ilike(like),
                 Customer.phone.ilike(like),
+                Customer.whatsapp.ilike(like),
                 QuoteRequest.event_name.ilike(like),
             )
         )
+
     orders = list(db.scalars(stmt).unique().all())
     rows = [{"order": order, "finance": finance_summary(order)} for order in orders]
+
     valid_payment_statuses = {"not_priced", "unpaid", "part_paid", "paid"}
     if payment_status in valid_payment_statuses:
         rows = [row for row in rows if row["finance"]["payment_status"] == payment_status]
+
+    if expense_filter == "with_expenses":
+        rows = [row for row in rows if row["finance"]["total_expenses"] > 0]
+    elif expense_filter == "without_expenses":
+        rows = [row for row in rows if row["finance"]["total_expenses"] <= 0]
+
+    sorters = {
+        "latest": lambda row: (row["order"].event_date, row["order"].id),
+        "oldest": lambda row: (row["order"].event_date, row["order"].id),
+        "highest_value": lambda row: (row["finance"]["final_price"], row["order"].id),
+        "highest_paid": lambda row: (row["finance"]["total_paid"], row["order"].id),
+        "highest_profit": lambda row: (row["finance"]["expected_profit"], row["order"].id),
+        "highest_outstanding": lambda row: (row["finance"]["balance_due"], row["order"].id),
+    }
+    if sort not in sorters:
+        sort = "latest"
+    reverse = sort != "oldest"
+    rows.sort(key=sorters[sort], reverse=reverse)
+
+    total_final = sum((row["finance"]["final_price"] for row in rows), Decimal("0.00"))
+    total_paid = sum((row["finance"]["total_paid"] for row in rows), Decimal("0.00"))
+    total_expenses = sum((row["finance"]["total_expenses"] for row in rows), Decimal("0.00"))
+    total_outstanding = sum((row["finance"]["balance_due"] for row in rows), Decimal("0.00"))
+    highest_paid = max(rows, key=lambda row: row["finance"]["total_paid"], default=None)
+    if highest_paid and highest_paid["finance"]["total_paid"] <= 0:
+        highest_paid = None
+
+    period_options = [
+        ("all", "All time"),
+        ("this_month", "This month"),
+        ("30d", "Last 30 days"),
+        ("3m", "Last 3 months"),
+        ("6m", "Last 6 months"),
+        ("12m", "Last 12 months"),
+        ("this_year", "This year"),
+    ]
     return render(
         request,
         db,
@@ -1223,7 +1526,19 @@ def admin_transactions(
         admin=admin,
         rows=rows,
         q=q,
+        period=period,
+        period_label=period_label,
+        period_options=period_options,
+        start_date=start_date,
+        end_date=end_date,
         selected_payment_status=payment_status,
+        selected_expense_filter=expense_filter,
+        selected_sort=sort,
+        total_final=total_final,
+        total_paid=total_paid,
+        total_expenses=total_expenses,
+        total_outstanding=total_outstanding,
+        highest_paid=highest_paid,
     )
 
 
@@ -1251,6 +1566,9 @@ def admin_transaction_detail(order_id: int, request: Request, db: Session = Depe
         order=order,
         finance=finance_summary(order),
         today=date.today(),
+        invoice_status=invoice_status(order),
+        invoice_number=f"INV-{order.order_number}",
+        invoice_url=str(request.base_url).rstrip("/") + f"/orders/{order.public_token}/invoice",
     )
 
 
@@ -1402,50 +1720,73 @@ def admin_expense_delete(
 @app.get("/admin/reports", response_class=HTMLResponse)
 def admin_reports(
     request: Request,
-    period: str = "1m",
+    period: str = "30d",
     db: Session = Depends(get_db),
 ):
     admin, redirect = admin_or_redirect(request, db)
     if redirect:
         return redirect
-    periods = {"1m": (1, "Last month"), "3m": (3, "Last 3 months"), "6m": (6, "Last 6 months"), "12m": (12, "Last year")}
-    if period not in periods:
-        period = "1m"
-    months, period_label = periods[period]
-    end_date = date.today()
-    start_date = months_ago(end_date, months)
 
-    orders = list(db.scalars(
+    start_date, end_date, period_label = period_bounds(period)
+    stmt = (
         select(QuoteRequest)
-        .where(
-            QuoteRequest.event_date >= start_date,
-            QuoteRequest.event_date <= end_date,
-            QuoteRequest.status != "cancelled",
-        )
+        .where(QuoteRequest.event_date <= end_date, QuoteRequest.status != "cancelled")
         .options(
             selectinload(QuoteRequest.customer),
             selectinload(QuoteRequest.payments),
             selectinload(QuoteRequest.expenses),
         )
-        .order_by(QuoteRequest.event_date.desc())
-    ).unique().all())
+    )
+    if start_date:
+        stmt = stmt.where(QuoteRequest.event_date >= start_date)
+
+    orders = list(db.scalars(stmt.order_by(QuoteRequest.event_date.desc(), QuoteRequest.id.desc())).unique().all())
 
     rows = []
     booked_revenue = Decimal("0.00")
     collected = Decimal("0.00")
     expenses = Decimal("0.00")
     customers: set[int] = set()
+    customer_revenue: dict[int, dict[str, Any]] = {}
+
     for order in orders:
         summary = finance_summary(order)
-        rows.append({"order": order, "finance": summary})
+        row = {"order": order, "finance": summary}
+        rows.append(row)
         booked_revenue += summary["final_price"]
         collected += summary["total_paid"]
         expenses += summary["total_expenses"]
         customers.add(order.customer_id)
+        customer_bucket = customer_revenue.setdefault(
+            order.customer_id,
+            {"customer": order.customer, "revenue": Decimal("0.00"), "orders": 0},
+        )
+        customer_bucket["revenue"] += summary["final_price"]
+        customer_bucket["orders"] += 1
 
     outstanding = max(booked_revenue - collected, Decimal("0.00"))
     expected_profit = booked_revenue - expenses
     cash_profit = collected - expenses
+
+    highest_paid = max(rows, key=lambda row: row["finance"]["total_paid"], default=None)
+    if highest_paid and highest_paid["finance"]["total_paid"] <= 0:
+        highest_paid = None
+    most_profitable = max(rows, key=lambda row: row["finance"]["expected_profit"], default=None)
+    if most_profitable and most_profitable["finance"]["expected_profit"] <= 0:
+        most_profitable = None
+    top_customer = max(customer_revenue.values(), key=lambda item: item["revenue"], default=None)
+    if top_customer and top_customer["revenue"] <= 0:
+        top_customer = None
+
+    period_options = [
+        ("this_month", "This month"),
+        ("30d", "Last 30 days"),
+        ("3m", "Last 3 months"),
+        ("6m", "Last 6 months"),
+        ("12m", "Last 12 months"),
+        ("this_year", "This year"),
+        ("all", "All time"),
+    ]
 
     return render(
         request,
@@ -1455,6 +1796,7 @@ def admin_reports(
         rows=rows,
         period=period,
         period_label=period_label,
+        period_options=period_options,
         start_date=start_date,
         end_date=end_date,
         order_count=len(orders),
@@ -1465,6 +1807,9 @@ def admin_reports(
         outstanding=outstanding,
         expected_profit=expected_profit,
         cash_profit=cash_profit,
+        highest_paid=highest_paid,
+        most_profitable=most_profitable,
+        top_customer=top_customer,
     )
 
 

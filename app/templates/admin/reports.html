@@ -1,28 +1,60 @@
 {% extends "admin/admin_base.html" %}
 {% block title %}Reports · Catering Admin{% endblock %}
 {% block body %}
-<div class="admin-title"><div><div class="eyebrow">Business performance</div><h1>Reports</h1><p class="muted">Financial summary based on catering event dates. Cancelled orders are excluded.</p></div><a class="btn secondary" href="/admin/transactions">Transactions</a></div>
-<div class="report-periods" aria-label="Report period">
-  <a class="{% if period=='1m' %}active{% endif %}" href="/admin/reports?period=1m">1 month</a>
-  <a class="{% if period=='3m' %}active{% endif %}" href="/admin/reports?period=3m">3 months</a>
-  <a class="{% if period=='6m' %}active{% endif %}" href="/admin/reports?period=6m">6 months</a>
-  <a class="{% if period=='12m' %}active{% endif %}" href="/admin/reports?period=12m">1 year</a>
+<div class="admin-title finance-page-title">
+  <div>
+    <div class="eyebrow">Business performance</div>
+    <h1>Reports</h1>
+    <p class="muted">Revenue, collection, expenses and profit based on catering event dates. Cancelled orders are excluded.</p>
+  </div>
+  <a class="btn secondary" href="/admin/transactions">Transactions</a>
 </div>
-<p class="help" style="margin-top:8px">{{ start_date.strftime('%d %b %Y') }} – {{ end_date.strftime('%d %b %Y') }}</p>
-<div class="report-grid" style="margin-top:14px">
-  <div class="report-metric"><span>Orders</span><strong>{{ order_count }}</strong></div>
-  <div class="report-metric"><span>Customers</span><strong>{{ customer_count }}</strong></div>
-  <div class="report-metric"><span>Booked revenue</span><strong>€{{ '%.2f'|format(booked_revenue) }}</strong></div>
-  <div class="report-metric"><span>Money collected</span><strong>€{{ '%.2f'|format(collected) }}</strong></div>
-  <div class="report-metric"><span>Outstanding</span><strong>€{{ '%.2f'|format(outstanding) }}</strong></div>
-  <div class="report-metric expense"><span>Expenses</span><strong>€{{ '%.2f'|format(expenses) }}</strong></div>
-  <div class="report-metric profit"><span>Expected profit</span><strong>€{{ '%.2f'|format(expected_profit) }}</strong></div>
-  <div class="report-metric cash"><span>Cash profit</span><strong>€{{ '%.2f'|format(cash_profit) }}</strong></div>
+
+<form class="report-filterbar" method="get" action="/admin/reports">
+  <div class="field">
+    <label for="report-period">Reporting period</label>
+    <select id="report-period" name="period">
+      {% for value, label in period_options %}<option value="{{ value }}" {% if period==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <button class="btn" type="submit">Update report</button>
+</form>
+
+<div class="finance-period-line">
+  <strong>{{ period_label }}</strong>
+  <span>{% if start_date %}{{ start_date.strftime('%d %b %Y') }} – {% endif %}{{ end_date.strftime('%d %b %Y') }}</span>
 </div>
-<section class="card" style="margin-top:16px">
-  <div class="admin-title"><div><h2 style="font-size:1.3rem">Catering profitability</h2><p class="muted">Open a row to manage its payments and expenses.</p></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Order</th><th>Event</th><th>Price</th><th>Collected</th><th>Expenses</th><th>Expected profit</th><th>Cash profit</th></tr></thead><tbody>
-  {% for row in rows %}{% set order=row.order %}{% set f=row.finance %}<tr><td><a href="/admin/transactions/{{ order.id }}"><strong>{{ order.order_number }}</strong><br><span class="help">{{ order.customer.name }}</span></a></td><td>{{ order.event_date.strftime('%d %b %Y') }}</td><td>€{{ '%.2f'|format(f.final_price) }}</td><td>€{{ '%.2f'|format(f.total_paid) }}</td><td>€{{ '%.2f'|format(f.total_expenses) }}</td><td>€{{ '%.2f'|format(f.expected_profit) }}</td><td>€{{ '%.2f'|format(f.cash_profit) }}</td></tr>{% else %}<tr><td colspan="7">No orders in this period.</td></tr>{% endfor %}
+
+<section class="report-kpi-grid" aria-label="Financial report summary">
+  <div class="report-kpi"><span>Orders</span><strong>{{ order_count }}</strong><small>Catering orders in period</small></div>
+  <div class="report-kpi"><span>Unique customers</span><strong>{{ customer_count }}</strong><small>Customers served in period</small></div>
+  <div class="report-kpi"><span>Booked revenue</span><strong>€{{ '%.2f'|format(booked_revenue) }}</strong><small>Final agreed order values</small></div>
+  <div class="report-kpi positive"><span>Money collected</span><strong>€{{ '%.2f'|format(collected) }}</strong><small>Payments actually received</small></div>
+  <div class="report-kpi warning"><span>Outstanding</span><strong>€{{ '%.2f'|format(outstanding) }}</strong><small>Still due from customers</small></div>
+  <div class="report-kpi expense"><span>Expenses</span><strong>€{{ '%.2f'|format(expenses) }}</strong><small>Recorded catering costs</small></div>
+  <div class="report-kpi profit"><span>Expected profit</span><strong>€{{ '%.2f'|format(expected_profit) }}</strong><small>Booked revenue minus expenses</small></div>
+  <div class="report-kpi cash"><span>Cash profit</span><strong>€{{ '%.2f'|format(cash_profit) }}</strong><small>Collected money minus expenses</small></div>
+</section>
+
+<section class="report-insight-grid" aria-label="Report highlights">
+  <article class="report-insight-card">
+    <span>Highest paid order</span>
+    {% if highest_paid %}<strong>€{{ '%.2f'|format(highest_paid.finance.total_paid) }}</strong><p>{{ highest_paid.order.order_number }} · {{ highest_paid.order.customer.name }}</p><a href="/admin/transactions/{{ highest_paid.order.id }}">Open order →</a>{% else %}<strong>—</strong><p>No payments in this period.</p>{% endif %}
+  </article>
+  <article class="report-insight-card">
+    <span>Most profitable order</span>
+    {% if most_profitable %}<strong>€{{ '%.2f'|format(most_profitable.finance.expected_profit) }}</strong><p>{{ most_profitable.order.order_number }} · {{ most_profitable.order.customer.name }}</p><a href="/admin/transactions/{{ most_profitable.order.id }}">Open order →</a>{% else %}<strong>—</strong><p>No positive profit recorded.</p>{% endif %}
+  </article>
+  <article class="report-insight-card">
+    <span>Top customer by booked revenue</span>
+    {% if top_customer %}<strong>€{{ '%.2f'|format(top_customer.revenue) }}</strong><p>{{ top_customer.customer.name }} · {{ top_customer.orders }} order{% if top_customer.orders != 1 %}s{% endif %}</p>{% else %}<strong>—</strong><p>No priced customer orders.</p>{% endif %}
+  </article>
+</section>
+
+<section class="card finance-table-card">
+  <div class="finance-section-heading"><div><h2>Catering profitability</h2><p class="muted">Detailed order-level breakdown for {{ period_label|lower }}.</p></div></div>
+  <div class="finance-table-wrap"><table class="finance-table"><thead><tr><th>Order</th><th>Event</th><th>Price</th><th>Collected</th><th>Expenses</th><th>Outstanding</th><th>Expected profit</th></tr></thead><tbody>
+  {% for row in rows %}{% set order=row.order %}{% set f=row.finance %}<tr class="finance-click-row" onclick="window.location='/admin/transactions/{{ order.id }}'" tabindex="0" onkeydown="if(event.key==='Enter'){window.location='/admin/transactions/{{ order.id }}'}"><td><strong>{{ order.order_number }}</strong><small>{{ order.customer.name }}</small></td><td>{{ order.event_date.strftime('%d %b %Y') }}<small>{{ order.event_name }}</small></td><td>€{{ '%.2f'|format(f.final_price) }}</td><td class="money-positive">€{{ '%.2f'|format(f.total_paid) }}</td><td class="money-expense">€{{ '%.2f'|format(f.total_expenses) }}</td><td class="money-warning">€{{ '%.2f'|format(f.balance_due) }}</td><td class="money-profit">€{{ '%.2f'|format(f.expected_profit) }}</td></tr>{% else %}<tr><td colspan="7"><div class="empty">No orders in this reporting period.</div></td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endblock %}

@@ -17,6 +17,24 @@
   <div class="finance-stat cash"><span>Cash profit</span><strong>€{{ '%.2f'|format(finance.cash_profit) }}</strong></div>
 </div>
 
+<section class="card" id="invoice" style="margin-top:14px">
+  <div class="admin-title">
+    <div><div class="eyebrow">Customer document</div><h2 style="font-size:1.35rem">Invoice</h2><p class="muted">{{ invoice_number }} · Status: <strong>{{ invoice_status }}</strong></p></div>
+    {% if order.final_price is not none %}<span class="payment-badge payment-{{ finance.payment_status }}">{{ invoice_status }}</span>{% endif %}
+  </div>
+  {% if order.final_price is none %}
+    <div class="notice">Set the final catering price first. The invoice becomes available once the order is priced.</div>
+  {% else %}
+    <div class="invoice-admin-actions">
+      <a class="btn" href="{{ invoice_url }}" target="_blank">Open customer invoice</a>
+      <a class="btn secondary" href="/admin/orders/{{ order.id }}/invoice.pdf">Download invoice PDF</a>
+      <button class="btn secondary" type="button" data-copy-invoice data-url="{{ invoice_url }}">Copy invoice link</button>
+      {% if not order.invoice_sent_at and finance.payment_status != 'paid' %}<form method="post" action="/admin/orders/{{ order.id }}/invoice/mark-sent"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn secondary" type="submit">Mark invoice sent</button></form>{% endif %}
+    </div>
+    {% if order.invoice_sent_at %}<p class="help" style="margin-top:10px">Marked sent {{ order.invoice_sent_at.strftime('%d %b %Y %H:%M') }}.</p>{% endif %}
+  {% endif %}
+</section>
+
 <section class="card" style="margin-top:14px">
   <div class="admin-title"><div><h2 style="font-size:1.25rem">Price & payment status</h2><p class="muted">Payment status is calculated automatically from the final price and payments recorded below.</p></div><span class="payment-badge payment-{{ finance.payment_status }}">{{ finance.payment_status.replace('_',' ').title() }}</span></div>
   <form method="post" action="/admin/transactions/{{ order.id }}/price" class="compact">
@@ -30,39 +48,21 @@
   <h2 style="font-size:1.25rem">Payments received</h2>
   <form method="post" action="/admin/transactions/{{ order.id }}/payments" class="compact finance-entry-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="admin-form-grid two">
-      <div class="field"><label>Amount (€)</label><input name="amount" type="number" min="0.01" step="0.01" required></div>
-      <div class="field"><label>Payment date</label><input name="payment_date" type="date" value="{{ today.isoformat() }}" required></div>
-      <div class="field"><label>Method</label><input name="method" placeholder="Cash, card, bank transfer"></div>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Optional receipt / transfer reference"></div>
-    </div>
+    <div class="admin-form-grid two"><div class="field"><label>Amount (€)</label><input name="amount" type="number" min="0.01" step="0.01" required></div><div class="field"><label>Payment date</label><input name="payment_date" type="date" value="{{ today.isoformat() }}" required></div><div class="field"><label>Method</label><input name="method" placeholder="Cash, card, bank transfer"></div><div class="field"><label>Reference</label><input name="reference" placeholder="Optional receipt / transfer reference"></div></div>
     <div class="field" style="margin-top:10px"><label>Note</label><input name="note" placeholder="Optional payment note"></div>
     <button class="btn small" type="submit" style="margin-top:10px">Add payment</button>
   </form>
-  <div class="finance-records">
-    {% for payment in order.payments %}
-    <div class="finance-record"><div><strong>€{{ '%.2f'|format(payment.amount) }}</strong><span>{{ payment.payment_date.strftime('%d %b %Y') }}{% if payment.method %} · {{ payment.method }}{% endif %}{% if payment.reference %} · {{ payment.reference }}{% endif %}</span>{% if payment.note %}<small>{{ payment.note }}</small>{% endif %}</div><form method="post" action="/admin/payments/{{ payment.id }}/delete" onsubmit="return confirm('Delete this payment record?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Delete</button></form></div>
-    {% else %}<div class="empty" style="margin-top:12px">No payments recorded yet.</div>{% endfor %}
-  </div>
+  <div class="finance-records">{% for payment in order.payments %}<div class="finance-record"><div><strong>€{{ '%.2f'|format(payment.amount) }}</strong><span>{{ payment.payment_date.strftime('%d %b %Y') }}{% if payment.method %} · {{ payment.method }}{% endif %}{% if payment.reference %} · {{ payment.reference }}{% endif %}</span>{% if payment.note %}<small>{{ payment.note }}</small>{% endif %}</div><form method="post" action="/admin/payments/{{ payment.id }}/delete" onsubmit="return confirm('Delete this payment record?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Delete</button></form></div>{% else %}<div class="empty" style="margin-top:12px">No payments recorded yet.</div>{% endfor %}</div>
 </section>
 
 <section class="card" id="expenses" style="margin-top:14px">
-  <h2 style="font-size:1.25rem">Catering expenses</h2>
-  <p class="muted">Record costs specifically connected to this catering order.</p>
+  <h2 style="font-size:1.25rem">Catering expenses</h2><p class="muted">Record costs specifically connected to this catering order.</p>
   <form method="post" action="/admin/transactions/{{ order.id }}/expenses" class="compact finance-entry-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="admin-form-grid two">
-      <div class="field"><label>Expense name</label><input name="name" required placeholder="e.g. Ingredients, staff, transport"></div>
-      <div class="field"><label>Amount (€)</label><input name="amount" type="number" min="0.01" step="0.01" required></div>
-      <div class="field"><label>Expense date</label><input name="expense_date" type="date" value="{{ today.isoformat() }}" required></div>
-      <div class="field"><label>Note</label><input name="note" placeholder="Optional expense note"></div>
-    </div>
+    <div class="admin-form-grid two"><div class="field"><label>Expense name</label><input name="name" required placeholder="e.g. Ingredients, staff, transport"></div><div class="field"><label>Amount (€)</label><input name="amount" type="number" min="0.01" step="0.01" required></div><div class="field"><label>Expense date</label><input name="expense_date" type="date" value="{{ today.isoformat() }}" required></div><div class="field"><label>Note</label><input name="note" placeholder="Optional expense note"></div></div>
     <button class="btn small" type="submit" style="margin-top:10px">Add expense</button>
   </form>
-  <div class="finance-records">
-    {% for expense in order.expenses %}
-    <div class="finance-record"><div><strong>{{ expense.name }} · €{{ '%.2f'|format(expense.amount) }}</strong><span>{{ expense.expense_date.strftime('%d %b %Y') }}</span>{% if expense.note %}<small>{{ expense.note }}</small>{% endif %}</div><form method="post" action="/admin/expenses/{{ expense.id }}/delete" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Delete</button></form></div>
-    {% else %}<div class="empty" style="margin-top:12px">No expenses recorded yet.</div>{% endfor %}
-  </div>
+  <div class="finance-records">{% for expense in order.expenses %}<div class="finance-record"><div><strong>{{ expense.name }} · €{{ '%.2f'|format(expense.amount) }}</strong><span>{{ expense.expense_date.strftime('%d %b %Y') }}</span>{% if expense.note %}<small>{{ expense.note }}</small>{% endif %}</div><form method="post" action="/admin/expenses/{{ expense.id }}/delete" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Delete</button></form></div>{% else %}<div class="empty" style="margin-top:12px">No expenses recorded yet.</div>{% endfor %}</div>
 </section>
 {% endblock %}
+{% block scripts %}<script>document.querySelector('[data-copy-invoice]')?.addEventListener('click',async(e)=>{await navigator.clipboard.writeText(e.currentTarget.dataset.url);e.currentTarget.textContent='Copied'});</script>{% endblock %}

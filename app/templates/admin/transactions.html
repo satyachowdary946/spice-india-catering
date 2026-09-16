@@ -1,42 +1,108 @@
 {% extends "admin/admin_base.html" %}
 {% block title %}Transactions · Catering Admin{% endblock %}
 {% block body %}
-<div class="admin-title">
+<div class="admin-title finance-page-title">
   <div>
     <div class="eyebrow">Finance</div>
     <h1>Transactions</h1>
-    <p class="muted">Track final prices, payments, balances, expenses and profit for each catering order.</p>
+    <p class="muted">Manage catering prices, payments, expenses, balances and profit from one place.</p>
   </div>
   <a class="btn secondary" href="/admin/reports">View reports</a>
 </div>
-<form class="card compact" method="get" action="/admin/transactions">
-  <div class="admin-form-grid two">
-    <div class="field"><label>Search</label><input name="q" value="{{ q }}" placeholder="Order, customer, phone, event"></div>
-    <div class="field"><label>Payment status</label><select name="payment_status">
+
+<form class="finance-filterbar" method="get" action="/admin/transactions" aria-label="Transaction filters">
+  <div class="finance-filter-search field">
+    <label for="transaction-q">Search</label>
+    <input id="transaction-q" name="q" value="{{ q }}" placeholder="Order, customer, phone or event">
+  </div>
+  <div class="field">
+    <label for="transaction-period">Period</label>
+    <select id="transaction-period" name="period">
+      {% for value, label in period_options %}<option value="{{ value }}" {% if period==value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="payment-status">Payment</label>
+    <select id="payment-status" name="payment_status">
       <option value="">All payment statuses</option>
       <option value="not_priced" {% if selected_payment_status=='not_priced' %}selected{% endif %}>Not priced</option>
       <option value="unpaid" {% if selected_payment_status=='unpaid' %}selected{% endif %}>Unpaid</option>
       <option value="part_paid" {% if selected_payment_status=='part_paid' %}selected{% endif %}>Part paid</option>
       <option value="paid" {% if selected_payment_status=='paid' %}selected{% endif %}>Paid</option>
-    </select></div>
+    </select>
   </div>
-  <button class="btn small" type="submit" style="margin-top:10px">Filter</button>
+  <div class="field">
+    <label for="expense-filter">Expenses</label>
+    <select id="expense-filter" name="expense_filter">
+      <option value="">All orders</option>
+      <option value="with_expenses" {% if selected_expense_filter=='with_expenses' %}selected{% endif %}>Has expenses</option>
+      <option value="without_expenses" {% if selected_expense_filter=='without_expenses' %}selected{% endif %}>No expenses</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="transaction-sort">Sort by</label>
+    <select id="transaction-sort" name="sort">
+      <option value="latest" {% if selected_sort=='latest' %}selected{% endif %}>Latest event</option>
+      <option value="oldest" {% if selected_sort=='oldest' %}selected{% endif %}>Oldest event</option>
+      <option value="highest_value" {% if selected_sort=='highest_value' %}selected{% endif %}>Highest order value</option>
+      <option value="highest_paid" {% if selected_sort=='highest_paid' %}selected{% endif %}>Highest amount paid</option>
+      <option value="highest_profit" {% if selected_sort=='highest_profit' %}selected{% endif %}>Highest profit</option>
+      <option value="highest_outstanding" {% if selected_sort=='highest_outstanding' %}selected{% endif %}>Largest balance due</option>
+    </select>
+  </div>
+  <div class="finance-filter-actions">
+    <button class="btn" type="submit">Apply filters</button>
+    <a class="btn ghost" href="/admin/transactions">Reset</a>
+  </div>
 </form>
-<div class="transaction-list" style="margin-top:14px">
-{% for row in rows %}
-  {% set order=row.order %}{% set f=row.finance %}
-  <a class="transaction-row" href="/admin/transactions/{{ order.id }}">
-    <div class="transaction-main">
-      <strong>{{ order.order_number }} · {{ order.customer.name }}</strong>
-      <small>{{ order.event_name }} · {{ order.event_date.strftime('%d %b %Y') }} · {{ order.adults + order.kids }} guests</small>
-    </div>
-    <div class="transaction-money"><span>Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(f.final_price) }}{% else %}—{% endif %}</strong></div>
-    <div class="transaction-money"><span>Paid</span><strong>€{{ '%.2f'|format(f.total_paid) }}</strong></div>
-    <div class="transaction-money"><span>Expenses</span><strong>€{{ '%.2f'|format(f.total_expenses) }}</strong></div>
-    <span class="payment-badge payment-{{ f.payment_status }}">{{ f.payment_status.replace('_',' ').title() }}</span>
-  </a>
-{% else %}
-  <div class="empty">No matching transactions.</div>
-{% endfor %}
+
+<div class="finance-period-line">
+  <strong>{{ period_label }}</strong>
+  <span>{% if start_date %}{{ start_date.strftime('%d %b %Y') }} – {% endif %}{{ end_date.strftime('%d %b %Y') }}</span>
 </div>
+
+<section class="finance-overview-grid" aria-label="Transaction summary">
+  <div class="finance-overview-card"><span>Orders shown</span><strong>{{ rows|length }}</strong></div>
+  <div class="finance-overview-card"><span>Order value</span><strong>€{{ '%.2f'|format(total_final) }}</strong></div>
+  <div class="finance-overview-card positive"><span>Collected</span><strong>€{{ '%.2f'|format(total_paid) }}</strong></div>
+  <div class="finance-overview-card warning"><span>Outstanding</span><strong>€{{ '%.2f'|format(total_outstanding) }}</strong></div>
+  <div class="finance-overview-card expense"><span>Expenses</span><strong>€{{ '%.2f'|format(total_expenses) }}</strong></div>
+</section>
+
+{% if highest_paid %}
+<section class="finance-highlight-card">
+  <div>
+    <span class="finance-highlight-label">Highest paid order · {{ period_label }}</span>
+    <strong>{{ highest_paid.order.order_number }}</strong>
+    <small>{{ highest_paid.order.customer.name }} · {{ highest_paid.order.event_name }} · {{ highest_paid.order.event_date.strftime('%d %b %Y') }}</small>
+  </div>
+  <div class="finance-highlight-value">€{{ '%.2f'|format(highest_paid.finance.total_paid) }}</div>
+  <a class="btn secondary small" href="/admin/transactions/{{ highest_paid.order.id }}">Open</a>
+</section>
+{% endif %}
+
+<section class="card finance-table-card">
+  <div class="finance-section-heading">
+    <div><h2>Order finances</h2><p class="muted">Open any order to record payments, expenses and generate the customer invoice.</p></div>
+  </div>
+  <div class="finance-table-wrap">
+    <table class="finance-table">
+      <thead><tr><th>Order</th><th>Event</th><th>Final price</th><th>Collected</th><th>Outstanding</th><th>Expenses</th><th>Profit</th><th>Payment</th></tr></thead>
+      <tbody>
+      {% for row in rows %}{% set order=row.order %}{% set f=row.finance %}
+        <tr class="finance-click-row" onclick="window.location='/admin/transactions/{{ order.id }}'" tabindex="0" onkeydown="if(event.key==='Enter'){window.location='/admin/transactions/{{ order.id }}'}">
+          <td><strong>{{ order.order_number }}</strong><small>{{ order.customer.name }}</small></td>
+          <td>{{ order.event_name }}<small>{{ order.event_date.strftime('%d %b %Y') }} · {{ order.adults + order.kids }} guests</small></td>
+          <td>{% if order.final_price is not none %}€{{ '%.2f'|format(f.final_price) }}{% else %}<span class="muted">Not priced</span>{% endif %}</td>
+          <td class="money-positive">€{{ '%.2f'|format(f.total_paid) }}</td>
+          <td class="money-warning">€{{ '%.2f'|format(f.balance_due) }}</td>
+          <td class="money-expense">€{{ '%.2f'|format(f.total_expenses) }}</td>
+          <td class="money-profit">€{{ '%.2f'|format(f.expected_profit) }}</td>
+          <td><span class="payment-badge payment-{{ f.payment_status }}">{{ f.payment_status.replace('_',' ').title() }}</span></td>
+        </tr>
+      {% else %}<tr><td colspan="8"><div class="empty">No transactions match these filters.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}
