@@ -115,3 +115,10 @@ Existing orders, customers, menus, payments, expenses, and admin accounts are pr
 - Requested extra-dish controls were restyled for clear high-contrast readability in the dark admin theme.
 - Reports now include a **Download PDF report** action that respects the selected reporting period and contains financial totals, order-level income/profitability, and recorded expense details.
 - Production HTML pages use no-cache response headers and static CSS/JS URLs use a `build4` cache-busting version so phones receive new releases more reliably.
+
+## Build 5 customer management
+- Customer list now supports search, activity filters and sorting.
+- Admin can open a customer profile and edit name, phone, WhatsApp, saved address and Eircode.
+- Customer numbers remain immutable.
+- New quote submissions update the customer's saved address to the latest supplied event address without modifying historical order addresses.
+- Permanent customer deletion is allowed only when there are no linked orders, preventing accidental destruction of order/accounting history.

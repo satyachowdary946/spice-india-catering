@@ -1,5 +1,66 @@
-{% extends "admin/admin_base.html" %}{% block title %}Customers · Catering Admin{% endblock %}{% block body %}
-<div class="admin-title"><div><div class="eyebrow">Customer records</div><h1>Customers</h1><p class="muted">Customer numbers are created automatically from submitted quote requests.</p></div></div>
-<form class="card compact" method="get"><div class="copy-row"><input name="q" value="{{ q }}" placeholder="Search customer number, name or phone"><button class="btn small" type="submit">Search</button></div></form>
-<div class="table-wrap" style="margin-top:14px"><table><thead><tr><th>Customer</th><th>Contact</th><th>Orders</th><th>Latest event</th></tr></thead><tbody>{% for c in customers %}<tr><td><strong>{{ c.customer_number }}</strong><br>{{ c.name }}</td><td>{{ c.phone }}{% if c.whatsapp %}<br><span class="muted">WA {{ c.whatsapp }}</span>{% endif %}</td><td>{{ c.orders|length }}</td><td>{% if c.orders %}{% set latest=(c.orders|sort(attribute='created_at', reverse=true)|first) %}<a href="/admin/orders/{{ latest.id }}"><strong>{{ latest.order_number }}</strong></a><br>{{ latest.event_name }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="4">No customers yet.</td></tr>{% endfor %}</tbody></table></div>
+{% extends "admin/admin_base.html" %}
+{% block title %}Customers · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Customer records</div>
+    <h1>Customers</h1>
+    <p class="muted">Search, filter and manage customer contact details. Customer numbers stay fixed.</p>
+  </div>
+</div>
+
+{% if request.query_params.get('deleted') %}<div class="notice success">Customer deleted.</div>{% endif %}
+
+<form class="card compact customer-filter-bar" method="get">
+  <div class="admin-form-grid customer-filter-grid">
+    <div class="field customer-search-field">
+      <label for="customer-search">Search</label>
+      <input id="customer-search" name="q" value="{{ q }}" placeholder="Number, name, phone, address or Eircode">
+    </div>
+    <div class="field">
+      <label for="customer-activity">Customer activity</label>
+      <select id="customer-activity" name="activity">
+        <option value="all" {% if activity == 'all' %}selected{% endif %}>All customers</option>
+        <option value="with_orders" {% if activity == 'with_orders' %}selected{% endif %}>With orders</option>
+        <option value="no_orders" {% if activity == 'no_orders' %}selected{% endif %}>No orders</option>
+        <option value="upcoming" {% if activity == 'upcoming' %}selected{% endif %}>Upcoming catering</option>
+        <option value="past" {% if activity == 'past' %}selected{% endif %}>Past only</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="customer-sort">Sort</label>
+      <select id="customer-sort" name="sort">
+        <option value="recent" {% if sort == 'recent' %}selected{% endif %}>Recently updated</option>
+        <option value="name" {% if sort == 'name' %}selected{% endif %}>Name A–Z</option>
+        <option value="number" {% if sort == 'number' %}selected{% endif %}>Customer number</option>
+        <option value="most_orders" {% if sort == 'most_orders' %}selected{% endif %}>Most orders</option>
+        <option value="latest_event" {% if sort == 'latest_event' %}selected{% endif %}>Latest event</option>
+      </select>
+    </div>
+  </div>
+  <div class="actions" style="margin-top:12px">
+    <button class="btn small" type="submit">Apply filters</button>
+    {% if q or activity != 'all' or sort != 'recent' %}<a class="btn ghost small" href="/admin/customers">Clear</a>{% endif %}
+  </div>
+</form>
+
+<div class="table-wrap customer-table" style="margin-top:14px">
+  <table>
+    <thead><tr><th>Customer</th><th>Contact</th><th>Orders</th><th>Latest event</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      {% set c = row.customer %}
+      <tr>
+        <td><strong>{{ c.customer_number }}</strong><br>{{ c.name }}{% if c.eircode %}<br><span class="muted">{{ c.eircode }}</span>{% endif %}</td>
+        <td>{{ c.phone }}{% if c.whatsapp %}<br><span class="muted">WA {{ c.whatsapp }}</span>{% endif %}{% if c.address %}<br><span class="muted customer-address-preview">{{ c.address }}</span>{% endif %}</td>
+        <td><strong>{{ row.order_count }}</strong>{% if row.upcoming_count %}<br><span class="customer-upcoming">{{ row.upcoming_count }} upcoming</span>{% endif %}</td>
+        <td>{% if row.latest_order %}<a href="/admin/orders/{{ row.latest_order.id }}"><strong>{{ row.latest_order.order_number }}</strong></a><br>{{ row.latest_order.event_name }} · {{ row.latest_order.event_date.strftime('%d %b %Y') }}{% else %}—{% endif %}</td>
+        <td><a class="btn secondary small" href="/admin/customers/{{ c.id }}">View / edit</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5">No customers match these filters.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

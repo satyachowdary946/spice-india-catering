@@ -123,6 +123,46 @@ def test_end_to_end_quote_and_admin_flow():
         home=client.get('/')
         assert "has-food-bg" in home.text
 
+        # Build 5: customer filters and editable customer profile
+        from sqlalchemy import select
+        from app.db import SessionLocal
+        from app.models import Customer
+        with SessionLocal() as db:
+            test_customer=db.scalar(select(Customer).where(Customer.phone=='+353871234567'))
+            assert test_customer is not None
+            customer_id=test_customer.id
+
+        customers=client.get('/admin/customers?activity=with_orders&sort=most_orders')
+        assert customers.status_code==200
+        assert 'Test Customer' in customers.text
+        assert 'Apply filters' in customers.text
+        assert 'N37 TEST' in customers.text
+
+        customer_detail=client.get(f'/admin/customers/{customer_id}')
+        assert customer_detail.status_code==200
+        customer_csrf=csrf_from(customer_detail.text)
+        customer_edit=client.post(f'/admin/customers/{customer_id}/edit', data={
+            'csrf_token':customer_csrf,
+            'name':'Test Customer Updated',
+            'phone':'+353871234567',
+            'whatsapp':'+353871234567',
+            'address':'Updated saved address',
+            'eircode':'N37 EDIT',
+        }, follow_redirects=False)
+        assert customer_edit.status_code==303
+        customer_detail=client.get(f'/admin/customers/{customer_id}')
+        assert 'Test Customer Updated' in customer_detail.text
+        assert 'Updated saved address' in customer_detail.text
+        assert 'N37 EDIT' in customer_detail.text
+
+        customer_csrf=csrf_from(customer_detail.text)
+        blocked_delete=client.post(f'/admin/customers/{customer_id}/delete', data={
+            'csrf_token':customer_csrf,
+            'confirm_customer_number':f'CUS-{customer_id:05d}',
+        }, follow_redirects=False)
+        assert blocked_delete.status_code==303
+        assert 'error=' in blocked_delete.headers['location']
+
         orders=client.get('/admin/orders')
         assert orders.status_code==200
         assert 'Test Customer' in orders.text
@@ -281,6 +321,23 @@ def test_end_to_end_quote_and_admin_flow():
         assert deleted.status_code==303
         assert deleted.headers['location']=='/admin/orders?deleted=1'
         assert client.get(f'/admin/orders/{cleanup_id}').status_code==404
+
+        # Build 5: customers with no linked orders can be permanently removed.
+        with SessionLocal() as db:
+            orphan=Customer(
+                customer_number='CUS-99999', name='Orphan Test Customer',
+                phone='+353870000001', whatsapp='', address='Old address', eircode='N37 OLD'
+            )
+            db.add(orphan); db.commit(); db.refresh(orphan)
+            orphan_id=orphan.id
+        orphan_page=client.get(f'/admin/customers/{orphan_id}')
+        orphan_csrf=csrf_from(orphan_page.text)
+        orphan_delete=client.post(f'/admin/customers/{orphan_id}/delete', data={
+            'csrf_token':orphan_csrf, 'confirm_customer_number':'CUS-99999'
+        }, follow_redirects=False)
+        assert orphan_delete.status_code==303
+        assert orphan_delete.headers['location']=='/admin/customers?deleted=1'
+        assert client.get(f'/admin/customers/{orphan_id}').status_code==404
 
 
 def teardown_module():

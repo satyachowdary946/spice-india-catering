@@ -100,6 +100,17 @@ def ensure_schema_compatibility() -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE quote_requests ADD COLUMN voided_at TIMESTAMP"))
 
+    if "customers" in tables:
+        columns = {c["name"] for c in inspector.get_columns("customers")}
+        additions = {
+            "address": "TEXT DEFAULT ''",
+            "eircode": "VARCHAR(30) DEFAULT ''",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE customers ADD COLUMN {name} {ddl}"))
+
     if "menu_items" in tables:
         columns = {c["name"] for c in inspector.get_columns("menu_items")}
         additions = {
@@ -501,13 +512,24 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
 
     customer = db.scalar(select(Customer).where(Customer.phone == phone).order_by(Customer.id.asc()).limit(1))
     if not customer:
-        customer = Customer(customer_number=f"TMP-{secrets.token_hex(8)}", name=name, phone=phone, whatsapp=whatsapp)
+        customer = Customer(
+            customer_number=f"TMP-{secrets.token_hex(8)}",
+            name=name,
+            phone=phone,
+            whatsapp=whatsapp,
+            address=address,
+            eircode=eircode,
+        )
         db.add(customer)
         db.flush()
         customer.customer_number = f"CUS-{customer.id:05d}"
     else:
         customer.name = name
         customer.whatsapp = whatsapp
+        # Customer profile keeps the most recently supplied event address.
+        # Historical order addresses remain untouched on their original orders.
+        customer.address = address
+        customer.eircode = eircode
 
     order = QuoteRequest(
         order_number=f"TMP-{secrets.token_hex(8)}",
@@ -1521,15 +1543,187 @@ def admin_invoice_mark_sent(order_id: int, request: Request, csrf_token: str = F
 
 
 @app.get("/admin/customers", response_class=HTMLResponse)
-def admin_customers(request: Request, q: str = "", db: Session = Depends(get_db)):
+def admin_customers(
+    request: Request,
+    q: str = "",
+    activity: str = "all",
+    sort: str = "recent",
+    db: Session = Depends(get_db),
+):
     admin, redirect = admin_or_redirect(request, db)
-    if redirect: return redirect
-    stmt = select(Customer).options(selectinload(Customer.orders)).order_by(Customer.updated_at.desc())
+    if redirect:
+        return redirect
+
+    stmt = select(Customer).options(selectinload(Customer.orders))
     if q.strip():
         like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Customer.customer_number.ilike(like), Customer.name.ilike(like), Customer.phone.ilike(like), Customer.whatsapp.ilike(like)))
-    customers = db.scalars(stmt).all()
-    return render(request, db, "admin/customers.html", admin=admin, customers=customers, q=q)
+        stmt = stmt.where(
+            or_(
+                Customer.customer_number.ilike(like),
+                Customer.name.ilike(like),
+                Customer.phone.ilike(like),
+                Customer.whatsapp.ilike(like),
+                Customer.address.ilike(like),
+                Customer.eircode.ilike(like),
+            )
+        )
+
+    customers = list(db.scalars(stmt).unique().all())
+    today = date.today()
+    rows = []
+    for customer in customers:
+        live_orders = [o for o in customer.orders if o.status != "voided"]
+        upcoming = [o for o in live_orders if o.status != "cancelled" and o.event_date >= today]
+        past = [o for o in live_orders if o.event_date < today or o.status in {"completed", "cancelled"}]
+        latest_order = max(live_orders, key=lambda o: (o.event_date, o.created_at), default=None)
+        rows.append({
+            "customer": customer,
+            "orders": live_orders,
+            "order_count": len(live_orders),
+            "upcoming_count": len(upcoming),
+            "past_count": len(past),
+            "latest_order": latest_order,
+        })
+
+    if activity == "with_orders":
+        rows = [r for r in rows if r["order_count"] > 0]
+    elif activity == "no_orders":
+        rows = [r for r in rows if r["order_count"] == 0]
+    elif activity == "upcoming":
+        rows = [r for r in rows if r["upcoming_count"] > 0]
+    elif activity == "past":
+        rows = [r for r in rows if r["order_count"] > 0 and r["upcoming_count"] == 0]
+    else:
+        activity = "all"
+
+    if sort == "name":
+        rows.sort(key=lambda r: r["customer"].name.casefold())
+    elif sort == "number":
+        rows.sort(key=lambda r: r["customer"].customer_number)
+    elif sort == "most_orders":
+        rows.sort(key=lambda r: (r["order_count"], r["customer"].updated_at), reverse=True)
+    elif sort == "latest_event":
+        rows.sort(key=lambda r: (r["latest_order"].event_date if r["latest_order"] else date.min, r["customer"].updated_at), reverse=True)
+    else:
+        sort = "recent"
+        rows.sort(key=lambda r: r["customer"].updated_at, reverse=True)
+
+    return render(
+        request,
+        db,
+        "admin/customers.html",
+        admin=admin,
+        rows=rows,
+        q=q,
+        activity=activity,
+        sort=sort,
+    )
+
+
+@app.get("/admin/customers/{customer_id}", response_class=HTMLResponse)
+def admin_customer_detail(customer_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    customer = db.scalar(
+        select(Customer)
+        .where(Customer.id == customer_id)
+        .options(selectinload(Customer.orders))
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    orders = sorted(customer.orders, key=lambda o: (o.event_date, o.created_at), reverse=True)
+    return render(
+        request,
+        db,
+        "admin/customer_detail.html",
+        admin=admin,
+        customer=customer,
+        orders=orders,
+    )
+
+
+@app.post("/admin/customers/{customer_id}/edit")
+def admin_customer_edit(
+    customer_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    name: str = Form(...),
+    phone: str = Form(...),
+    whatsapp: str = Form(""),
+    address: str = Form(""),
+    eircode: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    clean_name = name.strip()
+    clean_customer_phone = clean_phone(phone)
+    clean_whatsapp = clean_phone(whatsapp) if whatsapp.strip() else ""
+    clean_address = address.strip()
+    clean_eircode = eircode.strip().upper()
+
+    if len(clean_name) < 2:
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+customer+name", status_code=303)
+    if len(clean_customer_phone) < 7:
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+phone+number", status_code=303)
+
+    duplicate = db.scalar(
+        select(Customer).where(Customer.phone == clean_customer_phone, Customer.id != customer_id).limit(1)
+    )
+    if duplicate:
+        return RedirectResponse(
+            f"/admin/customers/{customer_id}?error=That+phone+number+already+belongs+to+{quote(duplicate.customer_number)}",
+            status_code=303,
+        )
+
+    customer.name = clean_name
+    customer.phone = clean_customer_phone
+    customer.whatsapp = clean_whatsapp
+    customer.address = clean_address
+    customer.eircode = clean_eircode
+    db.commit()
+    return RedirectResponse(f"/admin/customers/{customer_id}?saved=1", status_code=303)
+
+
+@app.post("/admin/customers/{customer_id}/delete")
+def admin_customer_delete(
+    customer_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    confirm_customer_number: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    customer = db.scalar(
+        select(Customer)
+        .where(Customer.id == customer_id)
+        .options(selectinload(Customer.orders))
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    if confirm_customer_number.strip().upper() != customer.customer_number.upper():
+        return RedirectResponse(
+            f"/admin/customers/{customer_id}?error=Customer+number+confirmation+did+not+match",
+            status_code=303,
+        )
+    if customer.orders:
+        return RedirectResponse(
+            f"/admin/customers/{customer_id}?error=Delete+or+void+and+permanently+remove+all+linked+orders+before+deleting+this+customer",
+            status_code=303,
+        )
+    db.delete(customer)
+    db.commit()
+    return RedirectResponse("/admin/customers?deleted=1", status_code=303)
 
 
 

@@ -1264,3 +1264,22 @@ input[type="file"]::file-selector-button:hover {
   .finance-page-title>.actions{width:100%}
   .finance-page-title>.actions .btn{flex:1 1 180px}
 }
+
+/* =========================================================
+   BUILD 5 — customer records management
+   ========================================================= */
+.customer-filter-grid{grid-template-columns:minmax(0,2fr) repeat(2,minmax(180px,1fr))}
+.customer-table td{vertical-align:middle}
+.customer-address-preview{display:inline-block;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.customer-upcoming{display:inline-flex;margin-top:4px;color:#7ff0df;font-size:.76rem;font-weight:850}
+.customer-detail-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,.65fr);gap:16px;align-items:start}
+.customer-address-field{grid-column:1 / -1}
+.customer-profile-summary{position:sticky;top:92px}
+.customer-summary-number{font-size:3.2rem;font-weight:950;line-height:1;color:var(--theme-teal);margin-top:8px}
+.customer-summary-block{display:grid;gap:3px;margin-top:22px;padding-top:16px;border-top:1px solid var(--theme-line)}
+.customer-summary-block span,.customer-summary-block small{color:var(--theme-muted)}
+.customer-danger-zone{border-color:#864a45;background:rgba(91,27,23,.18)}
+.customer-danger-zone h2{color:#ffc0ba}
+.customer-danger-zone .btn[disabled]{opacity:.55;cursor:not-allowed}
+@media(max-width:900px){.customer-filter-grid{grid-template-columns:1fr 1fr}.customer-search-field{grid-column:1 / -1}.customer-detail-grid{grid-template-columns:1fr}.customer-profile-summary{position:static}}
+@media(max-width:620px){.customer-filter-grid{grid-template-columns:1fr}.customer-search-field{grid-column:auto}.customer-table table{min-width:780px}}

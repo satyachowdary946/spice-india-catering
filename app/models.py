@@ -92,6 +92,8 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(String(160))
     phone: Mapped[str] = mapped_column(String(60), index=True)
     whatsapp: Mapped[str] = mapped_column(String(60), default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    eircode: Mapped[str] = mapped_column(String(30), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     orders: Mapped[list[QuoteRequest]] = relationship(back_populates="customer")

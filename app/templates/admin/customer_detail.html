@@ -1,0 +1,85 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}{{ customer.customer_number }} · Customer Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Customer profile</div>
+    <h1>{{ customer.name }}</h1>
+    <p class="muted">{{ customer.customer_number }} · Created {{ customer.created_at.strftime('%d %b %Y') }}</p>
+  </div>
+  <a class="btn secondary" href="/admin/customers">Back to customers</a>
+</div>
+
+{% if request.query_params.get('saved') %}<div class="notice success">Customer details saved.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<div class="customer-detail-grid">
+  <section class="card">
+    <div class="eyebrow">Contact details</div>
+    <h2 style="font-size:1.4rem">Edit customer</h2>
+    <p class="muted">Changing these details does not rewrite historical order details.</p>
+    <form method="post" action="/admin/customers/{{ customer.id }}/edit" class="compact">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="admin-form-grid two">
+        <div class="field"><label>Customer number</label><input value="{{ customer.customer_number }}" disabled></div>
+        <div class="field"><label for="customer-name">Name</label><input id="customer-name" name="name" value="{{ customer.name }}" required></div>
+        <div class="field"><label for="customer-phone">Phone</label><input id="customer-phone" name="phone" type="tel" value="{{ customer.phone }}" required></div>
+        <div class="field"><label for="customer-whatsapp">WhatsApp</label><input id="customer-whatsapp" name="whatsapp" type="tel" value="{{ customer.whatsapp or '' }}"></div>
+        <div class="field customer-address-field"><label for="customer-address">Saved address</label><textarea id="customer-address" name="address">{{ customer.address or '' }}</textarea><span class="help">New quote submissions update this saved address to the most recently supplied event address. Old orders are not changed.</span></div>
+        <div class="field"><label for="customer-eircode">Eircode</label><input id="customer-eircode" name="eircode" value="{{ customer.eircode or '' }}"></div>
+      </div>
+      <button class="btn" type="submit" style="margin-top:14px">Save customer</button>
+    </form>
+  </section>
+
+  <aside class="card customer-profile-summary">
+    <div class="eyebrow">Summary</div>
+    <div class="customer-summary-number">{{ orders|length }}</div>
+    <div class="muted">linked order{% if orders|length != 1 %}s{% endif %}</div>
+    {% if orders %}
+      {% set latest = orders|first %}
+      <div class="customer-summary-block"><span>Latest event</span><strong>{{ latest.event_name }}</strong><small>{{ latest.event_date.strftime('%d %b %Y') }}</small></div>
+    {% endif %}
+  </aside>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <div class="admin-title" style="margin-bottom:10px"><div><div class="eyebrow">Order history</div><h2 style="font-size:1.35rem">Linked orders</h2></div></div>
+  {% if orders %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Order</th><th>Event</th><th>Date</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for order in orders %}
+        <tr>
+          <td><strong>{{ order.order_number }}</strong></td>
+          <td>{{ order.event_name }}<br><span class="muted">{{ order.adults + order.kids }} guests</span></td>
+          <td>{{ order.event_date.strftime('%d %b %Y') }}</td>
+          <td><span class="badge {{ order.status }}">{{ status_labels.get(order.status, order.status|title) }}</span></td>
+          <td><a class="btn secondary small" href="/admin/orders/{{ order.id }}">Open</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty">No orders are linked to this customer.</div>
+  {% endif %}
+</section>
+
+<section class="card customer-danger-zone" style="margin-top:16px">
+  <div class="eyebrow">Danger zone</div>
+  <h2 style="font-size:1.3rem">Delete customer permanently</h2>
+  {% if orders %}
+    <p>This customer cannot be deleted while linked orders exist. Permanently remove the linked orders first if this is genuine test or junk data.</p>
+    <button class="btn danger" type="button" disabled>Delete blocked — {{ orders|length }} linked order{% if orders|length != 1 %}s{% endif %}</button>
+  {% else %}
+    <p>Use this only for test, duplicate or junk customer records. This cannot be undone.</p>
+    <form method="post" action="/admin/customers/{{ customer.id }}/delete" onsubmit="return confirm('Permanently delete this customer? This cannot be undone.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field" style="max-width:420px"><label for="confirm-customer-number">Type {{ customer.customer_number }} to confirm</label><input id="confirm-customer-number" name="confirm_customer_number" required autocomplete="off"></div>
+      <button class="btn danger" type="submit" style="margin-top:10px">Delete customer permanently</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}
