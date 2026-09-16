@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Track my catering order{% endblock %}
+{% block body %}
+<main class="section">
+  <div class="container form-card">
+    <div class="track-order-card card">
+      <div class="eyebrow">Order lookup</div>
+      <h1 style="font-size:2.25rem">View my order</h1>
+      <p class="lead">Use the Order ID and the phone or WhatsApp number used for the catering request. This works from any device.</p>
+      {% if error %}<div class="notice error" style="margin-bottom:14px">{{ error }}</div>{% endif %}
+      <form method="post" action="/track">
+        <div class="field">
+          <label for="track-order-number">Order ID</label>
+          <input id="track-order-number" name="order_number" value="{{ order_number or '' }}" placeholder="CAT-2026-00004" autocomplete="off" required>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label for="track-phone">Phone / WhatsApp number</label>
+          <input id="track-phone" name="phone" value="{{ phone or '' }}" type="tel" inputmode="tel" autocomplete="tel" required>
+        </div>
+        <button class="btn block" type="submit" style="margin-top:16px">Find my order</button>
+      </form>
+      <p class="help" style="margin-top:12px">Your Order ID is shown on the confirmation page and any link shared by the catering team.</p>
+    </div>
+  </div>
+</main>
+{% endblock %}

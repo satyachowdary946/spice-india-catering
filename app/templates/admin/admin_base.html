@@ -21,6 +21,8 @@
       <a href="/admin" class="{% if request.url.path == '/admin' %}active{% endif %}">Dashboard</a>
       <a href="/admin/orders" class="{% if request.url.path.startswith('/admin/orders') %}active{% endif %}">Orders & quotes</a>
       <a href="/admin/customers" class="{% if request.url.path.startswith('/admin/customers') %}active{% endif %}">Customers</a>
+      <a href="/admin/transactions" class="{% if request.url.path.startswith('/admin/transactions') %}active{% endif %}">Transactions</a>
+      <a href="/admin/reports" class="{% if request.url.path.startswith('/admin/reports') %}active{% endif %}">Reports</a>
       <a href="/admin/menus" class="{% if request.url.path.startswith('/admin/menus') %}active{% endif %}">Menus</a>
       <a href="/admin/share" class="{% if request.url.path.startswith('/admin/share') %}active{% endif %}">Share links</a>
       <a href="/admin/settings" class="{% if request.url.path.startswith('/admin/settings') %}active{% endif %}">Business settings</a>
@@ -30,8 +32,8 @@
   <nav class="admin-bottom-nav no-print" aria-label="Admin mobile navigation">
     <a href="/admin" class="{% if request.url.path == '/admin' %}active{% endif %}"><span>⌂</span>Home</a>
     <a href="/admin/orders" class="{% if request.url.path.startswith('/admin/orders') %}active{% endif %}"><span>▤</span>Orders</a>
-    <a href="/admin/customers" class="{% if request.url.path.startswith('/admin/customers') %}active{% endif %}"><span>◉</span>Customers</a>
-    <a href="/admin/menus" class="{% if request.url.path.startswith('/admin/menus') %}active{% endif %}"><span>≡</span>Menus</a>
+    <a href="/admin/transactions" class="{% if request.url.path.startswith('/admin/transactions') %}active{% endif %}"><span>€</span>Money</a>
+    <a href="/admin/reports" class="{% if request.url.path.startswith('/admin/reports') %}active{% endif %}"><span>▥</span>Reports</a>
     <a href="/admin/settings" class="{% if request.url.path.startswith('/admin/settings') %}active{% endif %}"><span>⚙</span>Settings</a>
   </nav>
   {% block scripts %}{% endblock %}

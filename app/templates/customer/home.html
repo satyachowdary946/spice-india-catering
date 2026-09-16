@@ -2,32 +2,18 @@
 {% block title %}{{ business.company_name or 'Catering Ordering' }}{% endblock %}
 {% block body %}
 <main>
-  <section class="hero">
-    <div class="container hero-grid">
-      <div>
+  <section class="hero home-hero {% if hero_item_id %}has-food-bg{% endif %}" {% if hero_item_id %}style="--home-food-image:url('/homepage-food-image')"{% endif %}>
+    <div class="container home-hero-inner">
+      <div class="home-hero-copy">
         <div class="eyebrow">Catering ordering</div>
-        <h1>Choose the food. Send the event details. Get your quote.</h1>
-        <p class="lead">A simple mobile-first catering request. Browse the menu, build your selection and send it to the catering team for confirmation and final pricing.</p>
-        <div class="hero-actions">
-          <a class="btn" href="/order">Start catering request</a>
-          <a class="btn secondary" href="/menu">Browse menu first</a>
-          <a class="btn ghost" href="#" data-recent-order hidden>View my recent order</a>
+        <h1>Plan your catering in a few simple steps.</h1>
+        <p class="lead">Choose your menu, send your event details and receive a confirmed quote from the catering team.</p>
+        <div class="home-primary-actions" aria-label="Catering actions">
+          <a class="btn home-main-btn" href="/order">Start catering request</a>
+          <a class="btn secondary home-main-btn" href="/menu">Browse menu first</a>
+          <a class="btn ghost home-main-btn home-track-btn" href="/track">Track / view my order</a>
         </div>
       </div>
-      <div class="card dark">
-        <div class="kicker" style="color:#c7c9cc">How it works</div>
-        <h2 style="margin-top:8px">Three clear steps</h2>
-        <p><strong>1.</strong> Add event and guest details.</p>
-        <p><strong>2.</strong> Pick menu items by cuisine, diet and category.</p>
-        <p><strong>3.</strong> Send a quote request. The team will negotiate, price and confirm your order.</p>
-      </div>
-    </div>
-  </section>
-  <section class="section">
-    <div class="container grid three">
-      <div class="card"><div class="kicker">Fast selection</div><h3>South or North Indian</h3><p class="muted">Switch cuisine and dietary choices without losing your basket.</p></div>
-      <div class="card"><div class="kicker">Saved progress</div><h3>Your draft stays on this device</h3><p class="muted">Close the page and return later. Your event details and basket remain until you send or clear them.</p></div>
-      <div class="card"><div class="kicker">Clear confirmation</div><h3>One final order page</h3><p class="muted">See your selected menu, order status, final quote and updates in one shareable link.</p></div>
     </div>
   </section>
 </main>

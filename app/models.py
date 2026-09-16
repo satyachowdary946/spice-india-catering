@@ -120,6 +120,8 @@ class QuoteRequest(Base):
     items: Mapped[list[QuoteItem]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="QuoteItem.sort_order")
     history: Mapped[list[StatusHistory]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="StatusHistory.created_at")
     requested_dishes: Mapped[list[RequestedDish]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="RequestedDish.id")
+    payments: Mapped[list[Payment]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="Payment.payment_date, Payment.id")
+    expenses: Mapped[list[Expense]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="Expense.expense_date, Expense.id")
 
 
 class QuoteItem(Base):
@@ -146,6 +148,31 @@ class RequestedDish(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     order: Mapped[QuoteRequest] = relationship(back_populates="requested_dishes")
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("quote_requests.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    payment_date: Mapped[date] = mapped_column(Date, default=date.today)
+    method: Mapped[str] = mapped_column(String(60), default="")
+    reference: Mapped[str] = mapped_column(String(160), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    order: Mapped[QuoteRequest] = relationship(back_populates="payments")
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("quote_requests.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    expense_date: Mapped[date] = mapped_column(Date, default=date.today)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    order: Mapped[QuoteRequest] = relationship(back_populates="expenses")
 
 
 class StatusHistory(Base):

@@ -1,0 +1,68 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}{{ order.order_number }} · Transactions{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div><div class="eyebrow">Order finance</div><h1>{{ order.order_number }}</h1><p class="muted">{{ order.customer.name }} · {{ order.event_name }} · {{ order.event_date.strftime('%d %b %Y') }}</p></div>
+  <div class="actions"><a class="btn secondary" href="/admin/orders/{{ order.id }}">Open order</a><a class="btn secondary" href="/admin/transactions">All transactions</a></div>
+</div>
+{% if request.query_params.get('saved') %}<div class="notice success">Finance record updated.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}
+
+<div class="finance-summary-grid">
+  <div class="finance-stat"><span>Final price</span><strong>€{{ '%.2f'|format(finance.final_price) if order.final_price is not none else '—' }}</strong></div>
+  <div class="finance-stat"><span>Collected</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div>
+  <div class="finance-stat"><span>Balance due</span><strong>€{{ '%.2f'|format(finance.balance_due) }}</strong></div>
+  <div class="finance-stat expense"><span>Expenses</span><strong>€{{ '%.2f'|format(finance.total_expenses) }}</strong></div>
+  <div class="finance-stat profit"><span>Expected profit</span><strong>€{{ '%.2f'|format(finance.expected_profit) }}</strong></div>
+  <div class="finance-stat cash"><span>Cash profit</span><strong>€{{ '%.2f'|format(finance.cash_profit) }}</strong></div>
+</div>
+
+<section class="card" style="margin-top:14px">
+  <div class="admin-title"><div><h2 style="font-size:1.25rem">Price & payment status</h2><p class="muted">Payment status is calculated automatically from the final price and payments recorded below.</p></div><span class="payment-badge payment-{{ finance.payment_status }}">{{ finance.payment_status.replace('_',' ').title() }}</span></div>
+  <form method="post" action="/admin/transactions/{{ order.id }}/price" class="compact">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="inline-fields"><div class="field"><label>Final catering price (€)</label><input name="final_price" type="number" min="0" step="0.01" value="{{ order.final_price if order.final_price is not none else '' }}" placeholder="0.00"></div><div></div></div>
+    <button class="btn small" type="submit" style="margin-top:10px">Save final price</button>
+  </form>
+</section>
+
+<section class="card" id="payments" style="margin-top:14px">
+  <h2 style="font-size:1.25rem">Payments received</h2>
+  <form method="post" action="/admin/transactions/{{ order.id }}/payments" class="compact finance-entry-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="admin-form-grid two">
+      <div class="field"><label>Amount (€)</label><input name="amount" type="number" min="0.01" step="0.01" required></div>
+      <div class="field"><label>Payment date</label><input name="payment_date" type="date" value="{{ today.isoformat() }}" required></div>
+      <div class="field"><label>Method</label><input name="method" placeholder="Cash, card, bank transfer"></div>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="Optional receipt / transfer reference"></div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>Note</label><input name="note" placeholder="Optional payment note"></div>
+    <button class="btn small" type="submit" style="margin-top:10px">Add payment</button>
+  </form>
+  <div class="finance-records">
+    {% for payment in order.payments %}
+    <div class="finance-record"><div><strong>€{{ '%.2f'|format(payment.amount) }}</strong><span>{{ payment.payment_date.strftime('%d %b %Y') }}{% if payment.method %} · {{ payment.method }}{% endif %}{% if payment.reference %} · {{ payment.reference }}{% endif %}</span>{% if payment.note %}<small>{{ payment.note }}</small>{% endif %}</div><form method="post" action="/admin/payments/{{ payment.id }}/delete" onsubmit="return confirm('Delete this payment record?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Delete</button></form></div>
+    {% else %}<div class="empty" style="margin-top:12px">No payments recorded yet.</div>{% endfor %}
+  </div>
+</section>
+
+<section class="card" id="expenses" style="margin-top:14px">
+  <h2 style="font-size:1.25rem">Catering expenses</h2>
+  <p class="muted">Record costs specifically connected to this catering order.</p>
+  <form method="post" action="/admin/transactions/{{ order.id }}/expenses" class="compact finance-entry-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="admin-form-grid two">
+      <div class="field"><label>Expense name</label><input name="name" required placeholder="e.g. Ingredients, staff, transport"></div>
+      <div class="field"><label>Amount (€)</label><input name="amount" type="number" min="0.01" step="0.01" required></div>
+      <div class="field"><label>Expense date</label><input name="expense_date" type="date" value="{{ today.isoformat() }}" required></div>
+      <div class="field"><label>Note</label><input name="note" placeholder="Optional expense note"></div>
+    </div>
+    <button class="btn small" type="submit" style="margin-top:10px">Add expense</button>
+  </form>
+  <div class="finance-records">
+    {% for expense in order.expenses %}
+    <div class="finance-record"><div><strong>{{ expense.name }} · €{{ '%.2f'|format(expense.amount) }}</strong><span>{{ expense.expense_date.strftime('%d %b %Y') }}</span>{% if expense.note %}<small>{{ expense.note }}</small>{% endif %}</div><form method="post" action="/admin/expenses/{{ expense.id }}/delete" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Delete</button></form></div>
+    {% else %}<div class="empty" style="margin-top:12px">No expenses recorded yet.</div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

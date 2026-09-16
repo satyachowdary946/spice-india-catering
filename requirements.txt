@@ -8,4 +8,3 @@ reportlab==4.4.9
 httpx==0.28.1
 psycopg[binary]==3.3.2
 python-dotenv==1.2.1
-resend[async]==2.44.0

@@ -2,7 +2,6 @@ import html
 import os
 
 import httpx
-import resend
 
 
 # =========================================================
@@ -118,26 +117,11 @@ async def notify_admin_new_quote_email(
     admin_url: str,
 ) -> tuple[bool, str]:
     """
-    Send an admin email through Resend when a customer
-    submits a new catering quote.
-
-    Email failures must never block quote creation.
+    Send an admin email through Resend when a customer submits a quote.
+    Email failure never blocks quote creation.
     """
-
     if not resend_email_configured():
-
-        return (
-            False,
-            "Resend email notification is not configured.",
-        )
-
-
-    resend.api_key = os.environ["RESEND_API_KEY"]
-
-    from_email = os.environ["RESEND_FROM_EMAIL"]
-
-    admin_email = os.environ["ADMIN_NOTIFICATION_EMAIL"]
-
+        return False, "Resend email notification is not configured."
 
     safe_order_number = html.escape(order_number)
     safe_customer_name = html.escape(customer_name)
@@ -147,225 +131,48 @@ async def notify_admin_new_quote_email(
     safe_event_time = html.escape(event_time)
     safe_admin_url = html.escape(admin_url, quote=True)
 
-
-    params: resend.Emails.SendParams = {
-
-        "from": from_email,
-
-        "to": [admin_email],
-
-        "subject": (
-            f"New Catering Quote — "
-            f"{order_number} — {customer_name}"
-        ),
-
+    payload = {
+        "from": os.environ["RESEND_FROM_EMAIL"],
+        "to": [os.environ["ADMIN_NOTIFICATION_EMAIL"]],
+        "subject": f"New Catering Quote — {order_number} — {customer_name}",
         "html": f"""
-        <div style="
-            font-family:Arial,sans-serif;
-            max-width:640px;
-            margin:0 auto;
-            color:#111827;
-        ">
-
-            <div style="
-                background:#111817;
-                color:#ffffff;
-                padding:22px;
-                border-radius:12px 12px 0 0;
-            ">
-
-                <div style="
-                    font-size:13px;
-                    text-transform:uppercase;
-                    letter-spacing:1px;
-                    color:#63daca;
-                    font-weight:700;
-                ">
-                    Spice India Catering
-                </div>
-
-                <h1 style="
-                    margin:8px 0 0;
-                    font-size:24px;
-                ">
-                    New catering quote received
-                </h1>
-
-            </div>
-
-
-            <div style="
-                border:1px solid #e5e7eb;
-                border-top:0;
-                padding:22px;
-                border-radius:0 0 12px 12px;
-            ">
-
-                <p>
-                    A new catering request has been submitted.
-                </p>
-
-
-                <table style="
-                    width:100%;
-                    border-collapse:collapse;
-                    margin:18px 0;
-                ">
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Order
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {safe_order_number}
-                        </td>
-                    </tr>
-
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Customer
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {safe_customer_name}
-                        </td>
-                    </tr>
-
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Phone
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {safe_customer_phone}
-                        </td>
-                    </tr>
-
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Event
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {safe_event_name}
-                        </td>
-                    </tr>
-
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Date
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {safe_event_date}
-                        </td>
-                    </tr>
-
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Time
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {safe_event_time}
-                        </td>
-                    </tr>
-
-
-                    <tr>
-                        <td style="
-                            padding:8px 0;
-                            font-weight:bold;
-                        ">
-                            Guests
-                        </td>
-
-                        <td style="padding:8px 0;">
-                            {total_people}
-                        </td>
-                    </tr>
-
-                </table>
-
-
-                <a
-                    href="{safe_admin_url}"
-                    style="
-                        display:inline-block;
-                        padding:12px 18px;
-                        background:#111817;
-                        color:#ffffff;
-                        text-decoration:none;
-                        border-radius:8px;
-                        font-weight:bold;
-                    "
-                >
-                    Open order in admin
-                </a>
-
-
-                <p style="
-                    margin-top:22px;
-                    font-size:12px;
-                    color:#6b7280;
-                ">
-                    This is an automatic notification from
-                    Spice India Catering.
-                </p>
-
-            </div>
-
+        <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#111827">
+          <div style="background:#111817;color:#fff;padding:22px;border-radius:12px 12px 0 0">
+            <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#63daca;font-weight:700">Spice India Catering</div>
+            <h1 style="margin:8px 0 0;font-size:24px">New catering quote received</h1>
+          </div>
+          <div style="border:1px solid #e5e7eb;border-top:0;padding:22px;border-radius:0 0 12px 12px">
+            <p>A new catering request has been submitted.</p>
+            <table style="width:100%;border-collapse:collapse;margin:18px 0">
+              <tr><td style="padding:8px 0;font-weight:bold">Order</td><td>{safe_order_number}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Customer</td><td>{safe_customer_name}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Phone</td><td>{safe_customer_phone}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Event</td><td>{safe_event_name}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Date</td><td>{safe_event_date}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Time</td><td>{safe_event_time}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Guests</td><td>{total_people}</td></tr>
+            </table>
+            <a href="{safe_admin_url}" style="display:inline-block;padding:12px 18px;background:#111817;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Open order in admin</a>
+            <p style="margin-top:22px;font-size:12px;color:#6b7280">Automatic notification from Spice India Catering.</p>
+          </div>
         </div>
         """,
     }
-
+    headers = {
+        "Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
+        "Content-Type": "application/json",
+    }
 
     try:
-
-        result = await resend.Emails.send_async(params)
-
-        email_id = getattr(
-            result,
-            "id",
-            None,
-        )
-
-        if not email_id and isinstance(result, dict):
-            email_id = result.get("id")
-
-        return (
-            True,
-            f"Admin email sent"
-            + (f" ({email_id})" if email_id else "."),
-        )
-
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+        email_id = data.get("id") if isinstance(data, dict) else None
+        return True, "Admin email sent" + (f" ({email_id})" if email_id else ".")
     except Exception as exc:
-
-        return (
-            False,
-            f"Admin email failed: {type(exc).__name__}",
-        )
+        return False, f"Admin email failed: {type(exc).__name__}"

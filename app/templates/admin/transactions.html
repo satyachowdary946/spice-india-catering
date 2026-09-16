@@ -1,0 +1,42 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}Transactions · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Finance</div>
+    <h1>Transactions</h1>
+    <p class="muted">Track final prices, payments, balances, expenses and profit for each catering order.</p>
+  </div>
+  <a class="btn secondary" href="/admin/reports">View reports</a>
+</div>
+<form class="card compact" method="get" action="/admin/transactions">
+  <div class="admin-form-grid two">
+    <div class="field"><label>Search</label><input name="q" value="{{ q }}" placeholder="Order, customer, phone, event"></div>
+    <div class="field"><label>Payment status</label><select name="payment_status">
+      <option value="">All payment statuses</option>
+      <option value="not_priced" {% if selected_payment_status=='not_priced' %}selected{% endif %}>Not priced</option>
+      <option value="unpaid" {% if selected_payment_status=='unpaid' %}selected{% endif %}>Unpaid</option>
+      <option value="part_paid" {% if selected_payment_status=='part_paid' %}selected{% endif %}>Part paid</option>
+      <option value="paid" {% if selected_payment_status=='paid' %}selected{% endif %}>Paid</option>
+    </select></div>
+  </div>
+  <button class="btn small" type="submit" style="margin-top:10px">Filter</button>
+</form>
+<div class="transaction-list" style="margin-top:14px">
+{% for row in rows %}
+  {% set order=row.order %}{% set f=row.finance %}
+  <a class="transaction-row" href="/admin/transactions/{{ order.id }}">
+    <div class="transaction-main">
+      <strong>{{ order.order_number }} · {{ order.customer.name }}</strong>
+      <small>{{ order.event_name }} · {{ order.event_date.strftime('%d %b %Y') }} · {{ order.adults + order.kids }} guests</small>
+    </div>
+    <div class="transaction-money"><span>Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(f.final_price) }}{% else %}—{% endif %}</strong></div>
+    <div class="transaction-money"><span>Paid</span><strong>€{{ '%.2f'|format(f.total_paid) }}</strong></div>
+    <div class="transaction-money"><span>Expenses</span><strong>€{{ '%.2f'|format(f.total_expenses) }}</strong></div>
+    <span class="payment-badge payment-{{ f.payment_status }}">{{ f.payment_status.replace('_',' ').title() }}</span>
+  </a>
+{% else %}
+  <div class="empty">No matching transactions.</div>
+{% endfor %}
+</div>
+{% endblock %}

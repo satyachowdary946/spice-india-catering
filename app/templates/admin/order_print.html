@@ -1,19 +1,32 @@
-{% extends "admin/admin_base.html" %}{% block title %}Print {{ order.order_number }}{% endblock %}{% block body %}
-<div class="confirmation-slip">
+{% extends "admin/admin_base.html" %}
+{% block title %}Print {{ order.order_number }}{% endblock %}
+{% block body %}
+<div class="confirmation-slip build2-slip">
   <div class="actions no-print" style="margin-bottom:14px"><button class="btn" onclick="window.print()">Print</button><a class="btn secondary" href="/admin/orders/{{ order.id }}">Back</a></div>
-  <header class="slip-header"><div><div class="eyebrow">Catering confirmation</div><h1>{{ business.company_name or 'Catering Order' }}</h1><div class="muted">{{ order.order_number }}</div></div><span class="badge {{ order.status }}">{{ order.status }}</span></header>
-  <section class="slip-meta">
-    <div><strong>Date</strong><span>{{ order.event_date.strftime('%d/%m/%Y') }}</span></div>
-    <div><strong>Day</strong><span>{{ order.event_date.strftime('%A') }}</span></div>
-    <div><strong>Time</strong><span>{{ order.event_time.strftime('%H:%M') }}</span></div>
-    <div><strong>Adults</strong><span>{{ order.adults }}</span></div>
-    <div><strong>Kids</strong><span>{{ order.kids }}</span></div>
+
+  <header class="slip-header build2-slip-header">
+    <div class="slip-brand-block"><div class="eyebrow">Catering confirmation</div><h1>{{ business.company_name or 'Catering Order' }}</h1><div class="muted">{{ order.order_number }}</div></div>
+    <div class="slip-event-top">
+      <div><span>DATE</span><strong>{{ order.event_date.strftime('%d/%m/%Y') }}</strong></div>
+      <div><span>DAY</span><strong>{{ order.event_date.strftime('%A') }}</strong></div>
+      <div><span>TIME</span><strong>{{ order.event_time.strftime('%H:%M') }}</strong></div>
+    </div>
+  </header>
+
+  <div class="slip-status-row"><span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span></div>
+
+  <section class="slip-guest-highlight">
+    <div><span>ADULTS</span><strong>{{ order.adults }}</strong></div>
+    <div><span>KIDS</span><strong>{{ order.kids }}</strong></div>
+    <div class="total"><span>TOTAL PEOPLE</span><strong>{{ order.adults + order.kids }}</strong></div>
   </section>
+
   <section class="slip-menu-box">
     <h2>Confirmed menu</h2>
     {% for menu_name, categories in groups.items() %}<div class="slip-menu-name">{{ menu_name }}</div>{% for cat_name, subs in categories.items() %}<div class="slip-category"><strong>{{ cat_name }}</strong>{% for sub_name, items in subs.items() %}{% if sub_name != 'Main Selection' %}<span class="slip-sub">{{ sub_name }}</span>{% endif %}<ul>{% for item in items %}<li>{{ item.item_name }}</li>{% endfor %}</ul>{% endfor %}</div>{% endfor %}{% endfor %}
     {% if approved_requests %}<div class="slip-category"><strong>Approved special requests</strong><ul>{% for dish in approved_requests %}<li>{{ dish.name }}</li>{% endfor %}</ul></div>{% endif %}
   </section>
+
   <section class="slip-comments"><strong>Comments / notes</strong><div class="slip-comment-box">{% if order.customer_notes %}{{ order.customer_notes }}{% endif %}{% if order.customer_notes and order.customer_message %}<br>{% endif %}{% if order.customer_message %}{{ order.customer_message }}{% endif %}</div></section>
   <section class="slip-contact">
     <div><strong>Event</strong><span>{{ order.event_name }}</span></div>

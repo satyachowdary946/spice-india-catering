@@ -3,25 +3,40 @@
 {% block body %}
 <main class="section">
   <div class="container order-sheet">
-    {% if request.query_params.get('submitted') %}<div class="notice success">Quote request sent successfully. Save this page to track the order.</div>{% endif %}
+    {% if request.query_params.get('submitted') %}<div class="notice success">Quote request sent successfully. Save this page or use Track Order with your Order ID and phone number.</div>{% endif %}
     {% if request.query_params.get('cancelled') %}<div class="notice">This order has been cancelled.</div>{% endif %}
-    <div class="order-head" style="margin-top:14px"><div><div class="eyebrow">Catering order</div><h1 style="font-size:2.25rem">{{ order.order_number }}</h1><p class="muted">Customer {{ order.customer.customer_number }}</p></div><span class="badge {{ order.status }}">{{ order.status.replace('_',' ') }}</span></div>
+
+    <div class="order-status-hero" style="margin-top:14px">
+      <div>
+        <div class="eyebrow">Catering order</div>
+        <h1>{{ order.order_number }}</h1>
+        <p class="muted">Customer {{ order.customer.customer_number }}</p>
+      </div>
+      <span class="badge {{ order.status }}">{{ order.status.replace('_',' ') }}</span>
+    </div>
+
+    <section class="event-highlight-grid">
+      <div class="event-highlight"><span>Date</span><strong>{{ order.event_date.strftime('%d %b %Y') }}</strong></div>
+      <div class="event-highlight"><span>Day</span><strong>{{ order.event_date.strftime('%A') }}</strong></div>
+      <div class="event-highlight"><span>Time</span><strong>{{ order.event_time.strftime('%H:%M') }}</strong></div>
+      <div class="event-highlight guest"><span>Total guests</span><strong>{{ order.adults + order.kids }}</strong><small>{{ order.adults }} adults · {{ order.kids }} kids</small></div>
+    </section>
+
     <section class="card">
       <div class="order-meta">
         <div class="meta-row"><strong>Name</strong><span>{{ order.customer.name }}</span></div>
         <div class="meta-row"><strong>Phone</strong><span>{{ order.customer.phone }}</span></div>
         <div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp }}</span></div>
         <div class="meta-row"><strong>Event</strong><span>{{ order.event_name }}</span></div>
-        <div class="meta-row"><strong>Date</strong><span>{{ order.event_date.strftime('%d %b %Y') }}</span></div>
-        <div class="meta-row"><strong>Time</strong><span>{{ order.event_time.strftime('%H:%M') }}</span></div>
-        <div class="meta-row"><strong>Guests</strong><span>{{ order.adults }} adults + {{ order.kids }} kids</span></div>
         <div class="meta-row"><strong>Address</strong><span>{{ order.address }}, {{ order.eircode }}</span></div>
       </div>
       {% if order.final_price is not none %}<div class="card dark" style="margin-top:16px"><div class="kicker" style="color:#c7c9cc">Final quoted price</div><div class="metric-value">€{{ '%.2f'|format(order.final_price) }}</div></div>{% endif %}
       {% if order.customer_message %}<div class="notice" style="margin-top:14px"><strong>Message from catering team</strong><br>{{ order.customer_message }}</div>{% endif %}
       {% if order.customer_notes %}<div class="notice" style="margin-top:14px"><strong>Your notes / special requests</strong><br>{{ order.customer_notes }}</div>{% endif %}
     </section>
+
     {% if order.requested_dishes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Requested extra dishes</h2><p class="muted">Each request is confirmed separately by the catering team.</p><div class="requested-dish-list">{% for dish in order.requested_dishes %}<div class="requested-dish-row"><div><strong>{{ dish.name }}</strong>{% if dish.admin_response %}<div class="help">{{ dish.admin_response }}</div>{% endif %}</div><span class="request-status {{ dish.status }}">{{ dish.status.title() }}</span></div>{% endfor %}</div></section>{% endif %}
+
     <section class="card final-menu" style="margin-top:14px">
       <h2>Selected menu</h2>
       {% for menu_name, categories in groups.items() %}
@@ -31,8 +46,10 @@
         {% endfor %}
       {% endfor %}
     </section>
+
     <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Order timeline</h2><div class="timeline">{% for h in order.history %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong>{% if h.note %}<div class="muted">{{ h.note }}</div>{% endif %}<small>{{ h.created_at.strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
-    <div class="actions no-print" style="margin-top:14px"><button class="btn secondary" onclick="window.print()">Print this order</button>{% if order.status not in ['completed','cancelled'] %}<form method="post" action="/orders/{{ order.public_token }}/cancel" onsubmit="return confirm('Cancel this catering order?')"><button class="btn danger" type="submit">Cancel order</button></form>{% endif %}</div>
+
+    <div class="actions no-print" style="margin-top:14px"><a class="btn secondary" href="/track">Track another order</a><button class="btn secondary" onclick="window.print()">Print this order</button>{% if order.status not in ['completed','cancelled'] %}<form method="post" action="/orders/{{ order.public_token }}/cancel" onsubmit="return confirm('Cancel this catering order?')"><button class="btn danger" type="submit">Cancel order</button></form>{% endif %}</div>
   </div>
 </main>
 {% endblock %}

@@ -32,8 +32,10 @@ from .models import (
     BusinessSettings,
     Category,
     Customer,
+    Expense,
     Menu,
     MenuItem,
+    Payment,
     QuoteItem,
     QuoteRequest,
     RequestedDish,
@@ -171,6 +173,46 @@ def clean_phone(value: str) -> str:
     return re.sub(r"[^0-9+]", "", (value or "").strip())
 
 
+def money(value: Any) -> Decimal:
+    if value is None or value == "":
+        return Decimal("0.00")
+    return Decimal(str(value)).quantize(Decimal("0.01"))
+
+
+def finance_summary(order: QuoteRequest) -> dict[str, Decimal | str]:
+    final_price = money(order.final_price)
+    total_paid = sum((money(p.amount) for p in getattr(order, "payments", []) or []), Decimal("0.00"))
+    total_expenses = sum((money(e.amount) for e in getattr(order, "expenses", []) or []), Decimal("0.00"))
+    balance_due = max(final_price - total_paid, Decimal("0.00"))
+    expected_profit = final_price - total_expenses
+    cash_profit = total_paid - total_expenses
+    if order.final_price is None:
+        payment_status = "not_priced"
+    elif total_paid <= 0:
+        payment_status = "unpaid"
+    elif total_paid < final_price:
+        payment_status = "part_paid"
+    else:
+        payment_status = "paid"
+    return {
+        "final_price": final_price,
+        "total_paid": total_paid,
+        "total_expenses": total_expenses,
+        "balance_due": balance_due,
+        "expected_profit": expected_profit,
+        "cash_profit": cash_profit,
+        "payment_status": payment_status,
+    }
+
+
+def months_ago(day: date, months: int) -> date:
+    total = day.year * 12 + day.month - 1 - months
+    year, month0 = divmod(total, 12)
+    month = month0 + 1
+    import calendar
+    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
 def order_groups(order: QuoteRequest):
     groups: dict[str, dict[str, dict[str, list[QuoteItem]]]] = {}
     for item in order.items:
@@ -196,7 +238,30 @@ async def unauthorized_handler(request: Request, exc: HTTPException):
 # ---------- Public/customer ----------
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
-    return render(request, db, "customer/home.html")
+    hero_item_id = db.scalar(
+        select(MenuItem.id)
+        .where(MenuItem.active.is_(True), MenuItem.image_blob.is_not(None))
+        .order_by(MenuItem.sort_order, MenuItem.id)
+        .limit(1)
+    )
+    return render(request, db, "customer/home.html", hero_item_id=hero_item_id)
+
+
+@app.get("/homepage-food-image")
+def homepage_food_image(db: Session = Depends(get_db)):
+    item = db.scalar(
+        select(MenuItem)
+        .where(MenuItem.active.is_(True), MenuItem.image_blob.is_not(None))
+        .order_by(MenuItem.sort_order, MenuItem.id)
+        .limit(1)
+    )
+    if not item or not item.image_blob:
+        raise HTTPException(status_code=404)
+    return Response(
+        content=item.image_blob,
+        media_type=item.image_content_type or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.get("/order", response_class=HTMLResponse)
@@ -417,32 +482,66 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         admin_order_url(request, order.id),
     )
     email_sent, email_message = await notify_admin_new_quote_email(
-    order.order_number,
-    customer.name,
-    customer.phone,
-    order.event_name,
-    order.event_date.strftime("%d %b %Y"),
-    order.event_time.strftime("%H:%M"),
-    adults + kids,
-    admin_order_url(request, order.id),
-)
+        order.order_number,
+        customer.name,
+        customer.phone,
+        order.event_name,
+        order.event_date.strftime("%d %b %Y"),
+        order.event_time.strftime("%H:%M"),
+        adults + kids,
+        admin_order_url(request, order.id),
+    )
     return {
-    "ok": True,
-    "order_number": order.order_number,
-    "token": order.public_token,
+        "ok": True,
+        "order_number": order.order_number,
+        "token": order.public_token,
+        "notification_sent": sent,
+        "notification_message": notify_message,
+        "email_sent": email_sent,
+        "email_message": email_message,
+    }
+@app.get("/track", response_class=HTMLResponse)
+def track_order_page(request: Request, db: Session = Depends(get_db)):
+    return render(request, db, "customer/track.html")
 
-    "notification_sent": sent,
-    "notification_message": notify_message,
 
-    "email_sent": email_sent,
-    "email_message": email_message,
-}
+@app.post("/track", response_class=HTMLResponse)
+def track_order_submit(
+    request: Request,
+    order_number: str = Form(...),
+    phone: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    order_number = (order_number or "").strip().upper()
+    phone_clean = clean_phone(phone)
+    order = db.scalar(
+        select(QuoteRequest)
+        .join(Customer)
+        .where(
+            func.upper(QuoteRequest.order_number) == order_number,
+            or_(Customer.phone == phone_clean, Customer.whatsapp == phone_clean),
+        )
+        .options(selectinload(QuoteRequest.customer))
+        .limit(1)
+    )
+    if not order:
+        return render(
+            request,
+            db,
+            "customer/track.html",
+            error="We could not find an order matching that Order ID and phone number.",
+            order_number=order_number,
+            phone=phone,
+        )
+    return RedirectResponse(f"/orders/{order.public_token}", status_code=303)
+
+
 @app.get("/orders/{token}", response_class=HTMLResponse)
 def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
     order = db.scalar(
         select(QuoteRequest)
         .where(QuoteRequest.public_token == token)
-        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses))
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -830,13 +929,13 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
     if redirect: return redirect
     order = db.scalar(
         select(QuoteRequest).where(QuoteRequest.id == order_id)
-        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses))
     )
     if not order: raise HTTPException(status_code=404)
     purl = public_order_url(request, order.public_token)
     share_text = f"Catering order {order.order_number}: {purl}"
     wa_url = "https://wa.me/?text=" + quote(share_text)
-    return render(request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order), statuses=ALLOWED_STATUSES, public_url=purl, whatsapp_share_url=wa_url)
+    return render(request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order), statuses=ALLOWED_STATUSES, public_url=purl, whatsapp_share_url=wa_url, finance=finance_summary(order))
 
 
 @app.post("/admin/orders/{order_id}")
@@ -906,36 +1005,130 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=22, leftMargin=22, topMargin=22, bottomMargin=22)
     styles = getSampleStyleSheet()
-    title = ParagraphStyle("TitleCustom", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, alignment=TA_CENTER, textColor=colors.HexColor("#111111"), spaceAfter=12)
-    h2 = ParagraphStyle("H2Custom", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=colors.white, backColor=colors.HexColor("#333333"), borderPadding=6, spaceBefore=10, spaceAfter=6)
-    h3 = ParagraphStyle("H3Custom", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10, leading=13, textColor=colors.HexColor("#444444"), spaceBefore=6, spaceAfter=4)
-    item_style = ParagraphStyle("ItemCustom", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10, leading=14, leftIndent=8, spaceAfter=3)
+
+    company_style = ParagraphStyle(
+        "CompanyTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=17,
+        leading=19,
+        alignment=0,
+        textColor=colors.HexColor("#111111"),
+        spaceAfter=3,
+    )
+    event_label = ParagraphStyle(
+        "EventLabel",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=7,
+        leading=8,
+        textColor=colors.HexColor("#666666"),
+    )
+    event_value = ParagraphStyle(
+        "EventValue",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        leading=15,
+        textColor=colors.HexColor("#111111"),
+    )
+    h2 = ParagraphStyle(
+        "H2Custom",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=14,
+        textColor=colors.white,
+        backColor=colors.HexColor("#333333"),
+        borderPadding=6,
+        spaceBefore=10,
+        spaceAfter=6,
+    )
+    h3 = ParagraphStyle(
+        "H3Custom",
+        parent=styles["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        leading=13,
+        textColor=colors.HexColor("#333333"),
+        spaceBefore=6,
+        spaceAfter=4,
+    )
+    item_style = ParagraphStyle(
+        "ItemCustom",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        leading=14,
+        leftIndent=8,
+        spaceAfter=3,
+    )
     body = styles["BodyText"]
 
-    story = []
     name = biz.company_name.strip() or "Catering Order"
-    story.append(Paragraph(name, title))
-    story.append(Paragraph(f"<b>Order:</b> {order.order_number} &nbsp;&nbsp; <b>Status:</b> {order.status.title()}", body))
-    story.append(Spacer(1, 8))
+    left_header = [
+        Paragraph("CATERING CONFIRMATION", ParagraphStyle("Kicker", parent=body, fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#777777"), leading=9)),
+        Paragraph(name, company_style),
+        Paragraph(order.order_number, body),
+        Paragraph(f"<b>Status:</b> {order.status.replace('_', ' ').title()}", body),
+    ]
+    right_header = Table([
+        [Paragraph("DATE", event_label), Paragraph(order.event_date.strftime("%d/%m/%Y"), event_value)],
+        [Paragraph("DAY", event_label), Paragraph(order.event_date.strftime("%A"), event_value)],
+        [Paragraph("TIME", event_label), Paragraph(order.event_time.strftime("%H:%M"), event_value)],
+    ], colWidths=[34, 100])
+    right_header.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LINEBELOW", (0,0), (-1,-1), 0.5, colors.HexColor("#CCCCCC")),
+    ]))
+
+    header = Table([[left_header, right_header]], colWidths=[220, 150])
+    header.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("LINEBELOW", (0,0), (-1,-1), 2, colors.HexColor("#111111")),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+    ]))
+
+    guest_style = ParagraphStyle("GuestValue", parent=body, fontName="Helvetica-Bold", fontSize=15, leading=17, alignment=TA_CENTER)
+    guest_label = ParagraphStyle("GuestLabel", parent=body, fontName="Helvetica-Bold", fontSize=7, leading=8, alignment=TA_CENTER, textColor=colors.HexColor("#555555"))
+    total_people = order.adults + order.kids
+    guest_table = Table([
+        [Paragraph("ADULTS", guest_label), Paragraph("KIDS", guest_label), Paragraph("TOTAL PEOPLE", guest_label)],
+        [Paragraph(str(order.adults), guest_style), Paragraph(str(order.kids), guest_style), Paragraph(str(total_people), guest_style)],
+    ], colWidths=[123, 123, 124])
+    guest_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F1F3F3")),
+        ("BOX", (0,0), (-1,-1), 0.8, colors.HexColor("#444444")),
+        ("INNERGRID", (0,0), (-1,-1), 0.4, colors.HexColor("#AAAAAA")),
+        ("TOPPADDING", (0,0), (-1,-1), 6),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+    ]))
+
+    story = [header, Spacer(1, 10), guest_table, Spacer(1, 10)]
+
     details = [
-        ["Customer", order.customer.name], ["Customer No.", order.customer.customer_number],
-        ["Phone", order.customer.phone], ["WhatsApp", order.customer.whatsapp],
-        ["Event", order.event_name], ["Date", order.event_date.strftime("%d %b %Y")],
-        ["Day", order.event_date.strftime("%A")], ["Time", order.event_time.strftime("%H:%M")],
-        ["Adults", str(order.adults)], ["Kids", str(order.kids)],
+        ["Customer", order.customer.name],
+        ["Customer No.", order.customer.customer_number],
+        ["Phone", order.customer.phone],
+        ["WhatsApp", order.customer.whatsapp],
+        ["Event", order.event_name],
         ["Address", f"{order.address}, {order.eircode}"],
     ]
     if order.final_price is not None:
         details.append(["Final price", f"€{order.final_price:.2f}"])
     table = Table(details, colWidths=[76, 299])
     table.setStyle(TableStyle([
-        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"), ("FONTNAME", (1,0), (1,-1), "Helvetica"),
-        ("FONTSIZE", (0,0), (-1,-1), 9), ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 5), ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#DDDDDD")),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTNAME", (1,0), (1,-1), "Helvetica"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#DDDDDD")),
     ]))
     story.append(table)
     story.append(Spacer(1, 10))
-    story.append(Paragraph("Selected menu", title))
+    story.append(Paragraph("CONFIRMED MENU", ParagraphStyle("MenuTitle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=16, leading=18, alignment=TA_CENTER, spaceAfter=7)))
 
     for menu_name, categories in order_groups(order).items():
         story.append(Paragraph(menu_name, h2))
@@ -946,17 +1139,20 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
                     story.append(Paragraph(sub_name, body))
                 for item in items:
                     story.append(Paragraph(f"• {item.item_name}", item_style))
+
     approved_requests = [d for d in order.requested_dishes if d.status == "approved"]
     if approved_requests:
         story.append(Paragraph("Approved special requests", h2))
         for dish in approved_requests:
             story.append(Paragraph(f"• {dish.name}", item_style))
+
     comments = [x for x in [order.customer_notes, order.customer_message] if x]
     if comments:
         story.append(Spacer(1, 10))
         story.append(Paragraph("Comments / notes", h2))
         for comment in comments:
             story.append(Paragraph(comment, body))
+
     doc.build(story)
     return buffer.getvalue()
 
@@ -983,6 +1179,296 @@ def admin_customers(request: Request, q: str = "", db: Session = Depends(get_db)
     return render(request, db, "admin/customers.html", admin=admin, customers=customers, q=q)
 
 
+
+# ---------- Transactions / finance ----------
+@app.get("/admin/transactions", response_class=HTMLResponse)
+def admin_transactions(
+    request: Request,
+    q: str = "",
+    payment_status: str = "",
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    stmt = (
+        select(QuoteRequest)
+        .options(
+            selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.payments),
+            selectinload(QuoteRequest.expenses),
+        )
+        .order_by(QuoteRequest.event_date.desc(), QuoteRequest.id.desc())
+    )
+    if q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.join(Customer).where(
+            or_(
+                QuoteRequest.order_number.ilike(like),
+                Customer.customer_number.ilike(like),
+                Customer.name.ilike(like),
+                Customer.phone.ilike(like),
+                QuoteRequest.event_name.ilike(like),
+            )
+        )
+    orders = list(db.scalars(stmt).unique().all())
+    rows = [{"order": order, "finance": finance_summary(order)} for order in orders]
+    valid_payment_statuses = {"not_priced", "unpaid", "part_paid", "paid"}
+    if payment_status in valid_payment_statuses:
+        rows = [row for row in rows if row["finance"]["payment_status"] == payment_status]
+    return render(
+        request,
+        db,
+        "admin/transactions.html",
+        admin=admin,
+        rows=rows,
+        q=q,
+        selected_payment_status=payment_status,
+    )
+
+
+@app.get("/admin/transactions/{order_id}", response_class=HTMLResponse)
+def admin_transaction_detail(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.id == order_id)
+        .options(
+            selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.payments),
+            selectinload(QuoteRequest.expenses),
+        )
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    return render(
+        request,
+        db,
+        "admin/transaction_detail.html",
+        admin=admin,
+        order=order,
+        finance=finance_summary(order),
+        today=date.today(),
+    )
+
+
+@app.post("/admin/transactions/{order_id}/price")
+def admin_transaction_price(
+    order_id: int,
+    request: Request,
+    final_price: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    try:
+        if not final_price.strip():
+            order.final_price = None
+        else:
+            amount = Decimal(final_price.strip())
+            if amount < 0:
+                raise InvalidOperation
+            order.final_price = amount.quantize(Decimal("0.01"))
+    except Exception:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Invalid+final+price", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1", status_code=303)
+
+
+@app.post("/admin/transactions/{order_id}/payments")
+def admin_payment_add(
+    order_id: int,
+    request: Request,
+    amount: str = Form(...),
+    payment_date: str = Form(...),
+    method: str = Form(""),
+    reference: str = Form(""),
+    note: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    try:
+        amount_value = Decimal(amount.strip()).quantize(Decimal("0.01"))
+        if amount_value <= 0:
+            raise InvalidOperation
+        paid_on = date.fromisoformat(payment_date)
+    except Exception:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Enter+a+valid+payment+amount+and+date", status_code=303)
+    db.add(Payment(
+        order_id=order_id,
+        amount=amount_value,
+        payment_date=paid_on,
+        method=method.strip()[:60],
+        reference=reference.strip()[:160],
+        note=note.strip()[:1000],
+    ))
+    db.commit()
+    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#payments", status_code=303)
+
+
+@app.post("/admin/payments/{payment_id}/delete")
+def admin_payment_delete(
+    payment_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    payment = db.get(Payment, payment_id)
+    if not payment:
+        raise HTTPException(status_code=404)
+    order_id = payment.order_id
+    db.delete(payment)
+    db.commit()
+    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#payments", status_code=303)
+
+
+@app.post("/admin/transactions/{order_id}/expenses")
+def admin_expense_add(
+    order_id: int,
+    request: Request,
+    name: str = Form(...),
+    amount: str = Form(...),
+    expense_date: str = Form(...),
+    note: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    try:
+        amount_value = Decimal(amount.strip()).quantize(Decimal("0.01"))
+        if amount_value <= 0:
+            raise InvalidOperation
+        spent_on = date.fromisoformat(expense_date)
+    except Exception:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Enter+a+valid+expense+amount+and+date", status_code=303)
+    if not name.strip():
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Expense+name+is+required", status_code=303)
+    db.add(Expense(
+        order_id=order_id,
+        name=name.strip()[:180],
+        amount=amount_value,
+        expense_date=spent_on,
+        note=note.strip()[:1000],
+    ))
+    db.commit()
+    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#expenses", status_code=303)
+
+
+@app.post("/admin/expenses/{expense_id}/delete")
+def admin_expense_delete(
+    expense_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    expense = db.get(Expense, expense_id)
+    if not expense:
+        raise HTTPException(status_code=404)
+    order_id = expense.order_id
+    db.delete(expense)
+    db.commit()
+    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#expenses", status_code=303)
+
+
+@app.get("/admin/reports", response_class=HTMLResponse)
+def admin_reports(
+    request: Request,
+    period: str = "1m",
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    periods = {"1m": (1, "Last month"), "3m": (3, "Last 3 months"), "6m": (6, "Last 6 months"), "12m": (12, "Last year")}
+    if period not in periods:
+        period = "1m"
+    months, period_label = periods[period]
+    end_date = date.today()
+    start_date = months_ago(end_date, months)
+
+    orders = list(db.scalars(
+        select(QuoteRequest)
+        .where(
+            QuoteRequest.event_date >= start_date,
+            QuoteRequest.event_date <= end_date,
+            QuoteRequest.status != "cancelled",
+        )
+        .options(
+            selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.payments),
+            selectinload(QuoteRequest.expenses),
+        )
+        .order_by(QuoteRequest.event_date.desc())
+    ).unique().all())
+
+    rows = []
+    booked_revenue = Decimal("0.00")
+    collected = Decimal("0.00")
+    expenses = Decimal("0.00")
+    customers: set[int] = set()
+    for order in orders:
+        summary = finance_summary(order)
+        rows.append({"order": order, "finance": summary})
+        booked_revenue += summary["final_price"]
+        collected += summary["total_paid"]
+        expenses += summary["total_expenses"]
+        customers.add(order.customer_id)
+
+    outstanding = max(booked_revenue - collected, Decimal("0.00"))
+    expected_profit = booked_revenue - expenses
+    cash_profit = collected - expenses
+
+    return render(
+        request,
+        db,
+        "admin/reports.html",
+        admin=admin,
+        rows=rows,
+        period=period,
+        period_label=period_label,
+        start_date=start_date,
+        end_date=end_date,
+        order_count=len(orders),
+        customer_count=len(customers),
+        booked_revenue=booked_revenue,
+        collected=collected,
+        expenses=expenses,
+        outstanding=outstanding,
+        expected_profit=expected_profit,
+        cash_profit=cash_profit,
+    )
+
+
+
 # ---------- SEO/system ----------
 @app.get("/robots.txt")
 def robots():
@@ -992,7 +1478,7 @@ def robots():
 @app.get("/sitemap.xml")
 def sitemap(request: Request):
     base = str(request.base_url).rstrip("/")
-    xml = f'''<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>{base}/</loc></url>\n  <url><loc>{base}/menu</loc></url>\n  <url><loc>{base}/order</loc></url>\n</urlset>'''
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>{base}/</loc></url>\n  <url><loc>{base}/menu</loc></url>\n  <url><loc>{base}/order</loc></url>\n  <url><loc>{base}/track</loc></url>\n</urlset>'''
     return Response(xml, media_type="application/xml")
 
 

@@ -1,0 +1,28 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}Reports · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title"><div><div class="eyebrow">Business performance</div><h1>Reports</h1><p class="muted">Financial summary based on catering event dates. Cancelled orders are excluded.</p></div><a class="btn secondary" href="/admin/transactions">Transactions</a></div>
+<div class="report-periods" aria-label="Report period">
+  <a class="{% if period=='1m' %}active{% endif %}" href="/admin/reports?period=1m">1 month</a>
+  <a class="{% if period=='3m' %}active{% endif %}" href="/admin/reports?period=3m">3 months</a>
+  <a class="{% if period=='6m' %}active{% endif %}" href="/admin/reports?period=6m">6 months</a>
+  <a class="{% if period=='12m' %}active{% endif %}" href="/admin/reports?period=12m">1 year</a>
+</div>
+<p class="help" style="margin-top:8px">{{ start_date.strftime('%d %b %Y') }} – {{ end_date.strftime('%d %b %Y') }}</p>
+<div class="report-grid" style="margin-top:14px">
+  <div class="report-metric"><span>Orders</span><strong>{{ order_count }}</strong></div>
+  <div class="report-metric"><span>Customers</span><strong>{{ customer_count }}</strong></div>
+  <div class="report-metric"><span>Booked revenue</span><strong>€{{ '%.2f'|format(booked_revenue) }}</strong></div>
+  <div class="report-metric"><span>Money collected</span><strong>€{{ '%.2f'|format(collected) }}</strong></div>
+  <div class="report-metric"><span>Outstanding</span><strong>€{{ '%.2f'|format(outstanding) }}</strong></div>
+  <div class="report-metric expense"><span>Expenses</span><strong>€{{ '%.2f'|format(expenses) }}</strong></div>
+  <div class="report-metric profit"><span>Expected profit</span><strong>€{{ '%.2f'|format(expected_profit) }}</strong></div>
+  <div class="report-metric cash"><span>Cash profit</span><strong>€{{ '%.2f'|format(cash_profit) }}</strong></div>
+</div>
+<section class="card" style="margin-top:16px">
+  <div class="admin-title"><div><h2 style="font-size:1.3rem">Catering profitability</h2><p class="muted">Open a row to manage its payments and expenses.</p></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Order</th><th>Event</th><th>Price</th><th>Collected</th><th>Expenses</th><th>Expected profit</th><th>Cash profit</th></tr></thead><tbody>
+  {% for row in rows %}{% set order=row.order %}{% set f=row.finance %}<tr><td><a href="/admin/transactions/{{ order.id }}"><strong>{{ order.order_number }}</strong><br><span class="help">{{ order.customer.name }}</span></a></td><td>{{ order.event_date.strftime('%d %b %Y') }}</td><td>€{{ '%.2f'|format(f.final_price) }}</td><td>€{{ '%.2f'|format(f.total_paid) }}</td><td>€{{ '%.2f'|format(f.total_expenses) }}</td><td>€{{ '%.2f'|format(f.expected_profit) }}</td><td>€{{ '%.2f'|format(f.cash_profit) }}</td></tr>{% else %}<tr><td colspan="7">No orders in this period.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

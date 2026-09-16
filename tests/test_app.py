@@ -135,6 +135,64 @@ def test_end_to_end_quote_and_admin_flow():
         assert pdf.headers['content-type']=='application/pdf'
         assert pdf.content.startswith(b'%PDF')
 
+        # Build 2: cross-device order lookup
+        track=client.get('/track')
+        assert track.status_code==200
+        assert 'Order ID' in track.text
+        tracked=client.post('/track', data={
+            'order_number': body['order_number'],
+            'phone': '+353871234567',
+        }, follow_redirects=False)
+        assert tracked.status_code==303
+        assert tracked.headers['location'].endswith('/orders/'+body['token'])
+
+        # Build 2: transactions, payments, expenses and reports
+        transactions=client.get('/admin/transactions')
+        assert transactions.status_code==200
+        assert body['order_number'] in transactions.text
+
+        transaction=client.get('/admin/transactions/1')
+        assert transaction.status_code==200
+        finance_csrf=csrf_from(transaction.text)
+
+        pay=client.post('/admin/transactions/1/payments', data={
+            'csrf_token':finance_csrf,
+            'amount':'300.00',
+            'payment_date':str(date.today()),
+            'method':'Bank transfer',
+            'reference':'TEST-REF',
+            'note':'Deposit received',
+        }, follow_redirects=False)
+        assert pay.status_code==303
+
+        transaction=client.get('/admin/transactions/1')
+        finance_csrf=csrf_from(transaction.text)
+        expense=client.post('/admin/transactions/1/expenses', data={
+            'csrf_token':finance_csrf,
+            'name':'Ingredients',
+            'amount':'125.00',
+            'expense_date':str(date.today()),
+            'note':'Test catering cost',
+        }, follow_redirects=False)
+        assert expense.status_code==303
+
+        transaction=client.get('/admin/transactions/1')
+        assert '300.00' in transaction.text
+        assert '125.00' in transaction.text
+        assert '400.00' in transaction.text  # expected profit: 525 - 125
+        assert '175.00' in transaction.text  # cash profit: 300 - 125
+        assert 'Part Paid' in transaction.text
+
+        reports=client.get('/admin/reports?period=12m')
+        assert reports.status_code==200
+        assert 'Booked revenue' in reports.text
+        assert 'Money collected' in reports.text
+
 
 def teardown_module():
-    if TEST_DB.exists(): TEST_DB.unlink()
+    from app.db import engine
+
+    engine.dispose()
+
+    if TEST_DB.exists():
+        TEST_DB.unlink()
