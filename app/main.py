@@ -58,6 +58,18 @@ app.add_middleware(
     https_only=os.getenv("COOKIE_SECURE", "0") == "1",
     max_age=60 * 60 * 12,
 )
+@app.middleware("http")
+async def prevent_html_cache(request: Request, call_next):
+    response = await call_next(request)
+
+    content_type = response.headers.get("content-type", "")
+
+    if "text/html" in content_type:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
+    return response
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
