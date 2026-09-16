@@ -106,3 +106,12 @@ On startup the app safely adds these fields to existing databases when missing:
 - `quote_requests.invoice_sent_at`
 
 Existing orders, customers, menus, payments, expenses, and admin accounts are preserved.
+
+## Build 4 additions
+
+- Admin order cleanup controls: **Void** for test/duplicate/mistake/spam orders and **permanent delete** for safe junk records.
+- Voided orders remain visible in Orders & Quotes for audit history but are excluded from Transactions and Reports.
+- Permanent deletion requires typing the exact order ID and is blocked when the order has payments, expenses, or a sent invoice.
+- Requested extra-dish controls were restyled for clear high-contrast readability in the dark admin theme.
+- Reports now include a **Download PDF report** action that respects the selected reporting period and contains financial totals, order-level income/profitability, and recorded expense details.
+- Production HTML pages use no-cache response headers and static CSS/JS URLs use a `build4` cache-busting version so phones receive new releases more reliably.

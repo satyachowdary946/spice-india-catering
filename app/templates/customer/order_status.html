@@ -4,7 +4,7 @@
 <main class="section">
   <div class="container order-sheet">
     {% if request.query_params.get('submitted') %}<div class="notice success">Quote request sent successfully. Save this page or use Track Order with your Order ID and phone number.</div>{% endif %}
-    {% if request.query_params.get('cancelled') %}<div class="notice">This order has been cancelled.</div>{% endif %}
+    {% if request.query_params.get('cancelled') %}<div class="notice">This order has been cancelled.</div>{% endif %}{% if order.status == 'voided' %}<div class="notice error"><strong>This order has been voided by the catering team.</strong> Contact us if you believe this is incorrect.</div>{% endif %}
 
     <div class="order-status-hero" style="margin-top:14px">
       <div>
@@ -49,7 +49,7 @@
 
     <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Order timeline</h2><div class="timeline">{% for h in order.history %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong>{% if h.note %}<div class="muted">{{ h.note }}</div>{% endif %}<small>{{ h.created_at.strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
 
-    <div class="actions no-print" style="margin-top:14px">{% if order.final_price is not none %}<a class="btn" href="/orders/{{ order.public_token }}/invoice">View invoice</a>{% endif %}<a class="btn secondary" href="/track">Track another order</a><button class="btn secondary" onclick="window.print()">Print this order</button>{% if order.status not in ['completed','cancelled'] %}<form method="post" action="/orders/{{ order.public_token }}/cancel" onsubmit="return confirm('Cancel this catering order?')"><button class="btn danger" type="submit">Cancel order</button></form>{% endif %}</div>
+    <div class="actions no-print" style="margin-top:14px">{% if order.final_price is not none %}<a class="btn" href="/orders/{{ order.public_token }}/invoice">View invoice</a>{% endif %}<a class="btn secondary" href="/track">Track another order</a><button class="btn secondary" onclick="window.print()">Print this order</button>{% if order.status not in ['completed','cancelled','voided'] %}<form method="post" action="/orders/{{ order.public_token }}/cancel" onsubmit="return confirm('Cancel this catering order?')"><button class="btn danger" type="submit">Cancel order</button></form>{% endif %}</div>
   </div>
 </main>
 {% endblock %}

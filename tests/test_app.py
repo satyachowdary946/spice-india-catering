@@ -231,6 +231,57 @@ def test_end_to_end_quote_and_admin_flow():
         assert 'Most profitable order' in reports.text
         assert 'Reporting period' in reports.text
 
+        # Build 4: downloadable finance report PDF
+        report_pdf=client.get('/admin/reports/pdf?period=all')
+        assert report_pdf.status_code==200
+        assert report_pdf.headers['content-type']=='application/pdf'
+        assert report_pdf.content.startswith(b'%PDF')
+
+        # Build 4: void accidental/test orders and permanently delete safe junk orders
+        cleanup_payload={
+            'details':{
+                'name':'Cleanup Customer','phone':'+353879999999','whatsapp':'+353879999999',
+                'event_date':str(date.today()+timedelta(days=20)),'event_name':'Test Cleanup','event_time':'19:00',
+                'adults':'5','kids':'0','address':'Cleanup address','eircode':'N37 VOID'
+            },
+            'item_ids':ids,
+            'requested_dishes':[],
+            'customer_notes':''
+        }
+        cleanup_quote=client.post('/api/quotes', json=cleanup_payload)
+        assert cleanup_quote.status_code==200
+        cleanup_body=cleanup_quote.json()
+
+        from sqlalchemy import select
+        from app.db import SessionLocal
+        from app.models import QuoteRequest
+        with SessionLocal() as db:
+            cleanup_order=db.scalar(select(QuoteRequest).where(QuoteRequest.order_number==cleanup_body['order_number']))
+            cleanup_id=cleanup_order.id
+
+        cleanup_detail=client.get(f'/admin/orders/{cleanup_id}')
+        cleanup_csrf=csrf_from(cleanup_detail.text)
+        voided=client.post(f'/admin/orders/{cleanup_id}/void', data={
+            'csrf_token':cleanup_csrf,'reason':'test','other_reason':'Build 4 automated test'
+        }, follow_redirects=False)
+        assert voided.status_code==303
+        cleanup_detail=client.get(f'/admin/orders/{cleanup_id}')
+        assert 'Voided order' in cleanup_detail.text
+        assert 'Test order' in cleanup_detail.text
+
+        reports_after_void=client.get('/admin/reports?period=all')
+        assert cleanup_body['order_number'] not in reports_after_void.text
+        transactions_after_void=client.get('/admin/transactions?period=all')
+        assert cleanup_body['order_number'] not in transactions_after_void.text
+
+        cleanup_csrf=csrf_from(cleanup_detail.text)
+        deleted=client.post(f'/admin/orders/{cleanup_id}/delete', data={
+            'csrf_token':cleanup_csrf,'confirmation':cleanup_body['order_number']
+        }, follow_redirects=False)
+        assert deleted.status_code==303
+        assert deleted.headers['location']=='/admin/orders?deleted=1'
+        assert client.get(f'/admin/orders/{cleanup_id}').status_code==404
+
 
 def teardown_module():
     from app.db import engine

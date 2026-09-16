@@ -7,7 +7,7 @@
     <h1>Reports</h1>
     <p class="muted">Revenue, collection, expenses and profit based on catering event dates. Cancelled orders are excluded.</p>
   </div>
-  <a class="btn secondary" href="/admin/transactions">Transactions</a>
+  <div class="actions"><a class="btn" href="/admin/reports/pdf?period={{ period }}">Download PDF report</a><a class="btn secondary" href="/admin/transactions">Transactions</a></div>
 </div>
 
 <form class="report-filterbar" method="get" action="/admin/reports">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import html
 import json
 import os
 import re
@@ -58,22 +59,24 @@ app.add_middleware(
     https_only=os.getenv("COOKIE_SECURE", "0") == "1",
     max_age=60 * 60 * 12,
 )
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+
 @app.middleware("http")
 async def prevent_html_cache(request: Request, call_next):
     response = await call_next(request)
-
     content_type = response.headers.get("content-type", "")
-
     if "text/html" in content_type:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
-
     return response
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-ALLOWED_STATUSES = ["new", "contacted", "negotiating", "quoted", "confirmed", "completed", "cancelled"]
+
+ALLOWED_STATUSES = ["new", "contacted", "negotiating", "quoted", "confirmed", "completed", "cancelled", "voided"]
+EDITABLE_STATUSES = ["new", "contacted", "negotiating", "quoted", "confirmed", "completed", "cancelled"]
+VOID_REASON_OPTIONS = {"test": "Test order", "duplicate": "Duplicate order", "customer_mistake": "Customer mistake", "admin_mistake": "Admin mistake", "spam": "Spam", "other": "Other"}
 DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non Veg"}
 REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
 
@@ -90,6 +93,12 @@ def ensure_schema_compatibility() -> None:
         if "invoice_sent_at" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE quote_requests ADD COLUMN invoice_sent_at TIMESTAMP"))
+        if "void_reason" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_requests ADD COLUMN void_reason TEXT DEFAULT ''"))
+        if "voided_at" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_requests ADD COLUMN voided_at TIMESTAMP"))
 
     if "menu_items" in tables:
         columns = {c["name"] for c in inspector.get_columns("menu_items")}
@@ -1015,7 +1024,13 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
     purl = public_order_url(request, order.public_token)
     share_text = f"Catering order {order.order_number}: {purl}"
     wa_url = "https://wa.me/?text=" + quote(share_text)
-    return render(request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order), statuses=ALLOWED_STATUSES, public_url=purl, whatsapp_share_url=wa_url, finance=finance_summary(order))
+    can_void = not order.payments and not order.expenses and not order.invoice_sent_at and order.status != "voided"
+    can_delete = not order.payments and not order.expenses and not order.invoice_sent_at
+    return render(
+        request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order),
+        statuses=EDITABLE_STATUSES, public_url=purl, whatsapp_share_url=wa_url, finance=finance_summary(order),
+        can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
+    )
 
 
 @app.post("/admin/orders/{order_id}")
@@ -1027,7 +1042,9 @@ def admin_order_update(
     check_csrf(request, csrf_token)
     order = db.get(QuoteRequest, order_id)
     if not order: raise HTTPException(status_code=404)
-    if status not in ALLOWED_STATUSES:
+    if order.status == "voided":
+        status = "voided"
+    elif status not in EDITABLE_STATUSES:
         status = order.status
     old_status = order.status
     order.status = status
@@ -1048,6 +1065,80 @@ def admin_order_update(
         db.add(StatusHistory(order_id=order.id, status=status, note=f"Status changed by admin from {old_status} to {status}."))
     db.commit()
     return RedirectResponse(f"/admin/orders/{order_id}?saved=1", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/void")
+def admin_order_void(
+    order_id: int,
+    request: Request,
+    reason: str = Form(...),
+    other_reason: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Order+is+already+voided", status_code=303)
+    if order.payments or order.expenses or order.invoice_sent_at:
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?error=Orders+with+payments,+expenses+or+a+sent+invoice+cannot+be+voided.+Use+Cancelled+instead",
+            status_code=303,
+        )
+    label = VOID_REASON_OPTIONS.get(reason)
+    if not label:
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Choose+a+valid+void+reason", status_code=303)
+    detail = other_reason.strip()[:500]
+    if reason == "other" and not detail:
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Enter+the+void+reason", status_code=303)
+    stored_reason = label if not detail else f"{label}: {detail}"
+    previous = order.status
+    order.status = "voided"
+    order.void_reason = stored_reason
+    order.voided_at = datetime.utcnow()
+    db.add(StatusHistory(order_id=order.id, status="voided", note=f"Order voided by admin. Previous status: {previous}. Reason: {stored_reason}"))
+    db.commit()
+    return RedirectResponse(f"/admin/orders/{order_id}?saved=1", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/delete")
+def admin_order_delete(
+    order_id: int,
+    request: Request,
+    confirmation: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.payments or order.expenses or order.invoice_sent_at:
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?error=This+order+has+financial+or+invoice+history+and+cannot+be+permanently+deleted",
+            status_code=303,
+        )
+    if confirmation.strip().upper() != order.order_number.upper():
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Type+the+exact+order+ID+to+delete+it", status_code=303)
+    db.delete(order)
+    db.commit()
+    return RedirectResponse("/admin/orders?deleted=1", status_code=303)
 
 
 @app.post("/admin/requested-dishes/{dish_id}")
@@ -1460,6 +1551,7 @@ def admin_transactions(
     start_date, end_date, period_label = period_bounds(period)
     stmt = (
         select(QuoteRequest)
+        .where(QuoteRequest.status != "voided")
         .options(
             selectinload(QuoteRequest.customer),
             selectinload(QuoteRequest.payments),
@@ -1729,20 +1821,14 @@ def admin_expense_delete(
     return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#expenses", status_code=303)
 
 
-@app.get("/admin/reports", response_class=HTMLResponse)
-def admin_reports(
-    request: Request,
-    period: str = "30d",
-    db: Session = Depends(get_db),
-):
-    admin, redirect = admin_or_redirect(request, db)
-    if redirect:
-        return redirect
-
+def finance_report_data(db: Session, period: str) -> dict[str, Any]:
     start_date, end_date, period_label = period_bounds(period)
     stmt = (
         select(QuoteRequest)
-        .where(QuoteRequest.event_date <= end_date, QuoteRequest.status != "cancelled")
+        .where(
+            QuoteRequest.event_date <= end_date,
+            QuoteRequest.status.notin_(["cancelled", "voided"]),
+        )
         .options(
             selectinload(QuoteRequest.customer),
             selectinload(QuoteRequest.payments),
@@ -1752,9 +1838,13 @@ def admin_reports(
     if start_date:
         stmt = stmt.where(QuoteRequest.event_date >= start_date)
 
-    orders = list(db.scalars(stmt.order_by(QuoteRequest.event_date.desc(), QuoteRequest.id.desc())).unique().all())
+    orders = list(
+        db.scalars(
+            stmt.order_by(QuoteRequest.event_date.desc(), QuoteRequest.id.desc())
+        ).unique().all()
+    )
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     booked_revenue = Decimal("0.00")
     collected = Decimal("0.00")
     expenses = Decimal("0.00")
@@ -1790,6 +1880,221 @@ def admin_reports(
     if top_customer and top_customer["revenue"] <= 0:
         top_customer = None
 
+    return {
+        "period": period,
+        "period_label": period_label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "orders": orders,
+        "rows": rows,
+        "order_count": len(orders),
+        "customer_count": len(customers),
+        "booked_revenue": booked_revenue,
+        "collected": collected,
+        "expenses": expenses,
+        "outstanding": outstanding,
+        "expected_profit": expected_profit,
+        "cash_profit": cash_profit,
+        "highest_paid": highest_paid,
+        "most_profitable": most_profitable,
+        "top_customer": top_customer,
+    }
+
+
+def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=28,
+        leftMargin=28,
+        topMargin=30,
+        bottomMargin=30,
+        title=f"Catering financial report - {data['period_label']}",
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "FinanceReportTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=19,
+        leading=22,
+        textColor=colors.HexColor("#111111"),
+        alignment=0,
+        spaceAfter=4,
+    )
+    kicker = ParagraphStyle(
+        "FinanceReportKicker",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=7.5,
+        leading=9,
+        textColor=colors.HexColor("#5C6764"),
+        spaceAfter=4,
+    )
+    body = ParagraphStyle(
+        "FinanceReportBody",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor("#222222"),
+    )
+    small = ParagraphStyle(
+        "FinanceReportSmall",
+        parent=body,
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor("#555555"),
+    )
+    section = ParagraphStyle(
+        "FinanceReportSection",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor("#111111"),
+        spaceBefore=14,
+        spaceAfter=7,
+    )
+
+    company = html.escape((biz.company_name or "Catering").strip())
+    period_dates = (
+        f"{data['start_date'].strftime('%d %b %Y')} - {data['end_date'].strftime('%d %b %Y')}"
+        if data["start_date"]
+        else f"Up to {data['end_date'].strftime('%d %b %Y')}"
+    )
+    story = [
+        Paragraph("FINANCIAL REPORT", kicker),
+        Paragraph(company, title_style),
+        Paragraph(f"<b>{html.escape(data['period_label'])}</b> · {period_dates}", body),
+        Spacer(1, 12),
+    ]
+
+    summary_rows = [
+        ["Orders", str(data["order_count"]), "Unique customers", str(data["customer_count"])],
+        ["Booked revenue", f"€{data['booked_revenue']:.2f}", "Collected", f"€{data['collected']:.2f}"],
+        ["Outstanding", f"€{data['outstanding']:.2f}", "Expenses", f"€{data['expenses']:.2f}"],
+        ["Expected profit", f"€{data['expected_profit']:.2f}", "Cash profit", f"€{data['cash_profit']:.2f}"],
+    ]
+    summary = Table(summary_rows, colWidths=[92, 85, 92, 85], hAlign="LEFT")
+    summary.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F4F7F6")),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#CCD4D1")),
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 8.5),
+        ("TEXTCOLOR", (0,0), (-1,-1), colors.HexColor("#111111")),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ("LEFTPADDING", (0,0), (-1,-1), 7),
+        ("RIGHTPADDING", (0,0), (-1,-1), 7),
+    ]))
+    story.extend([summary, Paragraph("Order income and profitability", section)])
+
+    order_table_data = [[
+        Paragraph("ORDER", small), Paragraph("CUSTOMER / EVENT", small), Paragraph("PRICE", small),
+        Paragraph("COLLECTED", small), Paragraph("EXPENSES", small), Paragraph("DUE", small), Paragraph("PROFIT", small),
+    ]]
+    for row in data["rows"]:
+        order = row["order"]
+        finance = row["finance"]
+        order_table_data.append([
+            Paragraph(html.escape(order.order_number), body),
+            Paragraph(
+                f"<b>{html.escape(order.customer.name)}</b><br/>{html.escape(order.event_name)} · {order.event_date.strftime('%d %b %Y')}",
+                small,
+            ),
+            f"€{finance['final_price']:.2f}",
+            f"€{finance['total_paid']:.2f}",
+            f"€{finance['total_expenses']:.2f}",
+            f"€{finance['balance_due']:.2f}",
+            f"€{finance['expected_profit']:.2f}",
+        ])
+    if len(order_table_data) == 1:
+        order_table_data.append(["No orders", "", "", "", "", "", ""])
+
+    order_table = Table(
+        order_table_data,
+        repeatRows=1,
+        colWidths=[76, 145, 60, 60, 60, 55, 60],
+        hAlign="LEFT",
+    )
+    order_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#15211E")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTNAME", (2,1), (-1,-1), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 7.2),
+        ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#CBD3D0")),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING", (0,0), (-1,-1), 6),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LEFTPADDING", (0,0), (-1,-1), 5),
+        ("RIGHTPADDING", (0,0), (-1,-1), 5),
+    ]))
+    story.append(order_table)
+
+    expense_rows = []
+    for row in data["rows"]:
+        order = row["order"]
+        for expense in order.expenses:
+            expense_rows.append([
+                Paragraph(html.escape(order.order_number), small),
+                expense.expense_date.strftime("%d %b %Y"),
+                Paragraph(html.escape(expense.name), body),
+                f"€{money(expense.amount):.2f}",
+                Paragraph(html.escape(expense.note or ""), small),
+            ])
+
+    story.append(Paragraph("Recorded catering expenses", section))
+    if expense_rows:
+        expense_table = Table(
+            [["ORDER", "DATE", "EXPENSE", "AMOUNT", "NOTE"]] + expense_rows,
+            repeatRows=1,
+            colWidths=[82, 70, 135, 70, 160],
+            hAlign="LEFT",
+        )
+        expense_table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#4A211E")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE", (0,0), (-1,-1), 7.2),
+            ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#D5CBC9")),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("TOPPADDING", (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+            ("LEFTPADDING", (0,0), (-1,-1), 5),
+            ("RIGHTPADDING", (0,0), (-1,-1), 5),
+        ]))
+        story.append(expense_table)
+    else:
+        story.append(Paragraph("No catering expenses were recorded in this period.", body))
+
+    story.extend([
+        Spacer(1, 14),
+        Paragraph(
+            "Booked revenue uses the final agreed catering price. Collected is money actually received. Expected profit is booked revenue minus recorded expenses. Cash profit is money collected minus recorded expenses. Cancelled and voided orders are excluded.",
+            small,
+        ),
+    ])
+    doc.build(story)
+    return buffer.getvalue()
+
+
+@app.get("/admin/reports", response_class=HTMLResponse)
+def admin_reports(
+    request: Request,
+    period: str = "30d",
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+
+    data = finance_report_data(db, period)
     period_options = [
         ("this_month", "This month"),
         ("30d", "Last 30 days"),
@@ -1799,31 +2104,34 @@ def admin_reports(
         ("this_year", "This year"),
         ("all", "All time"),
     ]
-
     return render(
         request,
         db,
         "admin/reports.html",
         admin=admin,
-        rows=rows,
-        period=period,
-        period_label=period_label,
         period_options=period_options,
-        start_date=start_date,
-        end_date=end_date,
-        order_count=len(orders),
-        customer_count=len(customers),
-        booked_revenue=booked_revenue,
-        collected=collected,
-        expenses=expenses,
-        outstanding=outstanding,
-        expected_profit=expected_profit,
-        cash_profit=cash_profit,
-        highest_paid=highest_paid,
-        most_profitable=most_profitable,
-        top_customer=top_customer,
+        **data,
     )
 
+
+@app.get("/admin/reports/pdf")
+def admin_reports_pdf(
+    request: Request,
+    period: str = "30d",
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    data = finance_report_data(db, period)
+    pdf = build_finance_report_pdf(data, business(db))
+    safe_period = re.sub(r"[^a-z0-9_-]+", "-", period.lower()).strip("-") or "report"
+    filename = f"catering-financial-report-{safe_period}-{date.today().isoformat()}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- SEO/system ----------

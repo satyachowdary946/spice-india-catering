@@ -119,6 +119,8 @@ class QuoteRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     invoice_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    void_reason: Mapped[str] = mapped_column(Text, default="")
+    voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     customer: Mapped[Customer] = relationship(back_populates="orders")
     items: Mapped[list[QuoteItem]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="QuoteItem.sort_order")
     history: Mapped[list[StatusHistory]] = relationship(back_populates="order", cascade="all, delete-orphan", order_by="StatusHistory.created_at")

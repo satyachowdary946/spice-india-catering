@@ -1175,3 +1175,92 @@ input[type="file"]::file-selector-button:hover {
 @media print{
   .invoice-page{background:#fff!important}.invoice-document{max-width:none!important;border:0!important;box-shadow:none!important;padding:0!important}.invoice-header{grid-template-columns:1.2fr .8fr!important}.site-announcement{display:none!important}
 }
+
+/* =========================================================
+   BUILD 4 — order cleanup, readable special requests,
+   finance PDF reporting and production cache refresh
+   ========================================================= */
+
+/* Voided status is intentionally neutral/danger-adjacent: retained for audit, excluded from finance. */
+.badge.voided{
+  background:#4b5563!important;
+  color:#fff!important;
+  border-color:#9ca3af!important;
+  min-width:88px;
+  justify-content:center;
+  padding:7px 12px;
+  font-weight:950!important;
+}
+
+/* Extra dish requests: previous light row inherited white admin text and became unreadable. */
+.requested-admin-row{
+  background:#151d1c!important;
+  color:#f7faf9!important;
+  border-color:#4b5a56!important;
+  box-shadow:none!important;
+}
+.requested-admin-row strong,
+.requested-admin-row label{
+  color:#fff!important;
+}
+.requested-admin-row .help{
+  color:#b7c2bf!important;
+}
+.requested-admin-row input,
+.requested-admin-row select{
+  background:#0d1514!important;
+  color:#fff!important;
+  border-color:#5d6b67!important;
+}
+.requested-admin-row input::placeholder{color:#96a29f!important}
+.requested-admin-row .btn{
+  background:var(--theme-teal)!important;
+  color:#07100f!important;
+  border-color:var(--theme-teal)!important;
+}
+
+/* Admin order cleanup controls */
+.order-admin-tools{
+  border-color:#5b5551!important;
+  background:#121918!important;
+}
+.order-void-form{
+  padding:14px;
+  border:1px solid #66574d;
+  border-radius:14px;
+  background:#1b1815;
+}
+.voided-summary{
+  display:grid;
+  gap:5px;
+  padding:14px 16px;
+  border:1px solid #737b84;
+  border-radius:14px;
+  background:#1f252a;
+}
+.voided-summary strong{font-size:1.05rem;color:#fff}
+.voided-summary span{color:#d8dddf}
+.voided-summary small{color:#aeb5b8}
+.voided-notice{
+  border-color:#747e88!important;
+  background:#20262b!important;
+  color:#eef2f3!important;
+  margin-bottom:14px;
+}
+.permanent-delete-zone{
+  margin-top:16px;
+  padding-top:16px;
+  border-top:1px solid #493d3a;
+}
+.permanent-delete-zone h3{color:#ffaaa3;margin-bottom:5px}
+.permanent-delete-zone .field{max-width:520px}
+
+/* Reports document action remains visible on narrower admin screens. */
+.finance-page-title>.actions{display:flex;gap:9px;flex-wrap:wrap}
+
+@media(max-width:700px){
+  .requested-admin-row{padding:14px!important}
+  .order-void-form .admin-form-grid.two{grid-template-columns:1fr!important}
+  .finance-page-title>.actions{width:100%}
+  .finance-page-title>.actions .btn{flex:1 1 180px}
+}
