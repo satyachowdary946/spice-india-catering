@@ -158,21 +158,46 @@
      CATEGORIES
 ====================================================== -->
 
-<section style="margin-top:16px">
+<section class="menu-category-browser" style="margin-top:16px">
+
+<div class="card compact menu-category-toolbar">
+  <div>
+    <div class="eyebrow">Category sections</div>
+    <strong>Open one section at a time</strong>
+    <p class="help" style="margin:4px 0 0">Choose a category such as Starter or Main Course. The rest stay collapsed.</p>
+  </div>
+
+  <div class="menu-category-toolbar-actions">
+    <div class="field menu-category-jump-field">
+      <label for="category-jump">Jump to category</label>
+      <select id="category-jump" data-category-jump>
+        <option value="">Choose category…</option>
+        {% for jump_cat in menu.categories|sort(attribute='sort_order') %}
+        <option value="category-{{ jump_cat.id }}">{{ jump_cat.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn secondary small" type="button" data-collapse-categories>Collapse all</button>
+  </div>
+</div>
 
 {% for cat in menu.categories|sort(attribute='sort_order') %}
 
 
-<div class="menu-admin-section">
+<details class="menu-admin-section menu-category-accordion" id="category-{{ cat.id }}" data-category-accordion>
 
 
   <!-- CATEGORY HEADER -->
 
-  <div class="menu-admin-head">
+  <summary class="menu-admin-head menu-category-summary">
 
-    <strong>
-      {{ cat.name }}
-    </strong>
+    <div class="menu-category-summary-title">
+      <span class="menu-category-chevron" aria-hidden="true">›</span>
+      <div>
+        <strong>{{ cat.name }}</strong>
+        <small>{{ cat.subcategories|length }} {% if cat.subcategories|length == 1 %}subcategory{% else %}subcategories{% endif %}</small>
+      </div>
+    </div>
 
 
     {% if cat.active %}
@@ -189,7 +214,7 @@
 
     {% endif %}
 
-  </div>
+  </summary>
 
 
 
@@ -832,12 +857,53 @@
 
   </div>
 
-</div>
+</details>
 
 
 {% endfor %}
 
 </section>
+
+<script>
+(function () {
+  const accordions = Array.from(document.querySelectorAll('[data-category-accordion]'));
+  const jump = document.querySelector('[data-category-jump]');
+  const collapse = document.querySelector('[data-collapse-categories]');
+
+  accordions.forEach((section) => {
+    section.addEventListener('toggle', () => {
+      if (!section.open) return;
+      accordions.forEach((other) => {
+        if (other !== section) other.open = false;
+      });
+    });
+  });
+
+  if (jump) {
+    jump.addEventListener('change', () => {
+      if (!jump.value) return;
+      const section = document.getElementById(jump.value);
+      if (!section) return;
+      accordions.forEach((other) => { other.open = other === section; });
+      requestAnimationFrame(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    });
+  }
+
+  if (collapse) {
+    collapse.addEventListener('click', () => {
+      accordions.forEach((section) => { section.open = false; });
+      if (jump) jump.value = '';
+    });
+  }
+
+  if (window.location.hash) {
+    const target = document.querySelector(window.location.hash);
+    if (target && target.matches('[data-category-accordion]')) {
+      target.open = true;
+    }
+  }
+})();
+</script>
 
 
 

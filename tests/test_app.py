@@ -88,6 +88,9 @@ def test_end_to_end_quote_and_admin_flow():
 
         menu_detail=client.get('/admin/menus/1')
         assert menu_detail.status_code==200
+        assert 'data-category-accordion' in menu_detail.text
+        assert 'Jump to category' in menu_detail.text
+        assert 'Collapse all' in menu_detail.text
         menu_csrf=csrf_from(menu_detail.text)
         tiny_png=(
             b'\x89PNG\r\n\x1a\n'

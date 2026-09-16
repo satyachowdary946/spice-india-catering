@@ -122,3 +122,6 @@ Existing orders, customers, menus, payments, expenses, and admin accounts are pr
 - Customer numbers remain immutable.
 - New quote submissions update the customer's saved address to the latest supplied event address without modifying historical order addresses.
 - Permanent customer deletion is allowed only when there are no linked orders, preventing accidental destruction of order/accounting history.
+
+## Build 6 — Compact menu builder
+The admin menu builder now uses accessible category accordions. Categories such as Welcome Drink, Starter, Main Course and Dessert remain collapsed until needed. A category jump dropdown opens the selected section, opening one category closes the others, and a Collapse all control keeps long menus manageable on desktop and mobile. No menu/order data model changes are required for this build.
