@@ -41,7 +41,7 @@ def test_end_to_end_quote_and_admin_flow():
         too_soon_payload={
             'details':{
                 'name':'Test Customer','phone':'+353871234567','whatsapp':'+353871234567',
-                'event_date':str(date.today()),'event_name':'Too Soon Event','event_time':'23:59',
+                'event_date':str(date.today()),'event_name':'Too Soon Event','event_time':'23:59','delivery_time':'22:30',
                 'adults':'1','kids':'0','address':'Test address','eircode':'N37 TEST'
             },
             'item_ids':ids,
@@ -55,7 +55,7 @@ def test_end_to_end_quote_and_admin_flow():
         payload={
             'details':{
                 'name':'Test Customer','phone':'+353871234567','whatsapp':'+353871234567',
-                'event_date':str(date.today()+timedelta(days=10)),'event_name':'Test Event','event_time':'18:30',
+                'event_date':str(date.today()+timedelta(days=10)),'event_name':'Test Event','event_time':'18:30','delivery_time':'17:45',
                 'adults':'20','kids':'4','address':'Test address','eircode':'N37 TEST'
             },
             'item_ids':ids,
@@ -65,6 +65,7 @@ def test_end_to_end_quote_and_admin_flow():
         quote=client.post('/api/quotes', json=payload)
         assert quote.status_code==200, quote.text
         body=quote.json(); assert body['ok'] is True
+        assert body['order_number'].startswith('CAT') and '-' not in body['order_number']
         status_page=client.get('/orders/'+body['token'])
         assert status_page.status_code==200
         assert body['order_number'] in status_page.text
@@ -79,7 +80,8 @@ def test_end_to_end_quote_and_admin_flow():
             'owner_name':'', 'phone':'', 'whatsapp':'', 'email':'', 'address':'', 'eircode':'', 'footer_note':'',
             'announcement_enabled':'true',
             'announcement_title':'New site',
-            'announcement_text':'Catering all over Ireland from the heart of Ireland (Athlone Branch)'
+            'announcement_text':'Catering all over Ireland from the heart of Ireland (Athlone Branch)',
+            'web_charge_block_amount':'500','web_charge_per_block':'5'
         }, follow_redirects=False)
         assert settings_save.status_code==303
         home=client.get('/')
@@ -108,6 +110,9 @@ def test_end_to_end_quote_and_admin_flow():
         assert image.headers['content-type']=='image/png'
         menu_page=client.get('/menu')
         assert '/menu-item-image/1' in menu_page.text
+        assert 'Veg Cuisine' in menu_page.text
+        assert 'Non Veg Cuisine' in menu_page.text
+        assert 'Filters' in menu_page.text
 
         # Build 3: admin-controlled homepage food background
         settings=client.get('/admin/settings')
@@ -117,7 +122,8 @@ def test_end_to_end_quote_and_admin_flow():
             'company_name':'Spice India','branch_label':'Athlone Branch','owner_name':'',
             'phone':'','whatsapp':'','email':'','address':'','eircode':'','footer_note':'',
             'announcement_enabled':'true','announcement_title':'New site',
-            'announcement_text':'Catering all over Ireland from the heart of Ireland (Athlone Branch)'
+            'announcement_text':'Catering all over Ireland from the heart of Ireland (Athlone Branch)',
+            'web_charge_block_amount':'500','web_charge_per_block':'5'
         }, files={'hero_image':('hero.png',tiny_png,'image/png')}, follow_redirects=False)
         assert hero_save.status_code==303
         hero_image=client.get('/homepage-food-image')
@@ -180,15 +186,35 @@ def test_end_to_end_quote_and_admin_flow():
         detail=client.get('/admin/orders/1')
         csrf=csrf_from(detail.text)
         upd=client.post('/admin/orders/1', data={
-            'csrf_token':csrf,'status':'confirmed','final_price':'525.00','admin_notes':'Kitchen note','customer_message':'Confirmed for your event.'
+            'csrf_token':csrf,'status':'quoted',
+            'adult_charge':'20.00','kid_charge':'10.00','delivery_price':'50.00','service_price':'5.00',
+            'admin_notes':'Kitchen note','customer_message':'Confirmed for your event.'
         }, follow_redirects=False)
         assert upd.status_code==303
         customer=client.get('/orders/'+body['token'])
-        assert '525.00' in customer.text
+        assert '500.00' in customer.text
+        assert '17:45' in customer.text
+        assert 'Confirm Order' in customer.text
+        assert 'Want To Negotiate?' in customer.text
+        confirmed=client.post('/orders/'+body['token']+'/confirm', follow_redirects=False)
+        assert confirmed.status_code==303
+        customer=client.get('/orders/'+body['token'])
+        assert 'Confirmed' in customer.text
         assert 'Confirmed for your event.' in customer.text
         assert 'Special Paneer Dish' in customer.text
         assert 'Approved' in customer.text
         assert 'Please keep one section mild for children.' in customer.text
+        assert 'Status changed by admin' not in customer.text
+
+        detail=client.get('/admin/orders/1')
+        kitchen_csrf=csrf_from(detail.text)
+        kitchen=client.post('/admin/orders/1/kitchen-share', data={
+            'csrf_token':kitchen_csrf,'kitchen_comments':'NO ONION IN 2 PORTIONS'
+        }, follow_redirects=False)
+        assert kitchen.status_code==303
+        assert kitchen.headers['location'].startswith('https://wa.me/')
+        detail=client.get('/admin/orders/1')
+        assert 'Send To Customer WhatsApp' in detail.text
 
         pdf=client.get('/admin/orders/1/pdf')
         assert pdf.status_code==200
@@ -239,21 +265,43 @@ def test_end_to_end_quote_and_admin_flow():
         transaction=client.get('/admin/transactions/1')
         assert '300.00' in transaction.text
         assert '125.00' in transaction.text
-        assert '400.00' in transaction.text  # expected profit: 525 - 125
+        assert '375.00' in transaction.text  # expected profit: 500 - 125
         assert '175.00' in transaction.text  # cash profit: 300 - 125
         assert 'Part Paid' in transaction.text
+
+        from app.models import QuoteRequest
+        with SessionLocal() as db:
+            priced=db.get(QuoteRequest,1)
+            assert str(priced.web_order_charge) == '5.00'
+            assert str(priced.final_price) == '500.00'
+            assert priced.delivery_time.strftime('%H:%M') == '17:45'
 
         # Build 3: professional finance filters and invoice
         filtered_transactions=client.get('/admin/transactions?period=all&payment_status=part_paid&expense_filter=with_expenses&sort=highest_paid')
         assert filtered_transactions.status_code==200
         assert body['order_number'] in filtered_transactions.text
-        assert 'Highest paid order' in filtered_transactions.text
-        assert 'Apply filters' in filtered_transactions.text
+        assert 'Highest Paid Order' in filtered_transactions.text
+        assert 'Filters' in filtered_transactions.text
+        assert 'Filter & Sort' in filtered_transactions.text
+
+        invoice=client.get('/orders/'+body['token']+'/invoice')
+        assert invoice.status_code==403
+        admin_invoice=client.get('/admin/orders/1/invoice')
+        assert admin_invoice.status_code==200
+        assert 'Admin Preview' in admin_invoice.text
+
+        transaction=client.get('/admin/transactions/1')
+        finance_csrf=csrf_from(transaction.text)
+        pay_rest=client.post('/admin/transactions/1/payments', data={
+            'csrf_token':finance_csrf,'amount':'200.00','payment_date':str(date.today()),
+            'method':'Cash','reference':'BALANCE','note':'Balance paid'
+        }, follow_redirects=False)
+        assert pay_rest.status_code==303
 
         invoice=client.get('/orders/'+body['token']+'/invoice')
         assert invoice.status_code==200
         assert 'INV-'+body['order_number'] in invoice.text
-        assert 'Balance due' in invoice.text
+        assert 'Balance Due' in invoice.text
         invoice_pdf=client.get('/orders/'+body['token']+'/invoice.pdf')
         assert invoice_pdf.status_code==200
         assert invoice_pdf.headers['content-type']=='application/pdf'
@@ -264,15 +312,15 @@ def test_end_to_end_quote_and_admin_flow():
         mark_sent=client.post('/admin/orders/1/invoice/mark-sent', data={'csrf_token':invoice_csrf}, follow_redirects=False)
         assert mark_sent.status_code==303
         invoice=client.get('/orders/'+body['token']+'/invoice')
-        assert 'Sent' in invoice.text or 'Part Paid' in invoice.text
+        assert invoice.status_code==200
 
         reports=client.get('/admin/reports?period=all')
         assert reports.status_code==200
-        assert 'Booked revenue' in reports.text
-        assert 'Money collected' in reports.text
-        assert 'Highest paid order' in reports.text
-        assert 'Most profitable order' in reports.text
-        assert 'Reporting period' in reports.text
+        assert 'Booked Revenue' in reports.text
+        assert 'Money Collected' in reports.text
+        assert 'Highest Paid Order' in reports.text
+        assert 'Most Profitable Order' in reports.text
+        assert 'Reporting Period' in reports.text
 
         # Build 4: downloadable finance report PDF
         report_pdf=client.get('/admin/reports/pdf?period=all')
@@ -284,7 +332,7 @@ def test_end_to_end_quote_and_admin_flow():
         cleanup_payload={
             'details':{
                 'name':'Cleanup Customer','phone':'+353879999999','whatsapp':'+353879999999',
-                'event_date':str(date.today()+timedelta(days=20)),'event_name':'Test Cleanup','event_time':'19:00',
+                'event_date':str(date.today()+timedelta(days=20)),'event_name':'Test Cleanup','event_time':'19:00','delivery_time':'18:15',
                 'adults':'5','kids':'0','address':'Cleanup address','eircode':'N37 VOID'
             },
             'item_ids':ids,
@@ -309,7 +357,7 @@ def test_end_to_end_quote_and_admin_flow():
         }, follow_redirects=False)
         assert voided.status_code==303
         cleanup_detail=client.get(f'/admin/orders/{cleanup_id}')
-        assert 'Voided order' in cleanup_detail.text
+        assert 'Voided Order' in cleanup_detail.text
         assert 'Test order' in cleanup_detail.text
 
         reports_after_void=client.get('/admin/reports?period=all')

@@ -1,50 +1,65 @@
-# Spice India Catering Portal — Build 2
+# Spice India Catering Portal — Build 7
 
-Mobile-first catering quote, order management and finance portal for the Athlone catering branch.
+Mobile-first catering quote, order-management and finance portal for Spice India Catering, deployed with FastAPI, PostgreSQL and Jinja templates.
 
-## Build 2 additions
+## Build 7
 
-- Bright, readable admin order-status badges.
-- Simplified customer homepage with centred actions and a food-image hero when a menu item image exists.
-- Cross-device **Track / View My Order** using Order ID + phone/WhatsApp number.
-- Strongly highlighted event date, day, time and guest count on the customer order page.
-- Redesigned printable confirmation sheet and PDF with date/day/time prominent at the top-right and highlighted guest totals.
-- New **Transactions** admin section.
-- Final-price management, payment records, payment status and outstanding balance.
-- Per-catering expense records.
-- Per-order expected profit and cash profit.
-- New **Reports** page for 1 month, 3 months, 6 months and 1 year.
-- Report totals for orders, unique customers, booked revenue, money collected, outstanding balance, expenses and profit.
-- Existing PostgreSQL data is preserved. New `payments` and `expenses` tables are created automatically at startup.
-- Resend email notifications use the Resend HTTP API through the existing `httpx` dependency; no separate Resend Python package is required.
+Build 7 keeps the existing customer/admin/finance features and adds the final quote and kitchen workflow requested for production use.
 
-## Finance definitions
+- Public order numbers use `CAT0001`, `CAT0002` … and naturally continue to `CAT10000`, `CAT20001`, etc. Internal database IDs and public-token links remain unchanged.
+- Customer event form includes required **Delivery Time**.
+- Customer menu is dietary-first: **Veg Cuisine** is highlighted green and **Non Veg Cuisine** red. North/South Indian are optional regional filters rather than the primary choice.
+- Menu categories remain available as quick category tabs while changing filters never clears the basket.
+- “Request extra dishes” is renamed **Request Dishes**.
+- Review basket highlights each main category and numbers dishes from 1 within each category.
+- Admin pricing uses Adult Charge per head, Kid Charge per head, Delivery Price and Service Price. The total is calculated automatically.
+- Web Order Charge is configurable in Business Settings. Default rule: €5 per started €500 of the meal base (adult + kid charges). Example: €500 => €5, €1,000 => €10, €1,250 => €15.
+- The existing `final_price` database field is retained as the calculated total so finance reports, payments and historical integrations remain compatible.
+- Customer status page shows the full quote breakdown, Total Quote, **Confirm Order**, and negotiation/call actions.
+- Customer order timeline shows clean status milestones without internal admin comments.
+- Admin can prepare a **Kitchen WhatsApp** message, but kitchen comments are required first. Kitchen comments are shown in bold on kitchen print/PDF output.
+- Admin order page includes Print, Download, Send Email, Send to Customer WhatsApp, generic WhatsApp sharing and Copy Order Link.
+- Customer WhatsApp sharing uses the WhatsApp number supplied with the quote.
+- Customer invoice is locked until recorded payments make the order **Paid**. Admin can preview/download an invoice before payment.
+- Transactions filters are behind a three-line **Filters** button in a side drawer instead of permanently occupying the page.
+- Existing void/delete safeguards, customer management, category accordions, reports/PDFs, expenses/profit, Resend admin email notifications, PostgreSQL compatibility and authentication remain in place.
 
-- **Booked revenue** = final prices on non-cancelled catering orders in the selected event-date period.
-- **Money collected** = payments recorded against those orders.
-- **Outstanding** = booked revenue minus collected money.
-- **Expenses** = expenses entered against those orders.
-- **Expected profit** = booked revenue minus expenses.
-- **Cash profit** = money collected minus expenses.
+## Important WhatsApp behavior
+
+Build 7 does **not** pretend to send WhatsApp messages automatically. Meta WhatsApp Business API is not configured. WhatsApp actions open a pre-filled `wa.me` message to the correct customer (or the WhatsApp share picker for kitchen/group sharing), where the admin/customer explicitly presses Send.
+
+If automatic WhatsApp delivery is required later, configure Meta WhatsApp Business Cloud API and approved templates rather than hardcoding credentials.
+
+## Pricing definitions
+
+- **Meal base** = `(Adults × Adult Charge) + (Kids × Kid Charge)`
+- **Web Order Charge** = configured charge for every started configured block of the meal base
+- **Total Price** = Meal Base + Delivery Price + Service Price + Web Order Charge
+- **Booked revenue** = calculated total prices on non-cancelled/non-voided catering orders in the selected period
+- **Money collected** = payment records received
+- **Outstanding** = Total Price − Money Collected
+- **Expected profit** = Total Price − Expenses
+- **Cash profit** = Money Collected − Expenses
 
 ## Main admin pages
 
 - `/admin` — dashboard
 - `/admin/orders` — orders and quotes
-- `/admin/customers` — customers
-- `/admin/transactions` — payments, balances and catering expenses
-- `/admin/reports` — business finance reporting
-- `/admin/menus` — menu builder
+- `/admin/customers` — customer management
+- `/admin/transactions` — pricing, payments, expenses and balances
+- `/admin/reports` — finance reporting and report PDF
+- `/admin/menus` — menu/category/item builder
 - `/admin/share` — customer links
-- `/admin/settings` — business settings
+- `/admin/settings` — business branding, homepage image, announcement and web-order charge configuration
 
 ## Customer pages
 
-- `/` — simplified landing page
-- `/order` — event details
-- `/menu` — menu selection
-- `/review` — quote review
-- `/track` — cross-device order lookup
+- `/` — landing page
+- `/order` — customer/event details
+- `/menu` — dietary-first menu selection
+- `/review` — numbered quote review
+- `/track` — cross-device lookup using Order ID + phone/WhatsApp
+- `/orders/<token>` — secure customer order/quote status
 
 ## Local installation
 
@@ -58,70 +73,16 @@ Copy-Item .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Local site: `http://127.0.0.1:8000`
-
 ## Tests
 
 ```powershell
-pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The Build 2 automated test covers the customer quote flow, admin confirmation, menu item image upload, PDF generation, cross-device order lookup, payment entry, expense entry and reports.
+The automated workflow covers quote creation, 24-hour validation, delivery time, Build 7 pricing/web charge, customer confirmation, menu imagery, requested dishes, kitchen WhatsApp link generation, PDF output, tracking, payments, expenses, invoice locking/unlocking, finance filters/reports, void/delete safeguards and customer management.
 
-## Production deployment
+## Production
 
-The project remains compatible with the existing GitHub → Render deployment. Copy these files over the current repository, commit and push `main`. Render will deploy automatically.
+The project remains compatible with the existing GitHub → Render deployment. Database changes are additive and applied at application startup. Existing customer/order/payment/expense data is not deleted.
 
-Do not commit `.env`, API keys, database credentials or other secrets.
-
-## Build 3 finance and homepage upgrade
-
-Build 3 adds a production-focused finance and presentation layer without replacing existing customer/order data.
-
-### Finance
-- Transactions page with search plus dropdown filters for period, payment status, expenses, and sorting.
-- Period choices include This month, Last 30 days, 3 months, 6 months, 12 months, This year, and All time.
-- High-level finance cards for order value, collected money, outstanding balances, and expenses.
-- Highest-paid-order highlight for the selected transaction period.
-- Reports page with a professional period dropdown and KPI cards for orders, customers, booked revenue, collected money, outstanding balances, expenses, expected profit, and cash profit.
-- Report insight cards for highest-paid order, most profitable order, and top customer by booked revenue.
-
-### Customer invoices
-- Customer invoice page linked to the secure public order token.
-- Downloadable PDF invoice.
-- Payment history, total paid, and balance due are shown to the customer.
-- Admin can open/copy the invoice link, download the invoice PDF, and mark an invoice as sent.
-- Invoice data is derived from the existing final price and payment records; catering expenses remain private to admin.
-
-### Homepage
-- Cleaner centered homepage actions with stronger spacing.
-- Dedicated homepage food background upload in Admin -> Business settings.
-- PNG, JPEG, or WebP up to 5 MB.
-- If no dedicated image is uploaded, the app can fall back to an available menu-item image, otherwise the dark branded background remains.
-
-### Additive database compatibility
-On startup the app safely adds these fields to existing databases when missing:
-- `business_settings.hero_image_blob`
-- `business_settings.hero_image_content_type`
-- `quote_requests.invoice_sent_at`
-
-Existing orders, customers, menus, payments, expenses, and admin accounts are preserved.
-
-## Build 4 additions
-
-- Admin order cleanup controls: **Void** for test/duplicate/mistake/spam orders and **permanent delete** for safe junk records.
-- Voided orders remain visible in Orders & Quotes for audit history but are excluded from Transactions and Reports.
-- Permanent deletion requires typing the exact order ID and is blocked when the order has payments, expenses, or a sent invoice.
-- Requested extra-dish controls were restyled for clear high-contrast readability in the dark admin theme.
-- Reports now include a **Download PDF report** action that respects the selected reporting period and contains financial totals, order-level income/profitability, and recorded expense details.
-- Production HTML pages use no-cache response headers and static CSS/JS URLs use a `build4` cache-busting version so phones receive new releases more reliably.
-
-## Build 5 customer management
-- Customer list now supports search, activity filters and sorting.
-- Admin can open a customer profile and edit name, phone, WhatsApp, saved address and Eircode.
-- Customer numbers remain immutable.
-- New quote submissions update the customer's saved address to the latest supplied event address without modifying historical order addresses.
-- Permanent customer deletion is allowed only when there are no linked orders, preventing accidental destruction of order/accounting history.
-
-## Build 6 — Compact menu builder
-The admin menu builder now uses accessible category accordions. Categories such as Welcome Drink, Starter, Main Course and Dessert remain collapsed until needed. A category jump dropdown opens the selected section, opening one category closes the others, and a Collapse all control keeps long menus manageable on desktop and mobile. No menu/order data model changes are required for this build.
+Never commit `.env`, database URLs, Resend API keys, session secrets or other credentials.

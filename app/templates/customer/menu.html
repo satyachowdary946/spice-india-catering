@@ -1,58 +1,67 @@
 {% extends "base.html" %}
-{% block title %}Catering menu · {{ business.company_name or 'Catering' }}{% endblock %}
+{% block title %}Catering Menu · {{ business.company_name or 'Catering' }}{% endblock %}
 {% block body %}
 <main class="menu-shell" data-menu-root>
-  <div class="filter-block">
+  <div class="filter-block customer-menu-toolbar">
     <div class="container">
-      <nav class="stepbar" style="padding:0 0 8px" aria-label="Quote request steps"><a href="/order?next=/menu">1 Event details</a><span aria-hidden="true">›</span><a class="current" href="/menu" aria-current="step">2 Menu</a><span aria-hidden="true">›</span><a href="/review">3 Review</a></nav>
-      <div class="segment" role="group" aria-label="Cuisine">
-        {% for menu in menus %}<button type="button" data-menu-choice="{{ menu.id }}">{{ menu.name }}</button>{% endfor %}
-      </div>
-      <div class="segment three" role="group" aria-label="Dietary menu">
-        <button type="button" data-diet-choice="veg">Veg only</button>
-        <button type="button" data-diet-choice="nonveg">Non veg</button>
-        <button type="button" data-diet-choice="combo">Veg & non veg</button>
+      <nav class="stepbar" style="padding:0 0 8px" aria-label="Quote request steps"><a href="/order?next=/menu">1 Event Details</a><span aria-hidden="true">›</span><a class="current" href="/menu" aria-current="step">2 Menu</a><span aria-hidden="true">›</span><a href="/review">3 Review</a></nav>
+      <div class="menu-primary-row">
+        <div class="segment dietary-primary" role="group" aria-label="Dietary menu">
+          <button type="button" class="veg-choice" data-diet-choice="veg">Veg Cuisine</button>
+          <button type="button" class="nonveg-choice" data-diet-choice="nonveg">Non Veg Cuisine</button>
+        </div>
+        <button class="menu-filter-trigger" type="button" data-open-menu-filter aria-haspopup="dialog" aria-controls="menu-filter-dialog"><span aria-hidden="true">☰</span> Filters</button>
       </div>
       <div class="category-tabs" data-category-tabs aria-label="Menu categories"></div>
     </div>
   </div>
+
   <div class="container">
     <section class="special-request-banner" aria-labelledby="special-request-title">
       <div>
-        <div class="eyebrow">Something missing?</div>
-        <h2 id="special-request-title">Want a dish that is not on the menu?</h2>
-        <p>Ask us for extra dishes. Add the names here and the catering team will confirm what can be prepared.</p>
+        <div class="eyebrow">Something Missing?</div>
+        <h2 id="special-request-title">Want A Dish That Is Not On The Menu?</h2>
+        <p>Request dishes here and the catering team will confirm what can be prepared.</p>
       </div>
-      <button class="btn secondary small" type="button" data-open-request-dialog>Request a dish <span data-request-count></span></button>
+      <button class="btn secondary small" type="button" data-open-request-dialog>Request Dishes <span data-request-count></span></button>
     </section>
     <div data-menu-content></div>
   </div>
+
+  <dialog class="request-dialog menu-filter-dialog" id="menu-filter-dialog" data-menu-filter-dialog aria-labelledby="menu-filter-title">
+    <form method="dialog" class="request-dialog-card">
+      <div class="admin-title">
+        <div><div class="eyebrow">Optional Filters</div><h2 id="menu-filter-title">Indian Menu Filter</h2></div>
+        <button class="icon-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>Regional Menu</label>
+        <div class="region-filter-options" data-region-options>
+          <button type="button" data-menu-choice="all">All Indian Menus</button>
+          {% for menu in menus %}<button type="button" data-menu-choice="{{ menu.id }}">{{ menu.name }}</button>{% endfor %}
+        </div>
+      </div>
+      <div class="field" style="margin-top:14px">
+        <label>Dietary View</label>
+        <button class="btn secondary block" type="button" data-diet-choice="combo">Show Veg & Non Veg Together</button>
+      </div>
+      <div class="request-dialog-actions"><button class="btn" value="cancel">Done</button></div>
+    </form>
+  </dialog>
+
   <dialog class="request-dialog" data-request-dialog aria-labelledby="request-dialog-title">
     <form method="dialog" class="request-dialog-card">
       <div class="admin-title">
-        <div><div class="eyebrow">Special request</div><h2 id="request-dialog-title">Request dishes not listed</h2></div>
+        <div><div class="eyebrow">Special Request</div><h2 id="request-dialog-title">Request Dishes Not Listed</h2></div>
         <button class="icon-close" value="cancel" aria-label="Close">×</button>
       </div>
       <p class="muted">Enter one dish per line. These are requests only; the owner will approve or reject each one before the order is final.</p>
-      <div class="field" style="margin-top:12px">
-        <label for="requested-dishes-input">Dish names</label>
-        <textarea id="requested-dishes-input" data-request-input maxlength="3800" placeholder="Example:
-Paneer 65
-Special chicken curry"></textarea>
-        <div class="help">Maximum 20 requested dishes.</div>
-      </div>
-      <div class="request-dialog-actions">
-        <button class="btn secondary" value="cancel">Cancel</button>
-        <button class="btn" type="button" data-save-requests>Save requests</button>
-      </div>
+      <div class="field" style="margin-top:12px"><label for="requested-dishes-input">Dish Names</label><textarea id="requested-dishes-input" data-request-input maxlength="3800" placeholder="Example:\nPaneer 65\nSpecial chicken curry"></textarea><div class="help">Maximum 20 requested dishes.</div></div>
+      <div class="request-dialog-actions"><button class="btn secondary" value="cancel">Cancel</button><button class="btn" type="button" data-save-requests>Save Requests</button></div>
     </form>
   </dialog>
-  <div class="basket-bar">
-    <div class="basket-inner">
-      <div><div class="basket-count" data-basket-count>0 items selected</div><div class="basket-sub">Saved automatically on this device</div></div>
-      <a class="btn" href="/review">Review basket</a>
-    </div>
-  </div>
+
+  <div class="basket-bar"><div class="basket-inner"><div><div class="basket-count" data-basket-count>0 items selected</div><div class="basket-sub">Saved automatically on this device</div></div><a class="btn" href="/review">Review Basket</a></div></div>
   <script id="menu-data" type="application/json">{{ menu_data | tojson }}</script>
 </main>
 {% endblock %}

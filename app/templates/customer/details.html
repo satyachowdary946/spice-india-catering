@@ -207,6 +207,26 @@ Event details · {{ business.company_name or 'Catering' }}
           </div>
 
 
+          <!-- DELIVERY TIME -->
+          <div class="field">
+
+            <label for="delivery_time">
+              Delivery time
+              <span class="required-mark">*</span>
+            </label>
+
+            <input
+              id="delivery_time"
+              name="delivery_time"
+              type="time"
+              required
+              data-native-picker
+              onclick="if (this.showPicker) this.showPicker()"
+            >
+
+          </div>
+
+
           <!-- ADULTS -->
           <div class="field">
 

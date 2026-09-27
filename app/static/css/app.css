@@ -1316,3 +1316,45 @@ input[type="file"]::file-selector-button:hover {
   .menu-category-summary{padding:13px 14px!important;min-height:62px}
   .menu-category-summary-title strong{font-size:1rem}
 }
+
+/* =========================================================
+   BUILD 7 — QUOTE, MENU, KITCHEN & FINANCE UX
+   ========================================================= */
+
+/* Consistent headings without altering user-entered data */
+h1,h2,h3,.eyebrow,.menu-section-title h2,.cat-heading,.subcategory-title,.finance-section-heading h2{text-transform:capitalize}
+
+/* Primary dietary selection */
+.menu-primary-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}
+.dietary-primary{grid-template-columns:repeat(2,minmax(0,1fr));margin:0}
+.dietary-primary .veg-choice.active{background:#0f7a45!important;border-color:#3df28e!important;color:#fff!important;box-shadow:0 0 0 2px rgba(61,242,142,.16) inset}
+.dietary-primary .nonveg-choice.active{background:#9d2520!important;border-color:#ff6158!important;color:#fff!important;box-shadow:0 0 0 2px rgba(255,97,88,.12) inset}
+.menu-filter-trigger{min-height:44px;border:1px solid #63706d;background:#18201f;color:#fff;border-radius:11px;padding:9px 13px;font-weight:900}
+.menu-filter-trigger:hover{border-color:var(--theme-teal);color:var(--theme-teal-soft)}
+.menu-filter-dialog{max-width:480px}.region-filter-options{display:grid;gap:8px}.region-filter-options button{width:100%;text-align:left;border:1px solid #53605d;background:#111817;color:#fff;padding:11px 12px;border-radius:10px;font-weight:850}.region-filter-options button.active{border-color:var(--theme-teal);background:#0d2b26;color:#82e9da}.menu-region{display:inline-flex;margin-top:5px;padding:2px 7px;border-radius:999px;background:#293330;color:#b8c5c2;font-size:.68rem;font-weight:850}
+.category-tabs{overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px;scrollbar-width:thin}.category-tabs button{white-space:nowrap}
+
+/* Review basket */
+.review-category-highlight{display:block!important;background:#182a27!important;border:1px solid #3f766d!important;color:#7ff0de!important;padding:9px 11px!important;border-radius:9px!important;font-weight:950!important;font-size:.95rem!important;margin:13px 0 8px!important;text-transform:uppercase!important;letter-spacing:.04em!important}
+.review-numbered-list{margin:5px 0 8px;padding-left:28px}.review-numbered-list li{padding:8px 0;border-bottom:1px solid #2e3936;font-weight:850}.review-numbered-list li::marker{font-weight:950;color:var(--theme-teal)}.review-numbered-list li button{float:right;border:0;background:transparent;color:#ff8a80;font-weight:800}
+
+/* Quote price calculator */
+.pricing-calculator{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0;padding:12px;border:1px solid #43514d;background:#0c1513;border-radius:12px}.pricing-calculator>div{display:flex;justify-content:space-between;gap:12px;padding:7px 8px}.pricing-calculator span{color:#aeb8b6;font-size:.82rem;font-weight:750}.pricing-calculator strong{color:#fff}.pricing-calculator .pricing-total{grid-column:1/-1;border-top:1px solid #475550;margin-top:2px;padding-top:12px}.pricing-calculator .pricing-total span,.pricing-calculator .pricing-total strong{font-size:1.15rem;color:#8ff0df;font-weight:950}
+.customer-quote-card{border:1px solid #2ccdb5;background:#0c1d1a;border-radius:15px;padding:16px}.quote-breakdown-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.quote-breakdown-grid>div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #34433f;padding:8px 0}.quote-total{display:flex;justify-content:space-between;align-items:center;border-top:2px solid #3bd7c0;padding:14px 0 2px;font-weight:950}.quote-total strong{font-size:1.8rem;color:#72ead8}.negotiation-box{display:grid;gap:8px;margin-top:14px;border-top:1px solid #42524e;padding-top:14px}.negotiation-box>strong{font-size:1rem;text-transform:uppercase;color:#fff}.invoice-locked{display:inline-flex;align-items:center;padding:10px 12px;border-radius:10px;border:1px solid #7a6541;background:#2c2517;color:#ffda88;font-weight:850}
+.event-highlight-grid-five{grid-template-columns:repeat(2,minmax(0,1fr))}.event-highlight-grid-five .guest{grid-column:1/-1}
+
+/* Requested dishes visibility */
+.requested-admin-card{background:#111817!important;color:#fff!important}.requested-admin-card p,.requested-admin-card label,.requested-admin-card .help{color:#d9e1df!important}.requested-admin-row{background:#f7f7f7!important;border-color:#bfc7c5!important;color:#111!important}.requested-admin-row strong,.requested-admin-row label{color:#111!important}.requested-admin-row input,.requested-admin-row select{background:#0e1715!important;color:#fff!important;border-color:#53635f!important}
+
+/* Kitchen comments */
+.kitchen-comments-print{border:2px solid #111;background:#fff4cc;color:#111;padding:12px;margin-top:14px}.kitchen-comments-print strong{font-weight:950;color:#111}.kitchen-comments-print p{font-size:1.05rem;margin:6px 0 0}
+
+/* Transactions side drawer */
+.transaction-filter-launch{display:flex;align-items:center;gap:12px;margin:0 0 14px}.transaction-filter-drawer{position:fixed;z-index:120;left:0;top:0;bottom:0;width:min(90vw,380px);padding:22px;background:#111817;border-right:1px solid #55625f;box-shadow:16px 0 42px rgba(0,0,0,.38);display:grid;align-content:start;gap:12px;transform:translateX(-105%);transition:transform .2s ease;overflow-y:auto}.transaction-filter-drawer.open{transform:translateX(0)}.transaction-filter-backdrop{position:fixed;z-index:110;inset:0;background:rgba(0,0,0,.66)}.filter-drawer-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px}.filter-drawer-head h2{margin:2px 0 0}.filter-open{overflow:hidden}.transaction-filter-drawer .finance-filter-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+
+@media(min-width:700px){.event-highlight-grid-five{grid-template-columns:repeat(5,minmax(0,1fr))}.event-highlight-grid-five .guest{grid-column:auto}}
+@media(max-width:620px){.menu-primary-row{grid-template-columns:1fr}.menu-filter-trigger{width:100%}.quote-breakdown-grid,.pricing-calculator{grid-template-columns:1fr}.transaction-filter-drawer{width:92vw}}
+@media print{.kitchen-comments-print{background:#fff4cc!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.review-category-highlight{background:#222!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+
+/* Build 7 regional menu filter behaves as a side drawer. */
+.menu-filter-dialog[open]{position:fixed;inset:0 0 0 auto;margin:0;width:min(92vw,390px);max-width:390px;height:100dvh;max-height:100dvh;border-radius:18px 0 0 18px;border-left:1px solid #53615e}.menu-filter-dialog .request-dialog-card{min-height:100%;border-radius:18px 0 0 18px}

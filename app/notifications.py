@@ -113,6 +113,7 @@ async def notify_admin_new_quote_email(
     event_name: str,
     event_date: str,
     event_time: str,
+    delivery_time: str,
     total_people: int,
     admin_url: str,
 ) -> tuple[bool, str]:
@@ -129,6 +130,7 @@ async def notify_admin_new_quote_email(
     safe_event_name = html.escape(event_name)
     safe_event_date = html.escape(event_date)
     safe_event_time = html.escape(event_time)
+    safe_delivery_time = html.escape(delivery_time)
     safe_admin_url = html.escape(admin_url, quote=True)
 
     payload = {
@@ -149,10 +151,17 @@ async def notify_admin_new_quote_email(
               <tr><td style="padding:8px 0;font-weight:bold">Phone</td><td>{safe_customer_phone}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Event</td><td>{safe_event_name}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Date</td><td>{safe_event_date}</td></tr>
-              <tr><td style="padding:8px 0;font-weight:bold">Time</td><td>{safe_event_time}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Event time</td><td>{safe_event_time}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Delivery time</td><td>{safe_delivery_time}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Guests</td><td>{total_people}</td></tr>
             </table>
-            <a href="{safe_admin_url}" style="display:inline-block;padding:12px 18px;background:#111817;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Open order in admin</a>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              <a href="{safe_admin_url}" style="display:inline-block;padding:12px 18px;background:#111817;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Open Order</a>
+              <a href="{safe_admin_url}#kitchen-actions" style="display:inline-block;padding:12px 18px;background:#0f766e;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Send Kitchen</a>
+              <a href="{safe_admin_url}/print" style="display:inline-block;padding:12px 18px;background:#374151;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Print</a>
+              <a href="{safe_admin_url}/pdf" style="display:inline-block;padding:12px 18px;background:#374151;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Download</a>
+              <a href="{safe_admin_url}#customer-sharing" style="display:inline-block;padding:12px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold">Send Email</a>
+            </div>
             <p style="margin-top:22px;font-size:12px;color:#6b7280">Automatic notification from Spice India Catering.</p>
           </div>
         </div>
