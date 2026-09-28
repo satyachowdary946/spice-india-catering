@@ -60,11 +60,12 @@ function initMenu(){
   const categoryTabs=document.querySelector('[data-category-tabs]'), content=document.querySelector('[data-menu-content]');
   const filterDialog=document.querySelector('[data-menu-filter-dialog]'), requestDialog=document.querySelector('[data-request-dialog]');
   const requestInput=document.querySelector('[data-request-input]'), requestCount=document.querySelector('[data-request-count]');
-  let selectedMenu=null; // null means all regional menus
+  const comboDialog=document.querySelector('[data-combo-dialog]'), comboList=document.querySelector('[data-combo-list]'), comboTitle=document.querySelector('[data-combo-title]');
+  let selectedMenu=null;
   let selectedDiet='veg';
   let activeCategory=null;
   const itemMap=new Map();
-  data.forEach(m=>m.categories.forEach(c=>c.subcategories.forEach(s=>s.items.forEach(i=>itemMap.set(i.id,{...i,menu:m.name,category:c.name,subcategory:s.name})))))
+  data.forEach(m=>m.categories.forEach(c=>c.subcategories.forEach(sub=>sub.items.forEach(i=>{if(!itemMap.has(i.id))itemMap.set(i.id,{...i,menu:m.name,category:c.name,subcategory:sub.name});}))));
   window.__menuItemMap=itemMap;
 
   const updateRequestCount=()=>{const n=DraftStore.load().requested_dishes.length;if(requestCount)requestCount.textContent=n?`(${n})`:'';};
@@ -78,32 +79,68 @@ function initMenu(){
   requestDialog?.addEventListener('click',e=>{if(e.target===requestDialog)requestDialog.close();});
   document.querySelector('[data-open-menu-filter]')?.addEventListener('click',()=>filterDialog?.showModal());
   filterDialog?.addEventListener('click',e=>{if(e.target===filterDialog)filterDialog.close();});
+  document.querySelectorAll('[data-close-combo]').forEach(btn=>btn.addEventListener('click',()=>comboDialog?.close()));
+  comboDialog?.addEventListener('click',e=>{if(e.target===comboDialog)comboDialog.close();});
 
   function visibleMenus(){return selectedMenu===null?data:data.filter(m=>m.id===selectedMenu);}
   function buildCategories(){
-    const map=new Map();
-    visibleMenus().forEach(m=>m.categories.forEach(c=>{
-      let target=map.get(c.name); if(!target){target={id:`cat-${map.size}`,name:c.name,subs:[]};map.set(c.name,target);}
-      c.subcategories.forEach(sub=>{
-        const items=sub.items.filter(i=>selectedDiet==='combo'||i.dietary===selectedDiet).map(i=>({...i,menu:m.name}));
-        if(items.length) target.subs.push({...sub,items});
+    const categories=new Map();
+    visibleMenus().forEach(menu=>menu.categories.forEach(category=>{
+      let cat=categories.get(category.name);
+      if(!cat){cat={id:`cat-${categories.size}`,name:category.name,subs:new Map()};categories.set(category.name,cat);}
+      category.subcategories.forEach(sub=>{
+        let targetSub=cat.subs.get(sub.name);
+        if(!targetSub){targetSub={id:sub.id,name:sub.name,items:new Map(),sort_order:sub.sort_order};cat.subs.set(sub.name,targetSub);}
+        sub.items.forEach(item=>{
+          const matches=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
+          if(!matches)return;
+          if(!targetSub.items.has(item.id))targetSub.items.set(item.id,{...item,menu:menu.name});
+        });
       });
     }));
-    return [...map.values()].filter(c=>c.subs.length);
+    return [...categories.values()].map(cat=>({
+      id:cat.id,name:cat.name,
+      subs:[...cat.subs.values()].map(sub=>({...sub,items:[...sub.items.values()]})).filter(sub=>sub.items.length)
+    })).filter(cat=>cat.subs.length);
   }
+
+  async function showComboSuggestions(itemId){
+    try{
+      const res=await fetch('/api/menu-combinations?item_id='+encodeURIComponent(itemId));
+      if(!res.ok)return;
+      const body=await res.json();
+      const selected=new Set(DraftStore.load().item_ids||[]);
+      const items=(body.items||[]).filter(item=>!selected.has(Number(item.id)));
+      if(!items.length)return;
+      comboTitle.textContent=body.title||'Goes Well With This';
+      comboList.innerHTML=items.map(item=>{
+        const label=item.dietary==='veg'?'Veg':item.dietary==='nonveg'?'Non Veg':'Both';
+        return `<article class="combo-suggestion-card ${escapeHtml(item.dietary)}">${item.image_url?`<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.name)}" loading="lazy">`:''}<div class="combo-suggestion-copy"><strong>${escapeHtml(item.name)}</strong>${item.description?`<span>${escapeHtml(item.description)}</span>`:''}<span class="diet-dot ${escapeHtml(item.dietary)}">${label}</span></div><button type="button" class="btn small combo-add" data-combo-add="${item.id}">Add</button></article>`;
+      }).join('');
+      comboList.querySelectorAll('[data-combo-add]').forEach(btn=>btn.addEventListener('click',()=>{
+        const id=Number(btn.dataset.comboAdd);const state=DraftStore.load();
+        if(!state.item_ids.includes(id))DraftStore.toggleItem(id);
+        btn.textContent='Added ✓';btn.disabled=true;render();updateBasketBar();
+      }));
+      comboDialog?.showModal();
+    }catch{}
+  }
+
   function render(){
     regionBtns.forEach(b=>b.classList.toggle('active',b.dataset.menuChoice==='all'?selectedMenu===null:Number(b.dataset.menuChoice)===selectedMenu));
     dietBtns.forEach(b=>b.classList.toggle('active',b.dataset.dietChoice===selectedDiet));
     const cats=buildCategories();
-    if(!activeCategory||!cats.some(c=>c.id===activeCategory)) activeCategory=cats[0]?.id||null;
+    if(!activeCategory||!cats.some(c=>c.id===activeCategory))activeCategory=cats[0]?.id||null;
     categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}">${escapeHtml(c.name)}</button>`).join('');
     categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{activeCategory=btn.dataset.cat;categoryTabs.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.cat===activeCategory));document.getElementById(activeCategory)?.scrollIntoView({behavior:'smooth',block:'start'});}));
     const draft=DraftStore.load();
-    content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,s)=>n+s.items.length,0)} choices</span></div>${c.subs.map(s=>`<div><div class="subcategory-title">${escapeHtml(s.name)}</div><div class="menu-list">${s.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
-    content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{DraftStore.toggleItem(Number(btn.dataset.addItem));render();updateBasketBar();}));
+    content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,sub)=>n+sub.items.length,0)} choices</span></div>${c.subs.map(sub=>`<div class="menu-subsection"><div class="subcategory-title">${escapeHtml(sub.name)}</div><div class="menu-list">${sub.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
+    content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
+      const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
+    }));
     updateBasketBar();
   }
-  function itemCard(i,selected){return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}${selectedMenu===null?`<div class="menu-region">${escapeHtml(i.menu)}</div>`:''}<div class="diet-dot ${i.dietary}">${i.dietary==='veg'?'Veg':'Non Veg'}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
+  function itemCard(i,selected){const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} dietary-card-${escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice;activeCategory=null;render();if(b.closest('[data-menu-filter-dialog]'))filterDialog?.close();}));
   updateRequestCount();render();

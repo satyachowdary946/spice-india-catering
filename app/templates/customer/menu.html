@@ -61,6 +61,17 @@
     </form>
   </dialog>
 
+  <dialog class="request-dialog combo-dialog" data-combo-dialog aria-labelledby="combo-dialog-title">
+    <div class="request-dialog-card combo-dialog-card">
+      <div class="admin-title combo-dialog-head">
+        <div><div class="eyebrow">Recommended With Your Selection</div><h2 id="combo-dialog-title" data-combo-title>Goes Well With This</h2></div>
+        <button class="icon-close" type="button" data-close-combo aria-label="Close">×</button>
+      </div>
+      <div class="combo-suggestion-list" data-combo-list></div>
+      <div class="request-dialog-actions"><button class="btn secondary" type="button" data-close-combo>No Thanks</button></div>
+    </div>
+  </dialog>
+
   <div class="basket-bar"><div class="basket-inner"><div><div class="basket-count" data-basket-count>0 items selected</div><div class="basket-sub">Saved automatically on this device</div></div><a class="btn" href="/review">Review Basket</a></div></div>
   <script id="menu-data" type="application/json">{{ menu_data | tojson }}</script>
 </main>

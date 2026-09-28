@@ -94,3 +94,46 @@ The project remains compatible with the existing GitHub → Render deployment an
 **The application never automatically deletes production orders during deployment.** If the current records are test orders and you deliberately want to remove them, log in as admin and use **Business Settings → Reset Test Orders & Restart Numbering**, type `RESET ORDERS`, and confirm.
 
 Never commit `.env`, database URLs, Resend API keys, session secrets or other credentials.
+
+## Build 9 — Excel Menu Import & Smart Combinations
+
+The admin **Menus** area now supports bulk Excel importing while keeping normal manual editing available.
+
+### Excel import
+
+Open:
+
+`Admin → Menus → Import Excel`
+
+The approved workbook contains:
+
+- `Menu Import` — Item ID, dietary menu, regional filters, category, section, item name, image reference, display order, active state, notes.
+- `Combinations` — optional recommendation rules.
+- `Combination Guide` and `Combination Examples` — instructions/examples only.
+
+Imports are merged using **Item ID**. Re-importing the same Item ID updates the imported dish instead of creating a new logical dish. Items that belong to both South Indian and North Indian are stored regionally but expose one stable basket ID to customers.
+
+Dish photos are still uploaded from the normal Admin Menu Builder. The Excel `Item Image` value is stored as a reference for menu preparation but does not automatically download remote images.
+
+### Combination rules
+
+One combination row means:
+
+`Trigger Item → Recommended Item`
+
+Repeat the same Trigger Item ID on several rows to show multiple recommendations. Set **Reciprocal = Yes** to make the recommendation work in both directions.
+
+Example:
+
+- Idaippam → Chicken Curry (Priority 1)
+- Idaippam → Egg Roast (Priority 2)
+
+After a customer adds the trigger dish, a mobile bottom sheet shows the suggested dishes with image, dietary marker and an **Add** button. The customer can add any suggestion or close the sheet.
+
+Combination rules can also be edited manually at:
+
+`Admin → Menus → Combinations`
+
+### Dependency
+
+Build 9 adds `openpyxl` for server-side `.xlsx` import parsing. Render installs it from `requirements.txt` during deployment.

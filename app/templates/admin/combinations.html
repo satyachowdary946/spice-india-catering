@@ -1,0 +1,75 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}Menu Combinations · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Menu Recommendations</div>
+    <h1>Combination Suggestions</h1>
+    <p class="muted">When a customer adds a dish, suggest one or more dishes that go well with it. Excel imports and this page use the same Item IDs.</p>
+  </div>
+  <div class="actions"><a class="btn secondary" href="/admin/menus">Back to Menus</a><a class="btn" href="/admin/menu-import">Import Excel</a></div>
+</div>
+{% if request.query_params.get('saved') %}<div class="notice success">Combination saved.</div>{% endif %}
+{% if request.query_params.get('deleted') %}<div class="notice success">Combination deleted.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<section class="card">
+  <h2>Add Combination</h2>
+  {% if not items %}
+  <div class="notice">Import the Excel menu first so stable Item IDs are available.</div>
+  {% else %}
+  <form method="post" action="/admin/menu-combinations" class="admin-form-grid two">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label>When Customer Adds</label>
+      <select name="trigger_import_item_id" required>
+        {% for item in items %}<option value="{{ item.import_item_id }}">{{ item.import_item_id }} · {{ item.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>Suggest This Dish</label>
+      <select name="recommended_import_item_id" required>
+        {% for item in items %}<option value="{{ item.import_item_id }}">{{ item.import_item_id }} · {{ item.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field"><label>Priority</label><input name="priority" type="number" min="1" value="1"></div>
+    <div class="field"><label>Popup Title</label><input name="popup_title" placeholder="e.g. Goes well with this"></div>
+    <div class="field"><label>Notes</label><input name="notes" placeholder="Admin note (optional)"></div>
+    <div class="checkbox-row"><input id="combo-active" name="active" type="checkbox" checked><label for="combo-active">Active</label></div>
+    <div class="checkbox-row"><input id="combo-recip" name="reciprocal" type="checkbox"><label for="combo-recip">Vice versa / reciprocal</label></div>
+    <button class="btn" type="submit">Add Combination</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" style="margin-top:16px">
+  <div class="section-heading-row"><div><div class="eyebrow">Current Rules</div><h2>{{ combinations|length }} Combination{{ '' if combinations|length == 1 else 's' }}</h2></div></div>
+  {% if combinations %}
+  <div class="combo-admin-list">
+    {% for combo in combinations %}
+    <form method="post" action="/admin/menu-combinations/{{ combo.id }}/edit" class="combo-admin-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="combo-admin-names">
+        <strong>{{ item_names.get(combo.trigger_import_item_id, 'Item ' ~ combo.trigger_import_item_id) }}</strong>
+        <span aria-hidden="true">→</span>
+        <strong>{{ item_names.get(combo.recommended_import_item_id, 'Item ' ~ combo.recommended_import_item_id) }}</strong>
+        {% if combo.reciprocal %}<span class="badge">Vice versa</span>{% endif %}
+      </div>
+      <div class="combo-admin-controls">
+        <div class="field"><label>Priority</label><input name="priority" type="number" min="1" value="{{ combo.priority }}"></div>
+        <div class="field"><label>Popup Title</label><input name="popup_title" value="{{ combo.popup_title }}"></div>
+        <div class="field"><label>Notes</label><input name="notes" value="{{ combo.notes }}"></div>
+        <div class="checkbox-row"><input id="active-{{combo.id}}" name="active" type="checkbox" {% if combo.active %}checked{% endif %}><label for="active-{{combo.id}}">Active</label></div>
+        <div class="checkbox-row"><input id="recip-{{combo.id}}" name="reciprocal" type="checkbox" {% if combo.reciprocal %}checked{% endif %}><label for="recip-{{combo.id}}">Vice versa</label></div>
+        <button class="btn secondary small" type="submit">Save</button>
+      </div>
+    </form>
+    <form method="post" action="/admin/menu-combinations/{{ combo.id }}/delete" onsubmit="return confirm('Delete this combination rule?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn danger small" type="submit">Delete</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% else %}<div class="empty">No combination rules yet. Add them here or import the Combinations sheet.</div>{% endif %}
+</section>
+{% endblock %}

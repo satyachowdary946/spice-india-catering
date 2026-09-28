@@ -181,3 +181,54 @@ def teardown_module():
     engine.dispose()
     if TEST_DB.exists():
         TEST_DB.unlink()
+
+
+def test_excel_menu_import_and_combination_rules():
+    from io import BytesIO
+    from openpyxl import Workbook
+    from sqlalchemy import select
+    from app.db import SessionLocal
+    from app.main import apply_menu_workbook
+    from app.menu_excel import parse_menu_workbook
+    from app.models import MenuCombination, MenuItem
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Menu Import"
+    ws.append(["Complete Menu"])
+    ws.append([])
+    ws.append(["Item ID", "Main Category", "South Indian", "North Indian", "Sub Category", "Menu Section", "Menu Item Name", "Item Image", "Display Order", "Active", "Notes"])
+    ws.append([501, "Veg Cuisine", "Yes", "Yes", "Rice / Naans / Starter", "Indian Breads", "Test Appam", "", 1, "Yes", ""])
+    ws.append([502, "Non Veg Cuisine", "Yes", "Yes", "Main Course", "Non-Vegetarian Main Course", "Test Curry", "", 1, "Yes", ""])
+    setup = wb.create_sheet("Category Setup")
+    setup.append(["Website Category Structure"])
+    setup.append([])
+    setup.append(["Type", "Name", "Display Order", "Image / Icon"])
+    setup.append(["Side Filter", "South Indian", 1, ""])
+    setup.append(["Side Filter", "North Indian", 2, ""])
+    combos = wb.create_sheet("Combinations")
+    combos.append(["Combination Rules"])
+    combos.append([])
+    combos.append(["Rule ID", "Trigger Item ID", "Trigger Item Name", "Recommended Item ID", "Recommended Item Name", "Priority", "Active", "Reciprocal", "Popup Title", "Notes"])
+    combos.append([1, 501, "Test Appam", 502, "Test Curry", 1, "Yes", "Yes", "Popular combination", ""])
+    bio = BytesIO(); wb.save(bio)
+
+    parsed = parse_menu_workbook(bio.getvalue())
+    assert len(parsed["items"]) == 2
+    assert len(parsed["combinations"] or []) == 1
+    with SessionLocal() as db:
+        result = apply_menu_workbook(db, parsed)
+        assert result["items"] == 2
+        appam = db.scalar(select(MenuItem).where(MenuItem.import_item_id == 501).order_by(MenuItem.id))
+        curry = db.scalar(select(MenuItem).where(MenuItem.import_item_id == 502).order_by(MenuItem.id))
+        assert appam and curry
+        assert db.scalar(select(MenuCombination).where(MenuCombination.trigger_import_item_id == 501))
+        appam_id, curry_id = appam.id, curry.id
+
+    with TestClient(app) as client:
+        response = client.get("/api/menu-combinations", params={"item_id": appam_id})
+        assert response.status_code == 200
+        assert response.json()["items"][0]["name"] == "Test Curry"
+        response = client.get("/api/menu-combinations", params={"item_id": curry_id})
+        assert response.status_code == 200
+        assert response.json()["items"][0]["name"] == "Test Appam"

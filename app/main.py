@@ -36,6 +36,7 @@ from .models import (
     Expense,
     Menu,
     MenuItem,
+    MenuCombination,
     Payment,
     QuoteItem,
     QuoteRequest,
@@ -49,6 +50,7 @@ from .notifications import (
     whatsapp_cloud_configured,
 )
 from .seed import ensure_seed_data
+from .menu_excel import parse_menu_workbook
 
 BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="Catering Quote Portal", version="1.0.0")
@@ -131,6 +133,8 @@ def ensure_schema_compatibility() -> None:
         additions = {
             "image_blob": "BYTEA" if engine.dialect.name == "postgresql" else "BLOB",
             "image_content_type": "VARCHAR(100)",
+            "import_item_id": "INTEGER",
+            "image_reference": "VARCHAR(500) DEFAULT ''",
         }
         for name, ddl in additions.items():
             if name not in columns:
@@ -552,21 +556,46 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
             selectinload(Menu.categories)
             .selectinload(Category.subcategories)
             .selectinload(Subcategory.items)
-            .load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.dietary, MenuItem.active, MenuItem.sort_order, MenuItem.image_content_type)
+            .load_only(
+                MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description,
+                MenuItem.dietary, MenuItem.active, MenuItem.sort_order, MenuItem.image_content_type,
+                MenuItem.import_item_id
+            )
         )
         .order_by(Menu.sort_order, Menu.name)
     ).all()
+
+    # Excel-imported items may exist once per regional filter. Always expose one stable
+    # canonical database ID so the basket stays selected when the customer changes region.
+    canonical: dict[int, int] = {}
+    canonical_rows = db.scalars(
+        select(MenuItem)
+        .where(MenuItem.active.is_(True), MenuItem.import_item_id.is_not(None))
+        .order_by(MenuItem.id)
+    ).all()
+    for item in canonical_rows:
+        canonical.setdefault(int(item.import_item_id), item.id)
+
     menu_data = []
     for m in menus:
         categories = []
         for c in sorted([c for c in m.categories if c.active], key=lambda x: (x.sort_order, x.name)):
             subs = []
-            for s in sorted([s for s in c.subcategories if s.active], key=lambda x: (x.sort_order, x.name)):
-                items = [
-                    {"id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary, "sort_order": i.sort_order, "image_url": f"/menu-item-image/{i.id}" if i.image_content_type else ""}
-                    for i in sorted([i for i in s.items if i.active], key=lambda x: (x.sort_order, x.name))
-                ]
-                subs.append({"id": s.id, "name": s.name, "items": items, "sort_order": s.sort_order})
+            for sub in sorted([sub for sub in c.subcategories if sub.active], key=lambda x: (x.sort_order, x.name)):
+                items = []
+                for item in sorted([item for item in sub.items if item.active], key=lambda x: (x.sort_order, x.name)):
+                    public_id = canonical.get(int(item.import_item_id), item.id) if item.import_item_id is not None else item.id
+                    items.append({
+                        "id": public_id,
+                        "source_id": item.id,
+                        "import_item_id": item.import_item_id,
+                        "name": item.name,
+                        "description": item.description or "",
+                        "dietary": item.dietary,
+                        "sort_order": item.sort_order,
+                        "image_url": f"/menu-item-image/{public_id}" if item.image_content_type else "",
+                    })
+                subs.append({"id": sub.id, "name": sub.name, "items": items, "sort_order": sub.sort_order})
             categories.append({"id": c.id, "name": c.name, "subcategories": subs, "sort_order": c.sort_order})
         menu_data.append({"id": m.id, "name": m.name, "slug": m.slug, "categories": categories, "sort_order": m.sort_order})
     return render(request, db, "customer/menu.html", menu_data=menu_data, menus=menus)
@@ -595,9 +624,10 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
         if not i:
             continue
         s = i.subcategory; c = s.category; m = c.menu
+        diet_group = "Veg Cuisine" if i.dietary == "veg" else ("Non Veg Cuisine" if i.dietary == "nonveg" else "Shared Menu")
         result.append({
             "id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary,
-            "menu": m.name, "category": c.name, "subcategory": s.name,
+            "menu": diet_group, "category": c.name, "subcategory": s.name,
             "image_url": f"/menu-item-image/{i.id}" if i.image_content_type else ""
         })
     return result
@@ -1209,7 +1239,7 @@ async def admin_item_create(
     check_csrf(request, csrf_token)
     sub = db.scalar(select(Subcategory).where(Subcategory.id == sub_id).options(selectinload(Subcategory.category)))
     if not sub: raise HTTPException(status_code=404)
-    if dietary not in {"veg", "nonveg"}: dietary = "veg"
+    if dietary not in {"veg", "nonveg", "both"}: dietary = "veg"
     try:
         image_blob, image_content_type = await read_menu_image(image)
     except ValueError as exc:
@@ -1233,7 +1263,7 @@ async def admin_item_edit(
     if not item: raise HTTPException(status_code=404)
     item.name = name.strip() or item.name
     item.description = description.strip()
-    item.dietary = dietary if dietary in {"veg", "nonveg"} else "veg"
+    item.dietary = dietary if dietary in {"veg", "nonveg", "both"} else "veg"
     item.sort_order = sort_order
     item.active = active == "on"
     if remove_image == "on":
@@ -1247,8 +1277,324 @@ async def admin_item_edit(
         item.image_blob = image_blob
         item.image_content_type = image_content_type
     menu_id = item.subcategory.category.menu_id
+    if item.import_item_id is not None:
+        siblings = db.scalars(select(MenuItem).where(MenuItem.import_item_id == item.import_item_id, MenuItem.id != item.id)).all()
+        for sibling in siblings:
+            sibling.name = item.name
+            sibling.description = item.description
+            sibling.dietary = item.dietary
+            sibling.sort_order = item.sort_order
+            sibling.active = item.active
+            sibling.image_blob = item.image_blob
+            sibling.image_content_type = item.image_content_type
+            sibling.image_reference = item.image_reference
     db.commit()
     return RedirectResponse(f"/admin/menus/{menu_id}", status_code=303)
+
+
+def _get_or_create_menu(db: Session, name: str, sort_order: int = 0) -> Menu:
+    menu = db.scalar(select(Menu).where(func.lower(Menu.name) == name.strip().lower()))
+    if menu:
+        menu.active = True
+        menu.sort_order = sort_order
+        return menu
+    slug = slugify(name)
+    base = slug
+    n = 2
+    while db.scalar(select(Menu.id).where(Menu.slug == slug)):
+        slug = f"{base}-{n}"
+        n += 1
+    menu = Menu(name=name.strip(), slug=slug, active=True, sort_order=sort_order)
+    db.add(menu)
+    db.flush()
+    return menu
+
+
+def _get_or_create_category(db: Session, menu_id: int, name: str, sort_order: int = 0) -> Category:
+    obj = db.scalar(select(Category).where(Category.menu_id == menu_id, func.lower(Category.name) == name.strip().lower()))
+    if obj:
+        obj.active = True
+        obj.sort_order = sort_order
+        return obj
+    obj = Category(menu_id=menu_id, name=name.strip(), active=True, sort_order=sort_order)
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def _get_or_create_subcategory(db: Session, category_id: int, name: str, sort_order: int = 0) -> Subcategory:
+    obj = db.scalar(select(Subcategory).where(Subcategory.category_id == category_id, func.lower(Subcategory.name) == name.strip().lower()))
+    if obj:
+        obj.active = True
+        obj.sort_order = sort_order
+        return obj
+    obj = Subcategory(category_id=category_id, name=name.strip(), active=True, sort_order=sort_order)
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
+    """Merge spreadsheet menu data into the editable admin menu structure."""
+    region_sort = {x["name"]: int(x.get("sort_order") or 0) for x in parsed.get("side_filters", [])}
+    for index, region in enumerate(parsed.get("region_columns", []), 1):
+        region_sort.setdefault(region, index)
+    menus_by_name = {name: _get_or_create_menu(db, name, order) for name, order in region_sort.items()}
+
+    created = updated = deactivated = 0
+    category_orders: dict[tuple[int, str], int] = {}
+    section_orders: dict[tuple[int, str, str], int] = {}
+    for row_index, item_data in enumerate(parsed.get("items", []), 1):
+        target_menu_ids: set[int] = set()
+        category_name = item_data["category"]
+        section_name = item_data["section"]
+        for region in item_data["regions"]:
+            menu = menus_by_name.get(region)
+            if not menu:
+                menu = _get_or_create_menu(db, region, len(menus_by_name) + 1)
+                menus_by_name[region] = menu
+            target_menu_ids.add(menu.id)
+            cat_key = (menu.id, category_name.casefold())
+            if cat_key not in category_orders:
+                category_orders[cat_key] = len([k for k in category_orders if k[0] == menu.id]) + 1
+            cat = _get_or_create_category(db, menu.id, category_name, category_orders[cat_key])
+            sub_key = (cat.id, category_name.casefold(), section_name.casefold())
+            if sub_key not in section_orders:
+                section_orders[sub_key] = len([k for k in section_orders if k[0] == cat.id]) + 1
+            sub = _get_or_create_subcategory(db, cat.id, section_name, section_orders[sub_key])
+            existing = db.scalar(
+                select(MenuItem)
+                .join(Subcategory, MenuItem.subcategory_id == Subcategory.id)
+                .join(Category, Subcategory.category_id == Category.id)
+                .where(MenuItem.import_item_id == item_data["item_id"], Category.menu_id == menu.id)
+            )
+            if existing:
+                updated += 1
+                item = existing
+                item.subcategory_id = sub.id
+            else:
+                created += 1
+                item = MenuItem(subcategory_id=sub.id, import_item_id=item_data["item_id"])
+                db.add(item)
+            item.name = item_data["name"]
+            item.description = item_data["notes"]
+            item.dietary = item_data["dietary"]
+            item.active = bool(item_data["active"])
+            item.sort_order = int(item_data["sort_order"] or 0)
+            item.image_reference = item_data.get("image_reference", "")
+
+        # If the Excel region membership changed, hide importer-managed copies from regions no longer selected.
+        old_copies = db.scalars(
+            select(MenuItem)
+            .join(Subcategory, MenuItem.subcategory_id == Subcategory.id)
+            .join(Category, Subcategory.category_id == Category.id)
+            .where(MenuItem.import_item_id == item_data["item_id"])
+        ).all()
+        for copy in old_copies:
+            menu_id = copy.subcategory.category.menu_id if copy.subcategory and copy.subcategory.category else None
+            if menu_id and menu_id not in target_menu_ids and copy.active:
+                copy.active = False
+                deactivated += 1
+
+    # The Excel Combinations sheet is the source of truth whenever it is present.
+    combo_rows = parsed.get("combinations")
+    if combo_rows is not None:
+        for old in db.scalars(select(MenuCombination)).all():
+            db.delete(old)
+        for combo in combo_rows:
+            db.add(MenuCombination(
+                trigger_import_item_id=combo["trigger_item_id"],
+                recommended_import_item_id=combo["recommended_item_id"],
+                priority=combo["priority"],
+                active=combo["active"],
+                reciprocal=combo["reciprocal"],
+                popup_title=combo.get("popup_title", ""),
+                notes=combo.get("notes", ""),
+            ))
+
+    db.commit()
+    return {
+        "items": len(parsed.get("items", [])),
+        "created": created,
+        "updated": updated,
+        "deactivated": deactivated,
+        "combinations": len(combo_rows or []),
+        "regions": len(menus_by_name),
+    }
+
+
+def canonical_import_items(db: Session) -> list[MenuItem]:
+    items = db.scalars(
+        select(MenuItem)
+        .where(MenuItem.import_item_id.is_not(None))
+        .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category))
+        .order_by(MenuItem.import_item_id, MenuItem.id)
+    ).all()
+    result: list[MenuItem] = []
+    seen: set[int] = set()
+    for item in items:
+        if item.import_item_id in seen:
+            continue
+        seen.add(item.import_item_id)
+        result.append(item)
+    return result
+
+
+@app.get("/admin/menu-import", response_class=HTMLResponse)
+def admin_menu_import_page(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    return render(request, db, "admin/menu_import.html", admin=admin)
+
+
+@app.post("/admin/menu-import", response_class=HTMLResponse)
+async def admin_menu_import_apply(
+    request: Request,
+    csrf_token: str = Form(...),
+    workbook: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
+        return render(request, db, "admin/menu_import.html", admin=admin, error="Choose an .xlsx menu workbook.")
+    data = await workbook.read()
+    if len(data) > 8 * 1024 * 1024:
+        return render(request, db, "admin/menu_import.html", admin=admin, error="Workbook must be smaller than 8 MB.")
+    try:
+        parsed = parse_menu_workbook(data)
+        result = apply_menu_workbook(db, parsed)
+    except ValueError as exc:
+        db.rollback()
+        return render(request, db, "admin/menu_import.html", admin=admin, error=str(exc))
+    except Exception:
+        db.rollback()
+        return render(request, db, "admin/menu_import.html", admin=admin, error="Import failed. Check the workbook format and try again.")
+    return render(request, db, "admin/menu_import.html", admin=admin, result=result)
+
+
+@app.get("/admin/menu-combinations", response_class=HTMLResponse)
+def admin_menu_combinations(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    items = canonical_import_items(db)
+    item_names = {int(i.import_item_id): i.name for i in items if i.import_item_id is not None}
+    combinations = db.scalars(select(MenuCombination).order_by(MenuCombination.trigger_import_item_id, MenuCombination.priority, MenuCombination.id)).all()
+    return render(request, db, "admin/combinations.html", admin=admin, items=items, item_names=item_names, combinations=combinations)
+
+
+@app.post("/admin/menu-combinations")
+def admin_menu_combination_create(
+    request: Request,
+    trigger_import_item_id: int = Form(...),
+    recommended_import_item_id: int = Form(...),
+    priority: int = Form(1),
+    popup_title: str = Form(""),
+    notes: str = Form(""),
+    active: str | None = Form(None),
+    reciprocal: str | None = Form(None),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    valid_ids = {int(i.import_item_id) for i in canonical_import_items(db) if i.import_item_id is not None}
+    if trigger_import_item_id not in valid_ids or recommended_import_item_id not in valid_ids or trigger_import_item_id == recommended_import_item_id:
+        return RedirectResponse("/admin/menu-combinations?error=Choose+two+different+valid+menu+items", status_code=303)
+    existing = db.scalar(select(MenuCombination).where(
+        MenuCombination.trigger_import_item_id == trigger_import_item_id,
+        MenuCombination.recommended_import_item_id == recommended_import_item_id,
+    ))
+    if existing:
+        existing.priority = max(1, priority)
+        existing.active = active == "on"
+        existing.reciprocal = reciprocal == "on"
+        existing.popup_title = popup_title.strip()
+        existing.notes = notes.strip()
+    else:
+        db.add(MenuCombination(
+            trigger_import_item_id=trigger_import_item_id,
+            recommended_import_item_id=recommended_import_item_id,
+            priority=max(1, priority), active=active == "on", reciprocal=reciprocal == "on",
+            popup_title=popup_title.strip(), notes=notes.strip(),
+        ))
+    db.commit()
+    return RedirectResponse("/admin/menu-combinations?saved=1", status_code=303)
+
+
+@app.post("/admin/menu-combinations/{combo_id}/edit")
+def admin_menu_combination_edit(
+    combo_id: int, request: Request, priority: int = Form(1), popup_title: str = Form(""), notes: str = Form(""),
+    active: str | None = Form(None), reciprocal: str | None = Form(None), csrf_token: str = Form(...), db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    combo = db.get(MenuCombination, combo_id)
+    if not combo: raise HTTPException(status_code=404)
+    combo.priority = max(1, priority)
+    combo.active = active == "on"
+    combo.reciprocal = reciprocal == "on"
+    combo.popup_title = popup_title.strip()
+    combo.notes = notes.strip()
+    db.commit()
+    return RedirectResponse("/admin/menu-combinations?saved=1", status_code=303)
+
+
+@app.post("/admin/menu-combinations/{combo_id}/delete")
+def admin_menu_combination_delete(combo_id: int, request: Request, csrf_token: str = Form(...), db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    combo = db.get(MenuCombination, combo_id)
+    if combo:
+        db.delete(combo)
+        db.commit()
+    return RedirectResponse("/admin/menu-combinations?deleted=1", status_code=303)
+
+
+@app.get("/api/menu-combinations")
+def api_menu_combinations(item_id: int, db: Session = Depends(get_db)):
+    trigger = db.get(MenuItem, item_id)
+    if not trigger or trigger.import_item_id is None:
+        return {"title": "Goes Well With This", "items": []}
+    import_id = int(trigger.import_item_id)
+    rules = db.scalars(
+        select(MenuCombination)
+        .where(MenuCombination.active.is_(True))
+        .where(or_(
+            MenuCombination.trigger_import_item_id == import_id,
+            (MenuCombination.reciprocal.is_(True) & (MenuCombination.recommended_import_item_id == import_id)),
+        ))
+        .order_by(MenuCombination.priority, MenuCombination.id)
+    ).all()
+    recommendations: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    title = "Goes Well With This"
+    for rule in rules:
+        target_import_id = rule.recommended_import_item_id if rule.trigger_import_item_id == import_id else rule.trigger_import_item_id
+        if target_import_id in seen:
+            continue
+        target = db.scalar(
+            select(MenuItem)
+            .where(MenuItem.import_item_id == target_import_id, MenuItem.active.is_(True))
+            .order_by(MenuItem.id)
+        )
+        if not target:
+            continue
+        seen.add(target_import_id)
+        if rule.popup_title and title == "Goes Well With This":
+            title = rule.popup_title
+        recommendations.append({
+            "id": target.id,
+            "name": target.name,
+            "description": target.description or "",
+            "dietary": target.dietary,
+            "image_url": f"/menu-item-image/{target.id}" if target.image_content_type else "",
+        })
+    return {"title": title, "items": recommendations}
 
 
 # ---------- Orders/customers ----------

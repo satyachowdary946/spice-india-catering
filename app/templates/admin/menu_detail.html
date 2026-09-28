@@ -519,6 +519,13 @@
                     Non Veg
                   </option>
 
+                  <option
+                    value="both"
+                    {% if item.dietary == 'both' %}selected{% endif %}
+                  >
+                    Both / Shared
+                  </option>
+
                 </select>
 
               </div>
@@ -711,6 +718,10 @@
 
                 <option value="nonveg">
                   Non Veg
+                </option>
+
+                <option value="both">
+                  Both / Shared
                 </option>
 
               </select>

@@ -1,0 +1,45 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}Excel Menu Import · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Bulk Menu Management</div>
+    <h1>Excel Menu Import</h1>
+    <p class="muted">Upload the approved Spice India catering workbook. Existing imported dishes are updated by Item ID; new Item IDs are added.</p>
+  </div>
+  <a class="btn secondary" href="/admin/menus">Back to Menus</a>
+</div>
+
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+{% if result %}
+<div class="notice success">
+  Import complete: {{ result.items }} source items processed, {{ result.created }} menu records created, {{ result.updated }} updated, {{ result.deactivated }} old regional copies hidden, {{ result.combinations }} combination rules loaded.
+</div>
+{% endif %}
+
+<section class="card import-workflow-card">
+  <h2>Import Workbook</h2>
+  <p class="muted">The workbook must contain <strong>Menu Import</strong>. If it also contains <strong>Combinations</strong>, those recommendation rules are imported at the same time.</p><p><a class="btn secondary small" href="/static/templates/Spice_India_Catering_Menu_With_Combinations.xlsx" download>Download Current Excel Template</a></p>
+  <form method="post" action="/admin/menu-import" enctype="multipart/form-data" class="compact">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="menu-workbook">Excel File (.xlsx)</label>
+      <input id="menu-workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+      <span class="help">Maximum 8 MB. Images are not embedded from the workbook; upload dish photos from the normal Menu Builder after import.</span>
+    </div>
+    <button class="btn" type="submit">Import / Update Menu</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>How Importing Works</h2>
+  <div class="import-rules-grid">
+    <div><strong>Item ID</strong><span>Stable key used to update the same dish next time.</span></div>
+    <div><strong>Veg / Non Veg / Both</strong><span>Controls the main customer cuisine selector.</span></div>
+    <div><strong>South / North</strong><span>Controls optional regional filters.</span></div>
+    <div><strong>Sub Category</strong><span>Creates customer sections such as Starter, Main Course and Biriyani's.</span></div>
+    <div><strong>Menu Section</strong><span>Creates the smaller section inside each category.</span></div>
+    <div><strong>Combinations</strong><span>Creates "Goes well with this" suggestions after a customer adds a dish.</span></div>
+  </div>
+</section>
+{% endblock %}

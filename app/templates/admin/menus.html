@@ -1,2 +1,57 @@
-{% extends "admin/admin_base.html" %}{% block title %}Menus · Catering Admin{% endblock %}{% block body %}
-<div class="admin-title"><div><div class="eyebrow">Menu Builder</div><h1>Regional Menu Filters</h1><p class="muted">These are the optional regional filters customers see, such as South Indian and North Indian. Rename, activate/deactivate and reorder them here; open one to manage its categories and dishes.</p></div></div>{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error') }}</div>{% endif %}<div class="grid two">{% for menu in menus %}<a class="card" href="/admin/menus/{{ menu.id }}"><div class="admin-title"><div><h2 style="font-size:1.25rem">{{ menu.name }}</h2><p class="muted">{{ menu.categories|length }} categories · Display Order {{ menu.sort_order }}</p></div><span class="status-badge {{ 'status-badge-active' if menu.active else 'status-badge-inactive' }}">{{ 'Active' if menu.active else 'Inactive' }}</span></div><strong>Manage Regional Menu →</strong></a>{% endfor %}</div><section class="card" style="margin-top:16px"><h2 style="font-size:1.25rem">Add Regional Filter</h2><form method="post" action="/admin/menus" class="admin-form-grid two"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Regional Menu Name</label><input name="name" required placeholder="e.g. South Indian"></div><div class="field"><label>Display Order</label><input name="sort_order" type="number" value="0"></div><button class="btn" type="submit">Create Regional Filter</button></form></section>{% endblock %}
+{% extends "admin/admin_base.html" %}
+{% block title %}Menus · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Menu Builder</div>
+    <h1>Menus & Import</h1>
+    <p class="muted">Manage regional filters, edit dishes manually, import the Excel menu, and control customer combination suggestions.</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/admin/menu-import">Import Excel</a>
+    <a class="btn secondary" href="/admin/menu-combinations">Combinations</a>
+  </div>
+</div>
+{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error') }}</div>{% endif %}
+
+<section class="card menu-import-callout">
+  <div>
+    <div class="eyebrow">Bulk Menu Management</div>
+    <h2>Excel Menu Import</h2>
+    <p class="muted">Use the Spice India import workbook to add or update dishes in bulk. Item IDs stay stable so combination rules continue to work.</p>
+  </div>
+  <a class="btn" href="/admin/menu-import">Open Excel Import</a>
+</section>
+
+<div class="section-heading-row">
+  <div>
+    <div class="eyebrow">Optional Customer Filters</div>
+    <h2>Regional Menu Filters</h2>
+  </div>
+  <a class="text-link" href="/admin/menu-combinations">Manage Combinations →</a>
+</div>
+<p class="muted">These are optional filters customers see, such as South Indian and North Indian. You can still edit every dish manually after importing.</p>
+<div class="grid two">
+  {% for menu in menus %}
+  <a class="card" href="/admin/menus/{{ menu.id }}">
+    <div class="admin-title">
+      <div>
+        <h2 style="font-size:1.25rem">{{ menu.name }}</h2>
+        <p class="muted">{{ menu.categories|length }} categories · Display Order {{ menu.sort_order }}</p>
+      </div>
+      <span class="status-badge {{ 'status-badge-active' if menu.active else 'status-badge-inactive' }}">{{ 'Active' if menu.active else 'Inactive' }}</span>
+    </div>
+    <strong>Manage Menu →</strong>
+  </a>
+  {% endfor %}
+</div>
+<section class="card" style="margin-top:16px">
+  <h2 style="font-size:1.25rem">Add Regional Filter</h2>
+  <form method="post" action="/admin/menus" class="admin-form-grid two">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label>Regional Menu Name</label><input name="name" required placeholder="e.g. South Indian"></div>
+    <div class="field"><label>Display Order</label><input name="sort_order" type="number" value="0"></div>
+    <button class="btn" type="submit">Create Regional Filter</button>
+  </form>
+</section>
+{% endblock %}

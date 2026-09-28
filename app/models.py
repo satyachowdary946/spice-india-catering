@@ -86,7 +86,21 @@ class MenuItem(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     image_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     image_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    import_item_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    image_reference: Mapped[str] = mapped_column(String(500), default="")
     subcategory: Mapped[Subcategory] = relationship(back_populates="items")
+
+
+class MenuCombination(Base):
+    __tablename__ = "menu_combinations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trigger_import_item_id: Mapped[int] = mapped_column(Integer, index=True)
+    recommended_import_item_id: Mapped[int] = mapped_column(Integer, index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    reciprocal: Mapped[bool] = mapped_column(Boolean, default=False)
+    popup_title: Mapped[str] = mapped_column(String(180), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
 
 
 class Customer(Base):
