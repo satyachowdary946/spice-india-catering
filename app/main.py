@@ -47,7 +47,10 @@ from .models import (
 from .notifications import (
     notify_admin_new_quote,
     notify_admin_new_quote_email,
+    notify_admin_order_confirmed,
+    notify_customer_quote_email,
     whatsapp_cloud_configured,
+    whatsapp_confirmation_configured,
 )
 from .seed import ensure_seed_data
 from .menu_excel import parse_menu_workbook
@@ -120,6 +123,7 @@ def ensure_schema_compatibility() -> None:
     if "customers" in tables:
         columns = {c["name"] for c in inspector.get_columns("customers")}
         additions = {
+            "email": "VARCHAR(255) DEFAULT ''",
             "address": "TEXT DEFAULT ''",
             "eircode": "VARCHAR(30) DEFAULT ''",
         }
@@ -153,6 +157,8 @@ def ensure_schema_compatibility() -> None:
             "web_charge_block_amount": "NUMERIC(10,2) DEFAULT 500.00",
             "web_charge_per_block": "NUMERIC(10,2) DEFAULT 5.00",
             "kitchen_whatsapp": "VARCHAR(60) DEFAULT ''",
+            "kitchen_whatsapp_group_url": "VARCHAR(500) DEFAULT ''",
+            "orders_reset_completed": "BOOLEAN DEFAULT FALSE",
             "next_order_sequence": "INTEGER DEFAULT 1",
         }
         for name, ddl in additions.items():
@@ -295,7 +301,7 @@ def build_customer_share_text(order: QuoteRequest, biz: BusinessSettings, public
             "",
         ])
     lines.extend([
-        "*VIEW ORDER DETAILS*",
+        "*CLICK THIS LINK TO REVIEW & CONFIRM YOUR ORDER*",
         public_url,
     ])
     return "\n".join(lines)
@@ -391,6 +397,11 @@ def clean_phone(value: str) -> str:
 
 def valid_phone(value: str) -> bool:
     return bool(re.fullmatch(r"[0-9]{7,10}", value or ""))
+
+
+def valid_email(value: str) -> bool:
+    value = (value or "").strip()
+    return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value)) and len(value) <= 255
 
 
 def clean_eircode(value: str) -> str:
@@ -513,6 +524,7 @@ def home(request: Request, db: Session = Depends(get_db)):
         "customer/home.html",
         hero_image_available=bool(biz.hero_image_blob or fallback_item_id),
         hero_image_custom=bool(biz.hero_image_blob),
+        hero_version=int((biz.updated_at or datetime.utcnow()).timestamp()) if biz.hero_image_blob else int(fallback_item_id or 0),
     )
 
 
@@ -523,7 +535,7 @@ def homepage_food_image(db: Session = Depends(get_db)):
         return Response(
             content=biz.hero_image_blob,
             media_type=biz.hero_image_content_type or "image/jpeg",
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "public, max-age=86400"},
         )
     item = db.scalar(
         select(MenuItem)
@@ -536,7 +548,7 @@ def homepage_food_image(db: Session = Depends(get_db)):
     return Response(
         content=item.image_blob,
         media_type=item.image_content_type or "image/jpeg",
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 
@@ -673,6 +685,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     name = str(details.get("name", "")).strip()
     phone_raw = str(details.get("phone", "")).strip()
     whatsapp_raw = str(details.get("whatsapp", "")).strip()
+    email = str(details.get("email", "")).strip().lower()
     phone = clean_phone(phone_raw)
     whatsapp = clean_phone(whatsapp_raw)
     event_name = str(details.get("event_name", "")).strip()
@@ -682,6 +695,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     if len(name) < 2: errors["name"] = "Enter the customer's name."
     if not re.fullmatch(r"[0-9]{7,10}", phone_raw): errors["phone"] = "Phone number must contain digits only and be no more than 10 digits."
     if not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw): errors["whatsapp"] = "WhatsApp number must contain digits only and be no more than 10 digits."
+    if not valid_email(email): errors["email"] = "Enter a valid email address for the catering quote."
     if not event_name: errors["event_name"] = "Enter the event name."
     if not address: errors["address"] = "Enter the event address."
     if not valid_eircode(eircode): errors["eircode"] = "Eircode must be exactly 7 letters and numbers."
@@ -701,12 +715,11 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     except Exception:
         delivery_time = None
         errors["delivery_time"] = "Choose a valid delivery time."
-    if "event_date" not in errors and "event_time" not in errors:
+    if "event_date" not in errors:
         ireland = ZoneInfo("Europe/Dublin")
-        event_dt = datetime.combine(event_date, event_time, tzinfo=ireland)
-        minimum_dt = datetime.now(ireland) + timedelta(hours=24)
-        if event_dt < minimum_dt:
-            errors["event_datetime"] = "Catering requests must be made at least 24 hours before the event date and time."
+        earliest_date = datetime.now(ireland).date() + timedelta(days=3)
+        if event_date < earliest_date:
+            errors["event_date"] = f"Please choose {earliest_date.strftime('%d %b %Y')} or later. We require two full days notice before the event."
     try:
         adults = parse_int(details.get("adults", 0), "Adults", 0)
         kids = parse_int(details.get("kids", 0), "Kids", 0)
@@ -741,6 +754,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
             name=name,
             phone=phone,
             whatsapp=whatsapp,
+            email=email,
             address=address,
             eircode=eircode,
         )
@@ -750,6 +764,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     else:
         customer.name = name
         customer.whatsapp = whatsapp
+        customer.email = email
         # Customer profile keeps the most recently supplied event address.
         # Historical order addresses remain untouched on their original orders.
         customer.address = address
@@ -883,6 +898,108 @@ def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
     )
 
 
+
+@app.get("/orders/{token}/add-dishes", response_class=HTMLResponse)
+def customer_add_dishes(token: str, request: Request, db: Session = Depends(get_db)):
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.public_token == token)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status in {"confirmed", "completed", "cancelled", "voided"}:
+        return RedirectResponse(f"/orders/{token}?error=Menu+changes+are+locked+for+this+order", status_code=303)
+    draft = {
+        "details": {
+            "name": order.customer.name,
+            "phone": order.customer.phone,
+            "whatsapp": order.customer.whatsapp,
+            "email": order.customer.email,
+            "event_date": order.event_date.isoformat(),
+            "event_day": event_day(order),
+            "event_name": order.event_name,
+            "event_time": order.event_time.strftime("%H:%M"),
+            "delivery_time": order.delivery_time.strftime("%H:%M") if order.delivery_time else "",
+            "adults": str(order.adults),
+            "kids": str(order.kids),
+            "address": order.address,
+            "eircode": order.eircode,
+        },
+        "item_ids": [item.item_id for item in order.items if item.item_id],
+        "requested_dishes": [dish.name for dish in order.requested_dishes],
+        "customer_notes": order.customer_notes or "",
+        "last_updated": datetime.utcnow().isoformat(),
+    }
+    return render(request, db, "customer/edit_order_menu.html", order=order, draft=draft)
+
+
+@app.post("/api/orders/{token}/menu-update")
+async def customer_menu_update(token: str, request: Request, db: Session = Depends(get_db)):
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.public_token == token)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
+    )
+    if not order:
+        return JSONResponse({"ok": False, "error": "Order not found."}, status_code=404)
+    if order.status in {"confirmed", "completed", "cancelled", "voided"}:
+        return JSONResponse({"ok": False, "error": "Menu changes are locked for this order."}, status_code=409)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid request data."}, status_code=400)
+    try:
+        unique_ids = list(dict.fromkeys(int(i) for i in (payload.get("item_ids") or [])))
+    except Exception:
+        unique_ids = []
+    requested_names = []
+    seen = set()
+    for raw in payload.get("requested_dishes") or []:
+        name = re.sub(r"\s+", " ", str(raw or "")).strip()[:180]
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold()); requested_names.append(name)
+    if not unique_ids and not requested_names:
+        return JSONResponse({"ok": False, "error": "Add at least one menu item or requested dish."}, status_code=422)
+    items = db.scalars(
+        select(MenuItem)
+        .where(MenuItem.id.in_(unique_ids), MenuItem.active.is_(True))
+        .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu))
+    ).all()
+    if len(items) != len(unique_ids):
+        return JSONResponse({"ok": False, "error": "One or more menu items are no longer available."}, status_code=409)
+    for old in list(order.items):
+        db.delete(old)
+    item_by_id = {item.id: item for item in items}
+    for sort_index, item_id in enumerate(unique_ids):
+        item = item_by_id[item_id]; sub = item.subcategory; cat = sub.category; menu = cat.menu
+        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item.name, menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, sort_order=sort_index))
+    existing = {dish.name.casefold(): dish for dish in order.requested_dishes}
+    for name in requested_names:
+        if name.casefold() not in existing:
+            db.add(RequestedDish(order_id=order.id, name=name, status="pending"))
+    order.customer_notes = str(payload.get("customer_notes") or order.customer_notes or "").strip()[:2000]
+    order.status = "new"
+    order.final_price = None
+    order.adult_charge = None
+    order.kid_charge = None
+    order.delivery_service_charge = None
+    order.delivery_price = None
+    order.service_price = None
+    order.web_order_charge = None
+    order.confirmed_at = None
+    order.customer_message = "Menu updated. A revised quote is being prepared."
+    db.add(StatusHistory(order_id=order.id, status="new", note=""))
+    db.commit()
+    await notify_admin_new_quote_email(
+        order.order_number, order.customer.name, order.customer.phone, order.event_name,
+        order.event_date.strftime("%d %b %Y"), event_day(order), order.event_time.strftime("%H:%M"),
+        order.delivery_time.strftime("%H:%M") if order.delivery_time else "", order.adults + order.kids,
+        admin_order_url(request, order.id),
+    )
+    return {"ok": True, "token": order.public_token, "order_number": order.order_number}
+
+
 @app.post("/orders/{token}/cancel")
 def customer_cancel(token: str, request: Request, db: Session = Depends(get_db)):
     order = db.scalar(select(QuoteRequest).where(QuoteRequest.public_token == token))
@@ -999,6 +1116,7 @@ async def admin_settings_post(
     branch_label: str = Form("Athlone Branch"), announcement_enabled: bool = Form(False),
     announcement_title: str = Form(""), announcement_text: str = Form(""),
     kitchen_whatsapp: str = Form(""),
+    kitchen_whatsapp_group_url: str = Form(""),
     remove_hero_image: bool = Form(False),
     csrf_token: str = Form(...), logo: UploadFile | None = File(None), hero_image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
@@ -1020,6 +1138,10 @@ async def admin_settings_post(
     obj.announcement_title = announcement_title.strip()
     obj.announcement_text = announcement_text.strip()
     obj.kitchen_whatsapp = clean_phone(kitchen_whatsapp) if kitchen_whatsapp.strip() else ""
+    group_url = kitchen_whatsapp_group_url.strip()
+    if group_url and not group_url.startswith(("https://chat.whatsapp.com/", "https://wa.me/")):
+        return render(request, db, "admin/settings.html", admin=admin, error="Kitchen WhatsApp group link must be a valid WhatsApp link.")
+    obj.kitchen_whatsapp_group_url = group_url
     allowed = {"image/png", "image/jpeg", "image/webp"}
     if logo and logo.filename:
         if logo.content_type not in allowed:
@@ -1056,6 +1178,9 @@ def admin_reset_orders(
     if redirect:
         return redirect
     check_csrf(request, csrf_token)
+    biz = business(db)
+    if biz.orders_reset_completed:
+        return RedirectResponse("/admin/settings?reset_error=The+one-time+order+reset+has+already+been+used", status_code=303)
     if confirmation.strip().upper() != "RESET ORDERS":
         return RedirectResponse("/admin/settings?reset_error=Type+RESET+ORDERS+exactly+to+confirm", status_code=303)
     orders = db.scalars(
@@ -1071,6 +1196,7 @@ def admin_reset_orders(
         db.delete(order)
     biz = business(db)
     biz.next_order_sequence = 1
+    biz.orders_reset_completed = True
     db.commit()
     return RedirectResponse("/admin/settings?orders_reset=1", status_code=303)
 
@@ -1648,7 +1774,7 @@ def admin_order_update(
     status: str = Form(...),
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
-    delivery_service_charge: str = Form("0"),
+    delivery_service_charge: str = Form(""),
     admin_notes: str = Form(""),
     customer_message: str = Form(""),
     csrf_token: str = Form(...),
@@ -1695,6 +1821,58 @@ def admin_order_update(
     return RedirectResponse(f"/admin/orders/{order_id}?saved=1", status_code=303)
 
 
+
+@app.post("/admin/orders/{order_id}/send-quote-email")
+async def admin_send_quote_email(
+    order_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.final_price is None:
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Set+pricing+before+sending+the+quote", status_code=303)
+    if not order.customer.email:
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Customer+email+is+missing", status_code=303)
+    p = pricing_breakdown(order)
+    sent, message = await notify_customer_quote_email(
+        order.customer.email,
+        order.customer.name,
+        order.order_number,
+        order.event_name,
+        order.event_date.strftime("%d %b %Y"),
+        event_day(order),
+        order.event_time.strftime("%H:%M"),
+        order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+        order.adults,
+        order.kids,
+        f"{p['adult_charge']:.2f}",
+        f"{p['kid_charge']:.2f}",
+        f"{p['delivery_service_charge']:.2f}",
+        f"{p['total']:.2f}",
+        [item.item_name for item in sorted(order.items, key=lambda x: x.sort_order)],
+        public_order_url(request, order.public_token),
+        business(db).phone,
+    )
+    if not sent:
+        return RedirectResponse(f"/admin/orders/{order_id}?error={quote(message)}", status_code=303)
+    if order.status == "new":
+        order.status = "quoted"
+        db.add(StatusHistory(order_id=order.id, status="quoted", note=""))
+        db.commit()
+    return RedirectResponse(f"/admin/orders/{order_id}?quote_emailed=1", status_code=303)
+
+
 @app.post("/admin/orders/{order_id}/kitchen-share")
 def admin_order_kitchen_share(
     order_id: int,
@@ -1721,9 +1899,34 @@ def admin_order_kitchen_share(
     db.commit()
     pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
     message = build_kitchen_share_text(order, pdf_url)
-    target = normalise_whatsapp_number(business(db).kitchen_whatsapp)
+    biz = business(db)
+    if biz.kitchen_whatsapp_group_url:
+        return RedirectResponse(f"/admin/orders/{order_id}/kitchen-share-ready", status_code=303)
+    target = normalise_whatsapp_number(biz.kitchen_whatsapp)
     share_url = (f"https://wa.me/{target}?text=" if target else "https://wa.me/?text=") + quote(message)
     return RedirectResponse(share_url, status_code=303)
+
+
+
+@app.get("/admin/orders/{order_id}/kitchen-share-ready", response_class=HTMLResponse)
+def admin_kitchen_share_ready(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    biz = business(db)
+    pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
+    return render(
+        request, db, "admin/kitchen_share_ready.html", admin=admin, order=order,
+        kitchen_message=build_kitchen_share_text(order, pdf_url), pdf_url=pdf_url,
+        kitchen_group_url=biz.kitchen_whatsapp_group_url,
+    )
 
 
 @app.get("/kitchen/{token}.pdf")
@@ -1740,20 +1943,38 @@ def public_kitchen_pdf(token: str, db: Session = Depends(get_db)):
 
 
 @app.post("/orders/{token}/confirm")
-def customer_confirm_order(token: str, request: Request, db: Session = Depends(get_db)):
-    order = db.get(QuoteRequest, {"public_token": token}) if False else db.scalar(select(QuoteRequest).where(QuoteRequest.public_token == token))
+async def customer_confirm_order(token: str, request: Request, db: Session = Depends(get_db)):
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.public_token == token)
+        .options(selectinload(QuoteRequest.customer))
+    )
     if not order:
         raise HTTPException(status_code=404)
     if order.status in {"cancelled", "completed", "voided"}:
         return RedirectResponse(f"/orders/{token}?error=Order+cannot+be+confirmed", status_code=303)
     if order.final_price is None:
         return RedirectResponse(f"/orders/{token}?error=Quote+price+is+not+ready", status_code=303)
-    if order.status != "confirmed":
+    just_confirmed = order.status != "confirmed"
+    if just_confirmed:
         order.status = "confirmed"
         if not order.confirmed_at:
             order.confirmed_at = datetime.utcnow()
         db.add(StatusHistory(order_id=order.id, status="confirmed", note=""))
         db.commit()
+        p = pricing_breakdown(order)
+        await notify_admin_order_confirmed(
+            order.order_number,
+            order.customer.name,
+            order.adults + order.kids,
+            order.event_name,
+            order.event_date.strftime("%d %b %Y"),
+            event_day(order),
+            order.event_time.strftime("%H:%M"),
+            order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+            f"€{p['total']:.2f}",
+            admin_order_url(request, order.id),
+        )
     return RedirectResponse(f"/orders/{token}?confirmed=1", status_code=303)
 
 
@@ -2258,6 +2479,7 @@ def admin_customer_edit(
     name: str = Form(...),
     phone: str = Form(...),
     whatsapp: str = Form(""),
+    email: str = Form(""),
     address: str = Form(""),
     eircode: str = Form(""),
     db: Session = Depends(get_db),
@@ -2275,6 +2497,7 @@ def admin_customer_edit(
     whatsapp_raw = whatsapp.strip()
     clean_customer_phone = clean_phone(phone_raw)
     clean_whatsapp = clean_phone(whatsapp_raw) if whatsapp_raw else ""
+    clean_email = email.strip().lower()
     clean_address = address.strip()
     normalized_eircode = clean_eircode(eircode)
 
@@ -2284,6 +2507,8 @@ def admin_customer_edit(
         return RedirectResponse(f"/admin/customers/{customer_id}?error=Phone+must+contain+digits+only+and+be+no+more+than+10+digits", status_code=303)
     if whatsapp_raw and not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw):
         return RedirectResponse(f"/admin/customers/{customer_id}?error=WhatsApp+must+contain+digits+only+and+be+no+more+than+10+digits", status_code=303)
+    if clean_email and not valid_email(clean_email):
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+email+address", status_code=303)
     if normalized_eircode and not valid_eircode(normalized_eircode):
         return RedirectResponse(f"/admin/customers/{customer_id}?error=Eircode+must+be+exactly+7+letters+and+numbers", status_code=303)
 
@@ -2299,6 +2524,7 @@ def admin_customer_edit(
     customer.name = clean_name
     customer.phone = clean_customer_phone
     customer.whatsapp = clean_whatsapp
+    customer.email = clean_email
     customer.address = clean_address
     customer.eircode = normalized_eircode
     db.commit()
@@ -2491,7 +2717,7 @@ def admin_transaction_price(
     request: Request,
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
-    delivery_service_charge: str = Form("0"),
+    delivery_service_charge: str = Form(""),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):

@@ -1,5 +1,6 @@
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -24,7 +25,11 @@ def quote_payload(phone="0891234567", event_name="Test Event", days=10):
             "name": "Test Customer",
             "phone": phone,
             "whatsapp": phone,
-            "event_date": str(date.today() + timedelta(days=days)),
+            "email": "customer@example.com",
+            "event_date": str(
+    datetime.now(ZoneInfo("Europe/Dublin")).date()
+    + timedelta(days=days)
+),
             "event_day": "ignored-server-side",
             "event_name": event_name,
             "event_time": "18:30",
@@ -73,6 +78,11 @@ def test_build8_mobile_workflow():
         assert response.status_code == 422
         assert "exactly 7" in response.text
 
+        too_soon = quote_payload(days=2)
+        response = client.post("/api/quotes", json=too_soon)
+        assert response.status_code == 422
+        assert "two full days" in response.text
+
         q1 = client.post("/api/quotes", json=quote_payload(event_name="Wedding"))
         assert q1.status_code == 200, q1.text
         b1 = q1.json()
@@ -101,7 +111,7 @@ def test_build8_mobile_workflow():
         assert detail.status_code == 200
         assert "Day" in detail.text
         assert detail.text.index("Final Menu List") < detail.text.index("Kitchen Sheet & Sharing")
-        assert detail.text.index("Customer Sharing") < detail.text.index("Order Finance")
+        assert detail.text.index("Email Quote To Customer") < detail.text.index("Order Finance")
         assert "Web Order Charge" not in detail.text
         csrf = csrf_from(detail.text)
         upd = client.post("/admin/orders/1", data={
@@ -157,6 +167,7 @@ def test_build8_mobile_workflow():
         settings = client.get("/admin/settings")
         assert "Web Order Charge" not in settings.text
         assert "Kitchen WhatsApp Number" in settings.text
+        assert "Kitchen WhatsApp Group Link" in settings.text
         assert "Reset Test Orders & Restart Numbering" in settings.text
         settings_csrf = csrf_from(settings.text)
         reset = client.post("/admin/settings/reset-orders", data={
@@ -164,6 +175,13 @@ def test_build8_mobile_workflow():
             "confirmation": "RESET ORDERS",
         }, follow_redirects=False)
         assert reset.status_code == 303
+        after_reset_settings = client.get("/admin/settings")
+        assert "Reset Test Orders & Restart Numbering" not in after_reset_settings.text
+        reset_again = client.post("/admin/settings/reset-orders", data={
+            "csrf_token": csrf_from(after_reset_settings.text),
+            "confirmation": "RESET ORDERS",
+        }, follow_redirects=False)
+        assert reset_again.status_code == 303
 
         from sqlalchemy import func, select
         from app.db import SessionLocal

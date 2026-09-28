@@ -25,6 +25,7 @@
         <div class="field"><label for="customer-name">Name</label><input id="customer-name" name="name" value="{{ customer.name }}" required></div>
         <div class="field"><label for="customer-phone">Phone</label><input id="customer-phone" name="phone" type="tel" value="{{ customer.phone }}" required></div>
         <div class="field"><label for="customer-whatsapp">WhatsApp</label><input id="customer-whatsapp" name="whatsapp" type="tel" value="{{ customer.whatsapp or '' }}"></div>
+        <div class="field"><label for="customer-email">Email</label><input id="customer-email" name="email" type="email" value="{{ customer.email or '' }}"></div>
         <div class="field customer-address-field"><label for="customer-address">Saved address</label><textarea id="customer-address" name="address">{{ customer.address or '' }}</textarea><span class="help">New quote submissions update this saved address to the most recently supplied event address. Old orders are not changed.</span></div>
         <div class="field"><label for="customer-eircode">Eircode</label><input id="customer-eircode" name="eircode" value="{{ customer.eircode or '' }}"></div>
       </div>

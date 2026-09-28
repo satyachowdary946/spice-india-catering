@@ -10,10 +10,10 @@
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#0d0f12">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/app.css?v=build9">
+  <link rel="stylesheet" href="/static/css/app.css?v=build10">
   {% block head %}{% endblock %}
 </head>
-<body>
+<body class="{% if request.url.path == '/' %}home-page{% endif %}">
   <header class="site-header no-print">
     <div class="container header-row">
       <div class="header-brand-row">
@@ -36,7 +36,7 @@
   {% endif %}
   {% block body %}{% endblock %}
   <footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>
-  <script src="/static/js/customer.js?v=build9" defer></script>
+  <script src="/static/js/customer.js?v=build10" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

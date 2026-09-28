@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ business.company_name or 'Catering Ordering' }}{% endblock %}
+{% block head %}{% if hero_image_available %}<link rel="preload" as="image" href="/homepage-food-image?v={{ hero_version }}" fetchpriority="high">{% endif %}{% endblock %}
 {% block body %}
 <main>
-  <section class="hero home-hero {% if hero_image_available %}has-food-bg{% endif %}" {% if hero_image_available %}style="--home-food-image:url('/homepage-food-image')"{% endif %}>
+  <section class="hero home-hero {% if hero_image_available %}has-food-bg{% endif %}" {% if hero_image_available %}style="--home-food-image:url('/homepage-food-image?v={{ hero_version }}')"{% endif %}>
     <div class="container home-hero-inner">
       <div class="home-hero-copy">
         <div class="eyebrow">Catering ordering</div>

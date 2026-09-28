@@ -137,3 +137,34 @@ Combination rules can also be edited manually at:
 ### Dependency
 
 Build 9 adds `openpyxl` for server-side `.xlsx` import parsing. Render installs it from `requirements.txt` during deployment.
+
+## Build 10 — Quote confirmation workflow
+
+Build 10 adds a customer-email quote workflow and optional Meta WhatsApp Cloud API alert when the customer confirms an order.
+
+### Booking notice rule
+The website uses the requested **two full days prior** rule: if today is 1 September, the earliest selectable event date is 4 September. The rule is enforced in both the browser and the API.
+
+### Customer quote email
+Customer email is collected with event details. After pricing the order, use **Email Quote To Customer** on the admin order page. The customer receives event details, selected dishes, price details and a secure **Review & Confirm Order** link. Sending the email moves a new order to Quoted.
+
+### Automatic admin WhatsApp after customer confirmation
+Configure these Render environment variables:
+
+- `WHATSAPP_CLOUD_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `ADMIN_WHATSAPP_TO`
+- `WHATSAPP_GRAPH_VERSION` (default `v22.0`)
+- `WHATSAPP_CONFIRM_TEMPLATE_NAME` (recommended `admin_order_confirmed`)
+- `WHATSAPP_CONFIRM_TEMPLATE_LANG` (for example `en_US`)
+
+The approved WhatsApp template body must accept 10 variables, in this exact order: Order ID, Customer Name, Total Guests, Event Name, Event Date, Day, Event Time, Delivery Time, Total Price and Admin Order URL. Confirmation still succeeds if WhatsApp is unavailable; notifications never block the order.
+
+### Kitchen WhatsApp group
+Business Settings now accepts a Kitchen WhatsApp Group Link. The website prepares the kitchen PDF and message, then provides a one-tap button that copies the prepared text and opens the group. A normal browser cannot silently attach a generated PDF to a WhatsApp group without a supported WhatsApp API attachment workflow.
+
+### One-time reset
+The test-order reset can only be used once. After the reset succeeds, the whole reset section disappears from Business Settings and the backend blocks further attempts. The next public order starts from `CAT0001`.
+
+### Add more dishes
+Before an order is confirmed, the customer can open **Add More Dishes** from the order page. Changing the menu invalidates the existing quote, returns the order to New, and requires the catering team to issue a revised quote.

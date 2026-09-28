@@ -1407,3 +1407,31 @@ html,body{max-width:100%;overflow-x:hidden}
   .menu-section-title{top:166px}.menu-item{min-height:96px}.menu-item.has-image{grid-template-columns:82px minmax(0,1fr) 44px}.menu-item-image{width:82px;height:82px}.menu-item-name{font-size:.98rem}.menu-item-desc{font-size:.78rem}.add-btn{width:40px;height:40px}.combo-dialog[open]{position:fixed;inset:auto 0 0 0;margin:0;width:100%;max-width:none;max-height:78dvh;border-radius:20px 20px 0 0;border-bottom:0}.combo-dialog .request-dialog-card{max-height:78dvh;overflow-y:auto;padding:16px 14px calc(18px + env(safe-area-inset-bottom))}.combo-suggestion-card{grid-template-columns:68px minmax(0,1fr) auto}.combo-suggestion-card img{width:68px;height:68px}.combo-add{min-width:62px;padding-inline:10px}
 }
 @media(max-width:420px){.combo-admin-controls{grid-template-columns:1fr}.menu-section-title{top:174px}.menu-item.has-image{grid-template-columns:76px minmax(0,1fr) 40px}.menu-item-image{width:76px;height:76px}.combo-suggestion-card{grid-template-columns:62px minmax(0,1fr)}.combo-suggestion-card img{width:62px;height:62px}.combo-suggestion-card .combo-add{grid-column:2;width:100%}}
+
+/* =========================================================
+   BUILD 10 — MOBILE-FIRST QUOTE / CONFIRMATION POLISH
+   ========================================================= */
+.home-page .brand-logo{width:150px;height:66px;object-fit:contain;border:0;border-radius:0;background:transparent}
+.home-page .brand{gap:14px}.home-page .branch-label{font-size:1rem;max-width:180px;line-height:1.1}
+.menu-search-row{position:relative;margin-top:10px;max-width:620px}.menu-search-row input{width:100%;min-height:46px;border-radius:14px;padding:10px 44px 10px 15px;background:#0f1716;border:1px solid #465652;color:#fff}.menu-search-row span{position:absolute;right:15px;top:50%;transform:translateY(-50%);font-size:1.35rem;color:#91a39e;pointer-events:none}
+.customer-order-page .customer-order-details-card,.customer-order-page .customer-selected-menu,.customer-order-page .customer-confirm-card{border-color:#41514d}
+.two-column-meta{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}.two-column-meta .meta-row{min-width:0}
+.customer-confirm-card{border:2px solid #22c9b4!important;background:#091713!important;box-shadow:0 14px 34px rgba(0,0,0,.22)}
+.customer-confirm-card h2{margin-top:4px}.confirm-callout{margin:16px 0 10px;padding:12px 13px;border-radius:10px;background:#142522;color:#eafffb;text-align:center}.customer-confirm-btn{min-height:58px;font-size:1.12rem;background:#27cfb9!important;color:#06110f!important;border-color:#27cfb9!important}.customer-confirm-btn:hover{filter:brightness(1.06)}
+.add-more-dishes-btn{white-space:nowrap}.confirmed-lock{text-align:center;margin-top:14px}
+.dietary-menu-heading.veg{border-color:#1fae65!important;color:#6cf0a8!important;background:#0b2a1b!important}.dietary-menu-heading.nonveg{border-color:#cf4d45!important;color:#ff8b83!important;background:#2b1413!important}
+.kitchen-share-ready-card textarea{min-height:250px}.kitchen-group-btn{background:#1fae65!important;border-color:#1fae65!important;color:#04110a!important}
+.loading-card{text-align:center;margin-top:40px}.loading-card .btn{margin-top:14px}
+
+@media(max-width:700px){
+  .home-page .site-header .header-row{min-height:78px}.home-page .brand-logo{width:126px;height:58px}.home-page .branch-label{font-size:.82rem;max-width:110px}
+  .two-column-meta{grid-template-columns:1fr}.customer-order-page .order-status-hero{align-items:flex-start}.customer-order-page .order-status-hero h1{font-size:2rem}
+  .customer-order-page .admin-title{align-items:flex-start}.customer-order-page .admin-title .add-more-dishes-btn{width:100%;margin-top:10px;text-align:center}
+  .customer-confirm-card{padding:17px 14px}.customer-confirm-card .quote-total strong{font-size:2rem}.customer-confirm-card .quote-breakdown-grid{gap:0}
+  .menu-search-row{position:sticky;top:0;z-index:11;max-width:none;background:#30383b;padding:8px 0;margin-top:4px}.menu-search-row input{min-height:48px}
+  .request-dialog-card{max-width:calc(100vw - 20px)}
+}
+@media(max-width:420px){
+  .home-page .brand-logo{width:116px;height:52px}.home-page .nav a{font-size:.86rem}.home-page .branch-label{display:none}
+  .form-card .admin-title h1{font-size:2rem!important;line-height:1.05}.form-card .lead{font-size:.98rem}
+}

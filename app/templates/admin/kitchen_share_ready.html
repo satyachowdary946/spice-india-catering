@@ -1,0 +1,12 @@
+{% extends "admin/admin_base.html" %}
+{% block title %}Kitchen Share · {{ order.order_number }}{% endblock %}
+{% block body %}
+<div class="admin-title"><div><div class="eyebrow">Kitchen Share</div><h1>{{ order.order_number }}</h1><p class="muted">The kitchen PDF is ready. Open the group and paste the prepared message if WhatsApp does not paste it automatically.</p></div><a class="btn secondary" href="/admin/orders/{{ order.id }}#kitchen-actions">Back To Order</a></div>
+<section class="card kitchen-share-ready-card">
+  <div class="actions"><a class="btn secondary" href="{{ pdf_url }}" target="_blank" rel="noopener">Open Kitchen PDF</a><button class="btn secondary" type="button" data-copy-kitchen>Copy Kitchen Message</button></div>
+  <div class="field" style="margin-top:14px"><label>Prepared Message</label><textarea data-kitchen-message readonly rows="12">{{ kitchen_message }}</textarea></div>
+  {% if kitchen_group_url %}<a class="btn block kitchen-group-btn" href="{{ kitchen_group_url }}" target="_blank" rel="noopener" data-open-kitchen-group style="margin-top:14px">Open Kitchen WhatsApp Group</a>{% else %}<div class="notice" style="margin-top:14px">Add the kitchen WhatsApp group link in Business Settings.</div>{% endif %}
+  <p class="help" style="margin-top:10px">WhatsApp group links do not support a website silently attaching a PDF. This workflow gives the group a secure PDF link in the prepared message.</p>
+</section>
+<script>(()=>{const t=document.querySelector('[data-kitchen-message]');const copy=async()=>{try{await navigator.clipboard.writeText(t.value);return true}catch{return false}};document.querySelector('[data-copy-kitchen]')?.addEventListener('click',async e=>{const ok=await copy();e.currentTarget.textContent=ok?'Copied ✓':'Select & Copy';if(!ok){t.focus();t.select();}});document.querySelector('[data-open-kitchen-group]')?.addEventListener('click',()=>{copy();});})();</script>
+{% endblock %}

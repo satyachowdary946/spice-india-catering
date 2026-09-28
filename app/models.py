@@ -39,6 +39,8 @@ class BusinessSettings(Base):
     web_charge_block_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("500.00"))
     web_charge_per_block: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("5.00"))  # legacy compatibility
     kitchen_whatsapp: Mapped[str] = mapped_column(String(60), default="")
+    kitchen_whatsapp_group_url: Mapped[str] = mapped_column(String(500), default="")
+    orders_reset_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     next_order_sequence: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -110,6 +112,7 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(String(160))
     phone: Mapped[str] = mapped_column(String(60), index=True)
     whatsapp: Mapped[str] = mapped_column(String(60), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")
     address: Mapped[str] = mapped_column(Text, default="")
     eircode: Mapped[str] = mapped_column(String(30), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

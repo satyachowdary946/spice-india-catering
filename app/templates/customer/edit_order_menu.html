@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Add More Dishes · {{ order.order_number }}{% endblock %}
+{% block body %}
+<main class="section"><div class="container" style="max-width:720px"><section class="card loading-card"><div class="eyebrow">{{ order.order_number }}</div><h1>Add More Dishes</h1><p class="lead">Your current menu is being loaded. Any menu change will require a revised quote before confirmation.</p><a class="btn" href="/menu" data-edit-menu-fallback>Open Menu</a></section></div></main>
+<script>
+(() => {
+  const draft = {{ draft | tojson }};
+  localStorage.setItem('cateringDraftV1', JSON.stringify(draft));
+  localStorage.setItem('cateringEditOrderToken', {{ order.public_token | tojson }});
+  setTimeout(() => location.replace('/menu'), 80);
+})();
+</script>
+{% endblock %}

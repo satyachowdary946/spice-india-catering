@@ -23,9 +23,9 @@ function initDetailsForm(){
   Object.entries(draft.details||{}).forEach(([k,v])=>{const el=form.elements[k]; if(el&&el.type!=='submit') el.value=v??'';});
   const same=document.getElementById('same-whatsapp'), phone=form.elements.phone, wa=form.elements.whatsapp;
   const dateInput=form.elements.event_date, dayInput=form.elements.event_day, eircode=form.elements.eircode, errorBox=document.querySelector('[data-details-error]');
-  const minimumEventDateTime=()=>new Date(Date.now()+24*60*60*1000);
+  const earliestEventDate=()=>{const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+3);return d;};
   const toDateInput=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  if(dateInput) dateInput.min=toDateInput(minimumEventDateTime());
+  if(dateInput) dateInput.min=toDateInput(earliestEventDate());
   const syncDay=()=>{if(dayInput)dayInput.value=dayFromDate(dateInput?.value||'');}; syncDay(); dateInput?.addEventListener('change',syncDay);
   document.querySelectorAll('[data-native-picker]').forEach(input=>input.addEventListener('click',()=>{if(typeof input.showPicker==='function'){try{input.showPicker();}catch{}}}));
   const digitsOnly=el=>{if(!el)return;el.value=String(el.value||'').replace(/\D/g,'').slice(0,10);};
@@ -39,15 +39,16 @@ function initDetailsForm(){
   form.addEventListener('submit',e=>{
     e.preventDefault(); if(errorBox) errorBox.hidden=true; if(!form.reportValidity()) return;
     const fd=new FormData(form), details={};
-    ['name','phone','whatsapp','event_date','event_day','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
+    ['name','phone','whatsapp','email','event_date','event_day','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
     if(!/^[0-9]{7,10}$/.test(details.phone)){fail('Phone number must contain digits only and be no more than 10 digits.','phone');return;}
     if(!/^[0-9]{7,10}$/.test(details.whatsapp)){fail('WhatsApp number must contain digits only and be no more than 10 digits.','whatsapp');return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email)){fail('Enter a valid email address for your catering quote.','email');return;}
     details.eircode=details.eircode.replace(/\s/g,'').toUpperCase();
     if(!/^[A-Z0-9]{7}$/.test(details.eircode)){fail('Eircode must be exactly 7 letters and numbers.','eircode');return;}
     details.event_day=dayFromDate(details.event_date);
     if((Number(details.adults)||0)+(Number(details.kids)||0)<1){fail('Enter at least one guest in Adults or Kids.','adults');return;}
-    const eventDateTime=new Date(`${details.event_date}T${details.event_time}:00`);
-    if(!Number.isFinite(eventDateTime.getTime())||eventDateTime.getTime()<minimumEventDateTime().getTime()){fail('Please choose an event date and time at least 24 hours from now.','event_date');return;}
+    const selectedDate=new Date(`${details.event_date}T12:00:00`);
+    if(!Number.isFinite(selectedDate.getTime())||selectedDate.getTime()<earliestEventDate().getTime()){fail('Please choose the earliest available date shown or a later date. We require two full days notice.','event_date');return;}
     DraftStore.setDetails(details); location.href=form.dataset.next||'/menu';
   });
 }
@@ -64,6 +65,7 @@ function initMenu(){
   let selectedMenu=null;
   let selectedDiet='veg';
   let activeCategory=null;
+  let searchTerm='';
   const itemMap=new Map();
   data.forEach(m=>m.categories.forEach(c=>c.subcategories.forEach(sub=>sub.items.forEach(i=>{if(!itemMap.has(i.id))itemMap.set(i.id,{...i,menu:m.name,category:c.name,subcategory:sub.name});}))));
   window.__menuItemMap=itemMap;
@@ -92,8 +94,10 @@ function initMenu(){
         let targetSub=cat.subs.get(sub.name);
         if(!targetSub){targetSub={id:sub.id,name:sub.name,items:new Map(),sort_order:sub.sort_order};cat.subs.set(sub.name,targetSub);}
         sub.items.forEach(item=>{
-          const matches=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
-          if(!matches)return;
+          const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
+          const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name).toLowerCase();
+          const matchesSearch=!searchTerm||haystack.includes(searchTerm);
+          if(!matchesDiet||!matchesSearch)return;
           if(!targetSub.items.has(item.id))targetSub.items.set(item.id,{...item,menu:menu.name});
         });
       });
@@ -143,6 +147,8 @@ function initMenu(){
   function itemCard(i,selected){const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} dietary-card-${escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice;activeCategory=null;render();if(b.closest('[data-menu-filter-dialog]'))filterDialog?.close();}));
+  const searchInput=document.querySelector('[data-menu-search]');
+  searchInput?.addEventListener('input',()=>{searchTerm=String(searchInput.value||'').trim().toLowerCase();activeCategory=null;render();});
   updateRequestCount();render();
 }
 
@@ -152,7 +158,7 @@ function initReview(){
   const root=document.querySelector('[data-review-root]');if(!root)return;
   const detailsBox=document.querySelector('[data-review-details]'),itemsBox=document.querySelector('[data-review-items]'),requestsBox=document.querySelector('[data-review-requests]'),submit=document.querySelector('[data-submit-quote]'),notesInput=document.querySelector('[data-customer-notes]');
   const draft=DraftStore.load();if(!draft.details?.name){location.replace('/order?next=/review');return;}const d=draft.details;
-  detailsBox.innerHTML=`<div class="order-meta"><div class="meta-row"><strong>Name</strong><span>${escapeHtml(d.name)}</span></div><div class="meta-row"><strong>Phone</strong><span>${escapeHtml(d.phone)}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>${escapeHtml(d.whatsapp)}</span></div><div class="meta-row"><strong>Event</strong><span>${escapeHtml(d.event_name)}</span></div><div class="meta-row"><strong>Date</strong><span>${escapeHtml(d.event_date)}</span></div><div class="meta-row"><strong>Day</strong><span>${escapeHtml(d.event_day||dayFromDate(d.event_date))}</span></div><div class="meta-row"><strong>Event Time</strong><span>${escapeHtml(d.event_time)}</span></div><div class="meta-row"><strong>Delivery Time</strong><span>${escapeHtml(d.delivery_time)}</span></div><div class="meta-row"><strong>Guests</strong><span>${escapeHtml(d.adults)} adults + ${escapeHtml(d.kids)} kids</span></div><div class="meta-row"><strong>Address</strong><span>${escapeHtml(d.address)}, ${escapeHtml(d.eircode)}</span></div></div>`;
+  detailsBox.innerHTML=`<div class="order-meta"><div class="meta-row"><strong>Name</strong><span>${escapeHtml(d.name)}</span></div><div class="meta-row"><strong>Phone</strong><span>${escapeHtml(d.phone)}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>${escapeHtml(d.whatsapp)}</span></div><div class="meta-row"><strong>Email</strong><span>${escapeHtml(d.email)}</span></div><div class="meta-row"><strong>Event</strong><span>${escapeHtml(d.event_name)}</span></div><div class="meta-row"><strong>Date</strong><span>${escapeHtml(d.event_date)}</span></div><div class="meta-row"><strong>Day</strong><span>${escapeHtml(d.event_day||dayFromDate(d.event_date))}</span></div><div class="meta-row"><strong>Event Time</strong><span>${escapeHtml(d.event_time)}</span></div><div class="meta-row"><strong>Delivery Time</strong><span>${escapeHtml(d.delivery_time)}</span></div><div class="meta-row"><strong>Guests</strong><span>${escapeHtml(d.adults)} adults + ${escapeHtml(d.kids)} kids</span></div><div class="meta-row"><strong>Address</strong><span>${escapeHtml(d.address)}, ${escapeHtml(d.eircode)}</span></div></div>`;
   if(notesInput){notesInput.value=draft.customer_notes||'';notesInput.addEventListener('input',()=>DraftStore.setCustomerNotes(notesInput.value));}
   const renderRequests=state=>{const requests=state.requested_dishes||[];requestsBox.innerHTML=requests.length?`<div class="requested-dish-list">${requests.map(name=>`<div class="requested-dish-row"><strong>${escapeHtml(name)}</strong><span class="request-status pending">Needs Confirmation</span></div>`).join('')}</div>`:'<div class="empty">No dishes requested.</div>';};
   const updateAvailability=state=>{if(submit)submit.disabled=!((state.item_ids||[]).length||(state.requested_dishes||[]).length);};
@@ -160,7 +166,7 @@ function initReview(){
   window.addEventListener('draftchange',e=>{const state=e.detail||DraftStore.load();renderRequests(state);updateAvailability(state);renderReviewItems(state.item_ids||[],itemsBox,submit,(state.requested_dishes||[]).length);});
   submit?.addEventListener('click',async()=>{
     const current=DraftStore.load();if(!current.item_ids.length&&!current.requested_dishes.length)return;submit.disabled=true;const original=submit.textContent;submit.textContent='Sending Quote…';const errorBox=document.querySelector('[data-submit-error]');errorBox.hidden=true;
-    try{const res=await fetch('/api/quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});const body=await res.json();if(!res.ok||!body.ok){const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];throw new Error(errors.length?errors.join(' '):(body.error||'Could not send quote.'));}localStorage.setItem('lastCateringOrderToken',body.token);DraftStore.clear();location.href='/orders/'+body.token+'?submitted=1';}
+    try{const editToken=localStorage.getItem('cateringEditOrderToken');const endpoint=editToken?'/api/orders/'+encodeURIComponent(editToken)+'/menu-update':'/api/quotes';const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});const body=await res.json();if(!res.ok||!body.ok){const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];throw new Error(errors.length?errors.join(' '):(body.error||'Could not send quote.'));}localStorage.setItem('lastCateringOrderToken',body.token);localStorage.removeItem('cateringEditOrderToken');DraftStore.clear();location.href='/orders/'+body.token+(editToken?'?updated=1':'?submitted=1');}
     catch(err){errorBox.textContent=err.message||'Could not send quote. Try again.';errorBox.hidden=false;errorBox.insertAdjacentHTML('beforeend',' <a class="error-fix-link" href="/order?next=/review">Edit Event Details</a>');errorBox.scrollIntoView({behavior:'smooth',block:'center'});submit.disabled=false;submit.textContent=original;}
   });
 }
