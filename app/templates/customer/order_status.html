@@ -1,78 +1,18 @@
 {% extends "base.html" %}
 {% block title %}{{ order.order_number }} · Catering Order{% endblock %}
 {% block body %}
-<main class="section">
-  <div class="container order-sheet" style="max-width:900px">
-    {% if request.query_params.get('submitted') %}<div class="notice success"><strong>Quote Request Sent.</strong> Save this Order ID: <strong>{{ order.order_number }}</strong>.{% if customer_whatsapp_url %} <a href="{{ customer_whatsapp_url }}" target="_blank" rel="noopener"><strong>Save Order To WhatsApp</strong></a>{% endif %}</div>{% endif %}
-    {% if request.query_params.get('confirmed') %}<div class="notice success"><strong>Order Confirmed.</strong> The catering team can now prepare the confirmed order.</div>{% endif %}
-    {% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}
-    {% if order.status == 'cancelled' %}<div class="notice error">This order has been cancelled.</div>{% endif %}
-    {% if order.status == 'voided' %}<div class="notice error"><strong>This order has been voided by the catering team.</strong> Contact us if you believe this is incorrect.</div>{% endif %}
-
-    <div class="order-status-hero" style="margin-top:14px">
-      <div><div class="eyebrow">Catering Order</div><h1>{{ order.order_number }}</h1><p class="muted">Customer {{ order.customer.customer_number }}</p></div>
-      <span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span>
-    </div>
-
-    <section class="event-highlight-grid event-highlight-grid-five">
-      <div class="event-highlight"><span>Date</span><strong>{{ order.event_date.strftime('%d %b %Y') }}</strong></div>
-      <div class="event-highlight"><span>Day</span><strong>{{ order.event_date.strftime('%A') }}</strong></div>
-      <div class="event-highlight"><span>Event Time</span><strong>{{ order.event_time.strftime('%H:%M') }}</strong></div>
-      <div class="event-highlight"><span>Delivery Time</span><strong>{{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '—' }}</strong></div>
-      <div class="event-highlight guest"><span>Total People</span><strong>{{ order.adults + order.kids }}</strong><small>{{ order.adults }} Adults · {{ order.kids }} Kids</small></div>
-    </section>
-
-    <section class="card">
-      <div class="order-meta">
-        <div class="meta-row"><strong>Name</strong><span>{{ order.customer.name }}</span></div>
-        <div class="meta-row"><strong>Phone</strong><span>{{ order.customer.phone }}</span></div>
-        <div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp }}</span></div>
-        <div class="meta-row"><strong>Event</strong><span>{{ order.event_name }}</span></div>
-        <div class="meta-row"><strong>Address</strong><span>{{ order.address }}, {{ order.eircode }}</span></div>
-      </div>
-
-      {% if order.final_price is not none %}
-      <div class="customer-quote-card" style="margin-top:16px">
-        <div class="eyebrow">Your Quote</div>
-        <div class="quote-breakdown-grid">
-          <div><span>Adults · {{ order.adults }} × €{{ '%.2f'|format(pricing.adult_charge) }}</span><strong>€{{ '%.2f'|format(order.adults * pricing.adult_charge) }}</strong></div>
-          <div><span>Kids · {{ order.kids }} × €{{ '%.2f'|format(pricing.kid_charge) }}</span><strong>€{{ '%.2f'|format(order.kids * pricing.kid_charge) }}</strong></div>
-          <div><span>Delivery</span><strong>€{{ '%.2f'|format(pricing.delivery_price) }}</strong></div>
-          <div><span>Service</span><strong>€{{ '%.2f'|format(pricing.service_price) }}</strong></div>
-          <div><span>Web Order Charge</span><strong>€{{ '%.2f'|format(pricing.web_order_charge) }}</strong></div>
-        </div>
-        <div class="quote-total"><span>Total Quote</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div>
-        {% if order.status not in ['confirmed','completed','cancelled','voided'] %}
-        <form method="post" action="/orders/{{ order.public_token }}/confirm" style="margin-top:14px"><button class="btn block" type="submit">Confirm Order</button></form>
-        {% endif %}
-        <div class="negotiation-box">
-          <strong>Want To Negotiate?</strong>
-          <span>Message us or call <a href="tel:{{ business.phone }}">{{ business.phone or business.whatsapp }}</a>.</span>
-          {% if negotiation_whatsapp_url %}<a class="btn secondary small" href="{{ negotiation_whatsapp_url }}" target="_blank" rel="noopener">Message On WhatsApp</a>{% endif %}
-        </div>
-      </div>
-      {% endif %}
-
-      {% if order.customer_message %}<div class="notice" style="margin-top:14px"><strong>Message From Catering Team</strong><br>{{ order.customer_message }}</div>{% endif %}
-      {% if order.customer_notes %}<div class="notice" style="margin-top:14px"><strong>Your Notes / Special Requests</strong><br>{{ order.customer_notes }}</div>{% endif %}
-    </section>
-
-    {% if order.requested_dishes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Requested Dishes</h2><p class="muted">Each request is confirmed separately by the catering team.</p><div class="requested-dish-list">{% for dish in order.requested_dishes %}<div class="requested-dish-row"><div><strong>{{ dish.name }}</strong>{% if dish.admin_response %}<div class="help">{{ dish.admin_response }}</div>{% endif %}</div><span class="request-status {{ dish.status }}">{{ dish.status.title() }}</span></div>{% endfor %}</div></section>{% endif %}
-
-    <section class="card final-menu" style="margin-top:14px">
-      <h2>Selected Menu</h2>
-      {% for menu_name, categories in groups.items() %}<div class="menu-heading">{{ menu_name }}</div>{% for cat_name, subs in categories.items() %}<div class="cat-heading review-category-highlight">{{ cat_name }}</div>{% set ns = namespace(n=1) %}<ol class="review-numbered-list">{% for sub_name, items in subs.items() %}{% for item in items %}<li>{{ item.item_name }}</li>{% set ns.n = ns.n + 1 %}{% endfor %}{% endfor %}</ol>{% endfor %}{% endfor %}
-    </section>
-
-    <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Order Timeline</h2><div class="timeline">{% for h in order.history %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong><small>{{ h.created_at.strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
-
-    <div class="actions no-print" style="margin-top:14px">
-      {% if invoice_available %}<a class="btn" href="/orders/{{ order.public_token }}/invoice">View Invoice</a>{% elif order.final_price is not none %}<span class="invoice-locked">Invoice Available After Payment Is Marked Paid</span>{% endif %}
-      {% if customer_whatsapp_url %}<a class="btn secondary" href="{{ customer_whatsapp_url }}" target="_blank" rel="noopener">Save / Share On WhatsApp</a>{% endif %}
-      <a class="btn secondary" href="/track">Track Another Order</a>
-      <button class="btn secondary" onclick="window.print()">Print This Order</button>
-      {% if order.status not in ['completed','cancelled','voided'] %}<form method="post" action="/orders/{{ order.public_token }}/cancel" onsubmit="return confirm('Cancel this catering order?')"><button class="btn danger" type="submit">Cancel Order</button></form>{% endif %}
-    </div>
-  </div>
-</main>
-{% endblock %}
+<main class="section"><div class="container order-sheet" style="max-width:900px">
+{% if request.query_params.get('submitted') %}<div class="notice success"><strong>Quote Request Sent.</strong> Save this Order ID: <strong>{{ order.order_number }}</strong>.{% if customer_whatsapp_url %} <a href="{{ customer_whatsapp_url }}" target="_blank" rel="noopener"><strong>Save Order To WhatsApp</strong></a>{% endif %}</div>{% endif %}
+{% if request.query_params.get('confirmed') %}<div class="notice success"><strong>Order Confirmed.</strong> The catering team can now prepare your order.</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}
+{% if order.status == 'cancelled' %}<div class="notice error">This order has been cancelled.</div>{% endif %}{% if order.status == 'voided' %}<div class="notice error"><strong>This order has been voided by the catering team.</strong></div>{% endif %}
+<div class="order-status-hero" style="margin-top:14px"><div><div class="eyebrow">Catering Order</div><h1>{{ order.order_number }}</h1><p class="muted">Customer {{ order.customer.customer_number }}</p></div><span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span></div>
+<section class="event-highlight-grid event-highlight-grid-five"><div class="event-highlight"><span>Date</span><strong>{{ order.event_date.strftime('%d %b %Y') }}</strong></div><div class="event-highlight"><span>Day</span><strong>{{ order.event_date.strftime('%A') }}</strong></div><div class="event-highlight"><span>Event Time</span><strong>{{ order.event_time.strftime('%H:%M') }}</strong></div><div class="event-highlight"><span>Delivery Time</span><strong>{{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '—' }}</strong></div><div class="event-highlight guest"><span>Total People</span><strong>{{ order.adults + order.kids }}</strong><small>{{ order.adults }} Adults · {{ order.kids }} Kids</small></div></section>
+<section class="card"><div class="order-meta"><div class="meta-row"><strong>Name</strong><span>{{ order.customer.name }}</span></div><div class="meta-row"><strong>Phone</strong><span>{{ order.customer.phone }}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp }}</span></div><div class="meta-row"><strong>Event</strong><span>{{ order.event_name }}</span></div><div class="meta-row"><strong>Address</strong><span>{{ order.address }}, {{ order.eircode }}</span></div></div>
+{% if order.final_price is not none %}<div class="customer-quote-card" style="margin-top:16px"><div class="eyebrow">Your Quote</div><div class="quote-breakdown-grid"><div><span>Adults · {{ order.adults }} × €{{ '%.2f'|format(pricing.adult_charge) }}</span><strong>€{{ '%.2f'|format(order.adults * pricing.adult_charge) }}</strong></div><div><span>Kids · {{ order.kids }} × €{{ '%.2f'|format(pricing.kid_charge) }}</span><strong>€{{ '%.2f'|format(order.kids * pricing.kid_charge) }}</strong></div><div><span>Delivery &amp; Service Charge</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div></div><div class="quote-total"><span>Total Quote</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div>{% if order.status not in ['confirmed','completed','cancelled','voided'] %}<form method="post" action="/orders/{{ order.public_token }}/confirm" style="margin-top:14px"><button class="btn block" type="submit">Confirm Order</button></form>{% endif %}</div>{% endif %}
+{% if order.customer_message %}<div class="notice" style="margin-top:14px"><strong>Message From Catering Team</strong><br>{{ order.customer_message }}</div>{% endif %}{% if order.customer_notes %}<div class="notice" style="margin-top:14px"><strong>Your Notes / Special Requests</strong><br>{{ order.customer_notes }}</div>{% endif %}</section>
+{% if order.requested_dishes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Requested Dishes</h2><div class="requested-dish-list">{% for dish in order.requested_dishes %}<div class="requested-dish-row"><div><strong>{{ dish.name }}</strong>{% if dish.admin_response %}<div class="help">{{ dish.admin_response }}</div>{% endif %}</div><span class="request-status {{ dish.status }}">{{ dish.status.title() }}</span></div>{% endfor %}</div></section>{% endif %}
+<section class="card final-menu" style="margin-top:14px"><h2>Selected Menu</h2>{% for menu_name, categories in groups.items() %}<div class="menu-heading">{{ menu_name }}</div>{% for cat_name, subs in categories.items() %}<div class="cat-heading review-category-highlight">{{ cat_name }}</div><ol class="review-numbered-list">{% for sub_name, items in subs.items() %}{% for item in items %}<li class="dietary-list-item {{ item.dietary }}">{{ item.item_name }}</li>{% endfor %}{% endfor %}</ol>{% endfor %}{% endfor %}</section>
+<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Order Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong><small>{{ h.created_at.strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
+<div class="actions no-print" style="margin-top:14px">{% if customer_whatsapp_url %}<a class="btn secondary" href="{{ customer_whatsapp_url }}" target="_blank" rel="noopener">Save / Share On WhatsApp</a>{% endif %}<a class="btn secondary" href="/track">Track Another Order</a><button class="btn secondary" onclick="window.print()">Print This Order</button></div>
+</div></main>{% endblock %}

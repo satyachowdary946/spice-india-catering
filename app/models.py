@@ -37,7 +37,9 @@ class BusinessSettings(Base):
     hero_image_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     hero_image_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     web_charge_block_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("500.00"))
-    web_charge_per_block: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("5.00"))
+    web_charge_per_block: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("5.00"))  # legacy compatibility
+    kitchen_whatsapp: Mapped[str] = mapped_column(String(60), default="")
+    next_order_sequence: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -120,7 +122,8 @@ class QuoteRequest(Base):
     adult_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     kid_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     delivery_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
-    service_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    service_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)  # legacy compatibility
+    delivery_service_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     web_order_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     kitchen_comments: Mapped[str] = mapped_column(Text, default="")
     admin_notes: Mapped[str] = mapped_column(Text, default="")

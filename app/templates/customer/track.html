@@ -1,26 +1,4 @@
-{% extends "base.html" %}
-{% block title %}Track my catering order{% endblock %}
-{% block body %}
-<main class="section">
-  <div class="container form-card">
-    <div class="track-order-card card">
-      <div class="eyebrow">Order lookup</div>
-      <h1 style="font-size:2.25rem">View my order</h1>
-      <p class="lead">Use the Order ID and the phone or WhatsApp number used for the catering request. This works from any device.</p>
-      {% if error %}<div class="notice error" style="margin-bottom:14px">{{ error }}</div>{% endif %}
-      <form method="post" action="/track">
-        <div class="field">
-          <label for="track-order-number">Order ID</label>
-          <input id="track-order-number" name="order_number" value="{{ order_number or '' }}" placeholder="CAT0004" autocomplete="off" required>
-        </div>
-        <div class="field" style="margin-top:12px">
-          <label for="track-phone">Phone / WhatsApp number</label>
-          <input id="track-phone" name="phone" value="{{ phone or '' }}" type="tel" inputmode="tel" autocomplete="tel" required>
-        </div>
-        <button class="btn block" type="submit" style="margin-top:16px">Find my order</button>
-      </form>
-      <p class="help" style="margin-top:12px">Your Order ID is shown on the confirmation page and any link shared by the catering team.</p>
-    </div>
-  </div>
-</main>
-{% endblock %}
+{% extends "base.html" %}{% block title %}Track My Catering Order{% endblock %}{% block body %}
+<main class="section"><div class="container form-card"><div class="track-order-card card"><div class="eyebrow">Order Lookup</div><h1 style="font-size:2.25rem">View My Order</h1><p class="lead">Enter either your Order ID or the phone / WhatsApp number used for the catering request.</p>{% if error %}<div class="notice error" style="margin-bottom:14px">{{ error }}</div>{% endif %}<form method="post" action="/track"><div class="field"><label for="track-order-number">Order ID <span class="muted">(optional)</span></label><input id="track-order-number" name="order_number" value="{{ order_number or '' }}" placeholder="CAT0004" autocomplete="off"></div><div class="track-or">OR</div><div class="field"><label for="track-phone">Phone / WhatsApp Number <span class="muted">(optional)</span></label><input id="track-phone" name="phone" value="{{ phone or '' }}" type="tel" inputmode="numeric" maxlength="10" pattern="[0-9]{7,10}" autocomplete="tel"></div><button class="btn block" type="submit" style="margin-top:16px">Find My Order</button></form>
+{% if matches %}<div class="track-results"><h2>Choose Your Order</h2>{% for order in matches %}<a class="track-result-card" href="/orders/{{ order.public_token }}"><strong>{{ order.order_number }} · {{ order.event_name }}</strong><span>{{ order.event_date.strftime('%d %b %Y') }} · {{ order.event_date.strftime('%A') }}</span><span>Event {{ order.event_time.strftime('%H:%M') }} · Delivery {{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '—' }}</span></a>{% endfor %}</div>{% endif %}
+</div></div></main>{% endblock %}

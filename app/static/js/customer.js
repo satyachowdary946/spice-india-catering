@@ -15,25 +15,36 @@ window.DraftStore=DraftStore;
 
 function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function formatCount(n){return `${n} item${n===1?'':'s'} selected`;}
+function dayFromDate(value){if(!value)return '';const d=new Date(value+'T12:00:00');return Number.isFinite(d.getTime())?d.toLocaleDateString('en-IE',{weekday:'long'}):'';}
 
 function initDetailsForm(){
   const form=document.querySelector('[data-details-form]'); if(!form) return;
   const draft=DraftStore.load();
   Object.entries(draft.details||{}).forEach(([k,v])=>{const el=form.elements[k]; if(el&&el.type!=='submit') el.value=v??'';});
   const same=document.getElementById('same-whatsapp'), phone=form.elements.phone, wa=form.elements.whatsapp;
-  const dateInput=form.elements.event_date, errorBox=document.querySelector('[data-details-error]');
+  const dateInput=form.elements.event_date, dayInput=form.elements.event_day, eircode=form.elements.eircode, errorBox=document.querySelector('[data-details-error]');
   const minimumEventDateTime=()=>new Date(Date.now()+24*60*60*1000);
   const toDateInput=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   if(dateInput) dateInput.min=toDateInput(minimumEventDateTime());
+  const syncDay=()=>{if(dayInput)dayInput.value=dayFromDate(dateInput?.value||'');}; syncDay(); dateInput?.addEventListener('change',syncDay);
   document.querySelectorAll('[data-native-picker]').forEach(input=>input.addEventListener('click',()=>{if(typeof input.showPicker==='function'){try{input.showPicker();}catch{}}}));
+  const digitsOnly=el=>{if(!el)return;el.value=String(el.value||'').replace(/\D/g,'').slice(0,10);};
+  phone?.addEventListener('input',()=>{digitsOnly(phone);if(same?.checked){wa.value=phone.value;}});
+  wa?.addEventListener('input',()=>digitsOnly(wa));
+  eircode?.addEventListener('input',()=>{eircode.value=String(eircode.value||'').replace(/[^a-z0-9]/gi,'').toUpperCase().slice(0,7);});
+  digitsOnly(phone);digitsOnly(wa);if(eircode)eircode.value=String(eircode.value||'').replace(/[^a-z0-9]/gi,'').toUpperCase().slice(0,7);
   if(phone&&wa&&phone.value&&phone.value===wa.value) same.checked=true;
   same?.addEventListener('change',()=>{if(same.checked) wa.value=phone.value;});
-  phone?.addEventListener('input',()=>{if(same?.checked) wa.value=phone.value;});
   const fail=(message,field)=>{if(errorBox){errorBox.textContent=message;errorBox.hidden=false;}else alert(message); form.elements[field]?.focus();};
   form.addEventListener('submit',e=>{
     e.preventDefault(); if(errorBox) errorBox.hidden=true; if(!form.reportValidity()) return;
     const fd=new FormData(form), details={};
-    ['name','phone','whatsapp','event_date','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
+    ['name','phone','whatsapp','event_date','event_day','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
+    if(!/^[0-9]{7,10}$/.test(details.phone)){fail('Phone number must contain digits only and be no more than 10 digits.','phone');return;}
+    if(!/^[0-9]{7,10}$/.test(details.whatsapp)){fail('WhatsApp number must contain digits only and be no more than 10 digits.','whatsapp');return;}
+    details.eircode=details.eircode.replace(/\s/g,'').toUpperCase();
+    if(!/^[A-Z0-9]{7}$/.test(details.eircode)){fail('Eircode must be exactly 7 letters and numbers.','eircode');return;}
+    details.event_day=dayFromDate(details.event_date);
     if((Number(details.adults)||0)+(Number(details.kids)||0)<1){fail('Enter at least one guest in Adults or Kids.','adults');return;}
     const eventDateTime=new Date(`${details.event_date}T${details.event_time}:00`);
     if(!Number.isFinite(eventDateTime.getTime())||eventDateTime.getTime()<minimumEventDateTime().getTime()){fail('Please choose an event date and time at least 24 hours from now.','event_date');return;}
@@ -86,7 +97,7 @@ function initMenu(){
     const cats=buildCategories();
     if(!activeCategory||!cats.some(c=>c.id===activeCategory)) activeCategory=cats[0]?.id||null;
     categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}">${escapeHtml(c.name)}</button>`).join('');
-    categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{activeCategory=btn.dataset.cat;document.getElementById(activeCategory)?.scrollIntoView({behavior:'smooth',block:'start'});}));
+    categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{activeCategory=btn.dataset.cat;categoryTabs.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.cat===activeCategory));document.getElementById(activeCategory)?.scrollIntoView({behavior:'smooth',block:'start'});}));
     const draft=DraftStore.load();
     content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,s)=>n+s.items.length,0)} choices</span></div>${c.subs.map(s=>`<div><div class="subcategory-title">${escapeHtml(s.name)}</div><div class="menu-list">${s.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{DraftStore.toggleItem(Number(btn.dataset.addItem));render();updateBasketBar();}));
@@ -104,7 +115,7 @@ function initReview(){
   const root=document.querySelector('[data-review-root]');if(!root)return;
   const detailsBox=document.querySelector('[data-review-details]'),itemsBox=document.querySelector('[data-review-items]'),requestsBox=document.querySelector('[data-review-requests]'),submit=document.querySelector('[data-submit-quote]'),notesInput=document.querySelector('[data-customer-notes]');
   const draft=DraftStore.load();if(!draft.details?.name){location.replace('/order?next=/review');return;}const d=draft.details;
-  detailsBox.innerHTML=`<div class="order-meta"><div class="meta-row"><strong>Name</strong><span>${escapeHtml(d.name)}</span></div><div class="meta-row"><strong>Phone</strong><span>${escapeHtml(d.phone)}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>${escapeHtml(d.whatsapp)}</span></div><div class="meta-row"><strong>Event</strong><span>${escapeHtml(d.event_name)}</span></div><div class="meta-row"><strong>Date</strong><span>${escapeHtml(d.event_date)}</span></div><div class="meta-row"><strong>Event Time</strong><span>${escapeHtml(d.event_time)}</span></div><div class="meta-row"><strong>Delivery Time</strong><span>${escapeHtml(d.delivery_time)}</span></div><div class="meta-row"><strong>Guests</strong><span>${escapeHtml(d.adults)} adults + ${escapeHtml(d.kids)} kids</span></div><div class="meta-row"><strong>Address</strong><span>${escapeHtml(d.address)}, ${escapeHtml(d.eircode)}</span></div></div>`;
+  detailsBox.innerHTML=`<div class="order-meta"><div class="meta-row"><strong>Name</strong><span>${escapeHtml(d.name)}</span></div><div class="meta-row"><strong>Phone</strong><span>${escapeHtml(d.phone)}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>${escapeHtml(d.whatsapp)}</span></div><div class="meta-row"><strong>Event</strong><span>${escapeHtml(d.event_name)}</span></div><div class="meta-row"><strong>Date</strong><span>${escapeHtml(d.event_date)}</span></div><div class="meta-row"><strong>Day</strong><span>${escapeHtml(d.event_day||dayFromDate(d.event_date))}</span></div><div class="meta-row"><strong>Event Time</strong><span>${escapeHtml(d.event_time)}</span></div><div class="meta-row"><strong>Delivery Time</strong><span>${escapeHtml(d.delivery_time)}</span></div><div class="meta-row"><strong>Guests</strong><span>${escapeHtml(d.adults)} adults + ${escapeHtml(d.kids)} kids</span></div><div class="meta-row"><strong>Address</strong><span>${escapeHtml(d.address)}, ${escapeHtml(d.eircode)}</span></div></div>`;
   if(notesInput){notesInput.value=draft.customer_notes||'';notesInput.addEventListener('input',()=>DraftStore.setCustomerNotes(notesInput.value));}
   const renderRequests=state=>{const requests=state.requested_dishes||[];requestsBox.innerHTML=requests.length?`<div class="requested-dish-list">${requests.map(name=>`<div class="requested-dish-row"><strong>${escapeHtml(name)}</strong><span class="request-status pending">Needs Confirmation</span></div>`).join('')}</div>`:'<div class="empty">No dishes requested.</div>';};
   const updateAvailability=state=>{if(submit)submit.disabled=!((state.item_ids||[]).length||(state.requested_dishes||[]).length);};
@@ -120,7 +131,7 @@ function initReview(){
 async function renderReviewItems(ids,box,submit,requestedCount=0){
   if(!ids.length){box.innerHTML='<div class="empty">No standard menu items selected. <a href="/menu"><strong>Choose Menu Items</strong></a></div>';if(submit)submit.disabled=requestedCount===0;return;}
   try{const res=await fetch('/api/menu-items?ids='+encodeURIComponent(ids.join(','))),items=await res.json(),groups={};items.forEach(i=>{(((groups[i.menu]??={})[i.category]??={})[i.subcategory]??=[]).push(i)});
-    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;return `<div class="review-category review-category-highlight">${escapeHtml(c)}</div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list" start="${counter}">${arr.map(i=>`<li><span>${escapeHtml(i.name)}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
+    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;return `<div class="review-category review-category-highlight">${escapeHtml(c)}</div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item ${escapeHtml(i.dietary)}"><span>${escapeHtml(i.name)}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
     box.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>DraftStore.removeItem(Number(b.dataset.remove))));if(submit)submit.disabled=false;
   }catch{box.innerHTML='<div class="notice error">Could not load your selected items. Return to the menu and try again.</div>';if(submit)submit.disabled=true;}
 }

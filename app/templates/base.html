@@ -10,40 +10,33 @@
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#0d0f12">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/app.css?v=build7">
+  <link rel="stylesheet" href="/static/css/app.css?v=build8">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="site-header no-print">
     <div class="container header-row">
-      <a class="brand" href="/" aria-label="Home">
-        {% if business.logo_blob %}<img class="brand-logo" src="/business-logo" alt="{{ business.company_name or 'Catering business' }} logo">{% else %}<span class="brand-mark" aria-hidden="true">C</span>{% endif %}
-        <span class="branch-label">{{ business.branch_label or 'Athlone Branch' }}</span>
-      </a>
+      <div class="header-brand-row">
+        {% if request.url.path != '/' %}<button class="header-back" type="button" onclick="history.back()" aria-label="Go back">←</button>{% endif %}
+        <a class="brand" href="/" aria-label="Home">
+          {% if business.logo_blob %}<img class="brand-logo" src="/business-logo" alt="{{ business.company_name or 'Catering business' }} logo">{% else %}<span class="brand-mark" aria-hidden="true">C</span>{% endif %}
+          <span class="branch-label">{{ business.branch_label or 'Athlone Branch' }}</span>
+        </a>
+      </div>
       <nav class="nav" aria-label="Primary navigation">
+        <a href="/">Home</a>
         <a href="/menu">Menu</a>
-        <a href="/order" class="mobile-hide">Request quote</a>
+        <a href="/order" class="mobile-hide">Request Quote</a>
         {% if admin_logged_in %}<a href="/admin">Admin</a>{% endif %}
       </nav>
     </div>
   </header>
   {% if business.announcement_enabled and business.announcement_text %}
-  <aside class="site-announcement no-print" aria-label="Catering announcement">
-    <div class="container announcement-row">
-      {% if business.announcement_title %}<span class="announcement-label">{{ business.announcement_title }}</span>{% endif %}
-      <strong>{{ business.announcement_text }}</strong>
-    </div>
-  </aside>
+  <aside class="site-announcement no-print" aria-label="Catering announcement"><div class="container announcement-row">{% if business.announcement_title %}<span class="announcement-label">{{ business.announcement_title }}</span>{% endif %}<strong>{{ business.announcement_text }}</strong></div></aside>
   {% endif %}
   {% block body %}{% endblock %}
-  <footer class="footer no-print">
-    <div class="container">
-      <strong>{{ business.company_name or 'Catering Service' }}</strong>
-      {% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}
-      {% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}
-    </div>
-  </footer>
-  <script src="/static/js/customer.js?v=build7" defer></script>
+  <footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>
+  <script src="/static/js/customer.js?v=build8" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -74,8 +74,9 @@ async def prevent_html_cache(request: Request, call_next):
     return response
 
 
-ALLOWED_STATUSES = ["new", "contacted", "negotiating", "quoted", "confirmed", "completed", "cancelled", "voided"]
-EDITABLE_STATUSES = ["new", "contacted", "negotiating", "quoted", "confirmed", "completed", "cancelled"]
+ALLOWED_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "voided", "contacted", "negotiating"]
+EDITABLE_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled"]
+FILTER_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "voided"]
 VOID_REASON_OPTIONS = {"test": "Test order", "duplicate": "Duplicate order", "customer_mistake": "Customer mistake", "admin_mistake": "Admin mistake", "spam": "Spam", "other": "Other"}
 DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non Veg"}
 REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
@@ -105,6 +106,7 @@ def ensure_schema_compatibility() -> None:
             "kid_charge": "NUMERIC(10,2)",
             "delivery_price": "NUMERIC(10,2)",
             "service_price": "NUMERIC(10,2)",
+            "delivery_service_charge": "NUMERIC(10,2)",
             "web_order_charge": "NUMERIC(10,2)",
             "kitchen_comments": "TEXT DEFAULT ''",
         }
@@ -146,11 +148,18 @@ def ensure_schema_compatibility() -> None:
             "hero_image_content_type": "VARCHAR(100)",
             "web_charge_block_amount": "NUMERIC(10,2) DEFAULT 500.00",
             "web_charge_per_block": "NUMERIC(10,2) DEFAULT 5.00",
+            "kitchen_whatsapp": "VARCHAR(60) DEFAULT ''",
+            "next_order_sequence": "INTEGER DEFAULT 1",
         }
         for name, ddl in additions.items():
             if name not in columns:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE business_settings ADD COLUMN {name} {ddl}"))
+
+    # Backfill the new combined delivery/service field from legacy columns without changing historical final totals.
+    if "quote_requests" in tables:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE quote_requests SET delivery_service_charge = COALESCE(delivery_price,0) + COALESCE(service_price,0) WHERE delivery_service_charge IS NULL"))
 
 
 @app.on_event("startup")
@@ -159,7 +168,7 @@ def startup() -> None:
     ensure_schema_compatibility()
     with SessionLocal() as db:
         ensure_seed_data(db)
-        normalize_public_order_numbers(db)
+        initialise_order_sequence(db)
 
 
 def business(db: Session) -> BusinessSettings:
@@ -171,53 +180,55 @@ def business(db: Session) -> BusinessSettings:
         db.refresh(obj)
     return obj
 
-def normalize_public_order_numbers(db: Session) -> None:
-    """Use stable public CAT numbers based on the internal order id."""
-    orders = db.scalars(select(QuoteRequest).order_by(QuoteRequest.id)).all()
-    changes = [(order, f"CAT{order.id:04d}") for order in orders if order.order_number != f"CAT{order.id:04d}"]
-    if not changes:
-        return
-    # Two-phase rename avoids unique collisions with historical formats.
-    for order, _ in changes:
-        order.order_number = f"TMP-NORMALIZE-{order.id}-{secrets.token_hex(4)}"
-    db.flush()
-    for order, number in changes:
-        order.order_number = number
+def format_order_number(sequence: int) -> str:
+    """Public numbering in 1,000-order series: CAT0001..CAT1000, CAT10001..CAT11000, etc."""
+    sequence = max(1, int(sequence))
+    block = (sequence - 1) // 1000
+    within = ((sequence - 1) % 1000) + 1
+    return f"CAT{within:04d}" if block == 0 else f"CAT{block}{within:04d}"
+
+
+def initialise_order_sequence(db: Session) -> None:
+    biz = business(db)
+    if not biz.next_order_sequence or biz.next_order_sequence < 1:
+        biz.next_order_sequence = 1
+    # Existing databases may predate the sequence field. Continue safely unless admin explicitly resets test orders.
+    existing_count = db.scalar(select(func.count(QuoteRequest.id))) or 0
+    if existing_count and biz.next_order_sequence <= 1:
+        biz.next_order_sequence = existing_count + 1
     db.commit()
 
 
-def calculate_web_order_charge(base_amount: Decimal, biz: BusinessSettings) -> Decimal:
-    base_amount = money(base_amount)
-    block = money(biz.web_charge_block_amount or Decimal("500.00"))
-    fee = money(biz.web_charge_per_block or Decimal("5.00"))
-    if base_amount <= 0 or block <= 0 or fee <= 0:
-        return Decimal("0.00")
-    blocks = (base_amount / block).to_integral_value(rounding=ROUND_CEILING)
-    return money(blocks * fee)
+def allocate_order_number(db: Session) -> str:
+    stmt = select(BusinessSettings).where(BusinessSettings.id == 1)
+    if engine.dialect.name == "postgresql":
+        stmt = stmt.with_for_update()
+    biz = db.scalar(stmt)
+    if not biz:
+        biz = BusinessSettings(id=1, next_order_sequence=1)
+        db.add(biz)
+        db.flush()
+    sequence = max(1, int(biz.next_order_sequence or 1))
+    biz.next_order_sequence = sequence + 1
+    return format_order_number(sequence)
 
 
 def calculate_order_price(
     order: QuoteRequest,
-    biz: BusinessSettings,
     adult_charge: Decimal,
     kid_charge: Decimal,
-    delivery_price: Decimal,
-    service_price: Decimal,
+    delivery_service_charge: Decimal,
 ) -> dict[str, Decimal]:
     adult_charge = money(adult_charge)
     kid_charge = money(kid_charge)
-    delivery_price = money(delivery_price)
-    service_price = money(service_price)
+    delivery_service_charge = money(delivery_service_charge)
     meal_base = money(money(order.adults) * adult_charge + money(order.kids) * kid_charge)
-    web_order_charge = calculate_web_order_charge(meal_base, biz)
-    total = money(meal_base + delivery_price + service_price + web_order_charge)
+    total = money(meal_base + delivery_service_charge)
     return {
         "adult_charge": adult_charge,
         "kid_charge": kid_charge,
         "meal_base": meal_base,
-        "delivery_price": delivery_price,
-        "service_price": service_price,
-        "web_order_charge": web_order_charge,
+        "delivery_service_charge": delivery_service_charge,
         "total": total,
     }
 
@@ -226,15 +237,23 @@ def pricing_breakdown(order: QuoteRequest) -> dict[str, Decimal]:
     adult_charge = money(order.adult_charge)
     kid_charge = money(order.kid_charge)
     meal_base = money(money(order.adults) * adult_charge + money(order.kids) * kid_charge)
+    combined = order.delivery_service_charge
+    if combined is None:
+        combined = money(order.delivery_price) + money(order.service_price)
+    combined = money(combined)
+    total = money(order.final_price) if order.final_price is not None else money(meal_base + combined)
     return {
         "adult_charge": adult_charge,
         "kid_charge": kid_charge,
         "meal_base": meal_base,
-        "delivery_price": money(order.delivery_price),
-        "service_price": money(order.service_price),
-        "web_order_charge": money(order.web_order_charge),
-        "total": money(order.final_price),
+        "delivery_service_charge": combined,
+        "total": total,
     }
+
+
+def event_day(order_or_date: Any) -> str:
+    event_date = order_or_date.event_date if hasattr(order_or_date, "event_date") else order_or_date
+    return event_date.strftime("%A")
 
 
 def normalise_whatsapp_number(value: str) -> str:
@@ -249,52 +268,50 @@ def normalise_whatsapp_number(value: str) -> str:
 def build_customer_share_text(order: QuoteRequest, biz: BusinessSettings, public_url: str) -> str:
     p = pricing_breakdown(order)
     lines = [
-        f"SPICE INDIA CATERING — {order.order_number}",
+        "*SPICE INDIA CATERING*",
+        f"*ORDER:* {order.order_number}",
+        "",
+        "*EVENT DETAILS*",
         f"Event: {order.event_name}",
         f"Date: {order.event_date.strftime('%d %b %Y')}",
+        f"Day: {event_day(order)}",
         f"Event time: {order.event_time.strftime('%H:%M')}",
-    ]
-    if order.delivery_time:
-        lines.append(f"Delivery time: {order.delivery_time.strftime('%H:%M')}")
-    lines.extend([
+        f"Delivery time: {order.delivery_time.strftime('%H:%M') if order.delivery_time else '—'}",
         f"Guests: {order.adults} adults + {order.kids} kids",
         "",
-    ])
+    ]
     if order.final_price is not None:
         lines.extend([
-            f"Adult charge: €{p['adult_charge']:.2f} per head",
-            f"Kid charge: €{p['kid_charge']:.2f} per head",
-            f"Delivery: €{p['delivery_price']:.2f}",
-            f"Service: €{p['service_price']:.2f}",
-            f"Web order charge: €{p['web_order_charge']:.2f}",
+            "*PRICE SUMMARY*",
+            f"Adults: {order.adults} × €{p['adult_charge']:.2f} = €{money(order.adults) * p['adult_charge']:.2f}",
+            f"Kids: {order.kids} × €{p['kid_charge']:.2f} = €{money(order.kids) * p['kid_charge']:.2f}",
+            f"Delivery & Service: €{p['delivery_service_charge']:.2f}",
+            "────────────────────",
             f"*TOTAL QUOTE: €{p['total']:.2f}*",
             "",
         ])
     lines.extend([
-        f"View details and confirm: {public_url}",
-        "",
-        f"*WANT TO NEGOTIATE?* Message us or call {biz.phone or biz.whatsapp or 'the catering team'}.",
+        "*VIEW ORDER DETAILS*",
+        public_url,
     ])
     return "\n".join(lines)
 
 
-def build_kitchen_share_text(order: QuoteRequest) -> str:
+def build_kitchen_share_text(order: QuoteRequest, pdf_url: str = "") -> str:
     lines = [
-        f"KITCHEN ORDER — {order.order_number}",
-        f"EVENT: {order.event_name}",
-        f"DATE: {order.event_date.strftime('%d %b %Y')} ({order.event_date.strftime('%A')})",
-        f"EVENT TIME: {order.event_time.strftime('%H:%M')}",
-    ]
-    if order.delivery_time:
-        lines.append(f"DELIVERY TIME: {order.delivery_time.strftime('%H:%M')}")
-    lines.extend([
-        f"ADULTS: {order.adults} | KIDS: {order.kids} | TOTAL: {order.adults + order.kids}",
+        f"*KITCHEN ORDER — {order.order_number}*",
+        f"Event: {order.event_name}",
+        f"Date: {order.event_date.strftime('%d %b %Y')}",
+        f"Day: {event_day(order)}",
+        f"Event time: {order.event_time.strftime('%H:%M')}",
+        f"Delivery time: {order.delivery_time.strftime('%H:%M') if order.delivery_time else '—'}",
+        f"Guests: {order.adults} adults | {order.kids} kids | Total {order.adults + order.kids}",
         "",
-    ])
+    ]
     for menu_name, categories in order_groups(order).items():
-        lines.append(menu_name.upper())
+        lines.append(f"*{menu_name.upper()}*")
         for cat_name, subs in categories.items():
-            lines.append(cat_name.upper())
+            lines.append(f"*{cat_name.upper()}*")
             counter = 1
             for _, items in subs.items():
                 for item in items:
@@ -303,12 +320,14 @@ def build_kitchen_share_text(order: QuoteRequest) -> str:
             lines.append("")
     approved = [dish for dish in order.requested_dishes if dish.status == "approved"]
     if approved:
-        lines.append("APPROVED REQUESTED DISHES")
+        lines.append("*APPROVED REQUESTED DISHES*")
         for index, dish in enumerate(approved, 1):
             lines.append(f"{index}. {dish.name}")
         lines.append("")
     if order.kitchen_comments.strip():
-        lines.extend(["*KITCHEN COMMENTS*", f"*{order.kitchen_comments.strip().upper()}*"])
+        lines.extend(["*KITCHEN COMMENTS*", f"*{order.kitchen_comments.strip().upper()}*", ""])
+    if pdf_url:
+        lines.extend(["*KITCHEN PDF*", pdf_url])
     return "\n".join(lines)
 
 
@@ -363,7 +382,19 @@ def parse_int(value: Any, field: str, minimum: int = 0) -> int:
 
 
 def clean_phone(value: str) -> str:
-    return re.sub(r"[^0-9+]", "", (value or "").strip())
+    return re.sub(r"\D", "", (value or "").strip())
+
+
+def valid_phone(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9]{7,10}", value or ""))
+
+
+def clean_eircode(value: str) -> str:
+    return re.sub(r"\s+", "", (value or "").strip()).upper()
+
+
+def valid_eircode(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z0-9]{7}", value or ""))
 
 
 def money(value: Any) -> Decimal:
@@ -610,18 +641,20 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         errors["customer_notes"] = "Notes must be 2,000 characters or less."
 
     name = str(details.get("name", "")).strip()
-    phone = clean_phone(str(details.get("phone", "")))
-    whatsapp = clean_phone(str(details.get("whatsapp", "")))
+    phone_raw = str(details.get("phone", "")).strip()
+    whatsapp_raw = str(details.get("whatsapp", "")).strip()
+    phone = clean_phone(phone_raw)
+    whatsapp = clean_phone(whatsapp_raw)
     event_name = str(details.get("event_name", "")).strip()
     address = str(details.get("address", "")).strip()
-    eircode = str(details.get("eircode", "")).strip().upper()
+    eircode = clean_eircode(str(details.get("eircode", "")))
 
     if len(name) < 2: errors["name"] = "Enter the customer's name."
-    if len(phone) < 7: errors["phone"] = "Enter a valid phone number."
-    if len(whatsapp) < 7: errors["whatsapp"] = "Enter a valid WhatsApp number."
+    if not re.fullmatch(r"[0-9]{7,10}", phone_raw): errors["phone"] = "Phone number must contain digits only and be no more than 10 digits."
+    if not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw): errors["whatsapp"] = "WhatsApp number must contain digits only and be no more than 10 digits."
     if not event_name: errors["event_name"] = "Enter the event name."
     if not address: errors["address"] = "Enter the event address."
-    if not eircode: errors["eircode"] = "Enter the Eircode."
+    if not valid_eircode(eircode): errors["eircode"] = "Eircode must be exactly 7 letters and numbers."
 
     try:
         event_date = date.fromisoformat(str(details.get("event_date", "")))
@@ -709,7 +742,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     )
     db.add(order)
     db.flush()
-    order.order_number = f"CAT{order.id:04d}"
+    order.order_number = allocate_order_number(db)
 
     item_by_id = {i.id: i for i in items}
     for sort_index, item_id in enumerate(unique_ids):
@@ -745,6 +778,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         customer.phone,
         order.event_name,
         order.event_date.strftime("%d %b %Y"),
+        event_day(order),
         order.event_time.strftime("%H:%M"),
         order.delivery_time.strftime("%H:%M") if order.delivery_time else "",
         adults + kids,
@@ -761,38 +795,34 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     }
 @app.get("/track", response_class=HTMLResponse)
 def track_order_page(request: Request, db: Session = Depends(get_db)):
-    return render(request, db, "customer/track.html")
+    return render(request, db, "customer/track.html", matches=[])
 
 
 @app.post("/track", response_class=HTMLResponse)
 def track_order_submit(
     request: Request,
-    order_number: str = Form(...),
-    phone: str = Form(...),
+    order_number: str = Form(""),
+    phone: str = Form(""),
     db: Session = Depends(get_db),
 ):
     order_number = (order_number or "").strip().upper()
     phone_clean = clean_phone(phone)
-    order = db.scalar(
-        select(QuoteRequest)
-        .join(Customer)
-        .where(
-            func.upper(QuoteRequest.order_number) == order_number,
-            or_(Customer.phone == phone_clean, Customer.whatsapp == phone_clean),
-        )
-        .options(selectinload(QuoteRequest.customer))
-        .limit(1)
-    )
-    if not order:
-        return render(
-            request,
-            db,
-            "customer/track.html",
-            error="We could not find an order matching that Order ID and phone number.",
-            order_number=order_number,
-            phone=phone,
-        )
-    return RedirectResponse(f"/orders/{order.public_token}", status_code=303)
+    if not order_number and not phone_clean:
+        return render(request, db, "customer/track.html", matches=[], error="Enter an Order ID or phone / WhatsApp number.", order_number=order_number, phone=phone)
+
+    stmt = select(QuoteRequest).join(Customer).options(selectinload(QuoteRequest.customer)).order_by(QuoteRequest.event_date.desc(), QuoteRequest.event_time.desc())
+    if order_number:
+        stmt = stmt.where(func.upper(QuoteRequest.order_number) == order_number)
+    if phone_clean:
+        if not valid_phone(phone_clean):
+            return render(request, db, "customer/track.html", matches=[], error="Enter a valid phone or WhatsApp number.", order_number=order_number, phone=phone)
+        stmt = stmt.where(or_(Customer.phone == phone_clean, Customer.whatsapp == phone_clean))
+    matches = list(db.scalars(stmt).unique().all())
+    if not matches:
+        return render(request, db, "customer/track.html", matches=[], error="We could not find a matching catering order.", order_number=order_number, phone=phone)
+    if len(matches) == 1:
+        return RedirectResponse(f"/orders/{matches[0].public_token}", status_code=303)
+    return render(request, db, "customer/track.html", matches=matches, order_number=order_number, phone=phone)
 
 
 @app.get("/orders/{token}", response_class=HTMLResponse)
@@ -809,9 +839,6 @@ def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
     customer_share_text = build_customer_share_text(order, biz, public_url)
     customer_number = normalise_whatsapp_number(order.customer.whatsapp)
     self_whatsapp_url = f"https://wa.me/{customer_number}?text={quote(customer_share_text)}" if customer_number else ""
-    business_number = normalise_whatsapp_number(biz.whatsapp or biz.phone)
-    negotiation_text = f"Hi, I want to discuss catering order {order.order_number}."
-    negotiation_whatsapp_url = f"https://wa.me/{business_number}?text={quote(negotiation_text)}" if business_number else ""
     finance = finance_summary(order)
     return render(
         request,
@@ -822,10 +849,7 @@ def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
         public_url=public_url,
         finance=finance,
         pricing=pricing_breakdown(order),
-        invoice_status=invoice_status(order),
-        invoice_available=finance["payment_status"] == "paid",
         customer_whatsapp_url=self_whatsapp_url,
-        negotiation_whatsapp_url=negotiation_whatsapp_url,
     )
 
 
@@ -944,7 +968,7 @@ async def admin_settings_post(
     email: str = Form(""), address: str = Form(""), eircode: str = Form(""), footer_note: str = Form(""),
     branch_label: str = Form("Athlone Branch"), announcement_enabled: bool = Form(False),
     announcement_title: str = Form(""), announcement_text: str = Form(""),
-    web_charge_block_amount: str = Form("500"), web_charge_per_block: str = Form("5"),
+    kitchen_whatsapp: str = Form(""),
     remove_hero_image: bool = Form(False),
     csrf_token: str = Form(...), logo: UploadFile | None = File(None), hero_image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
@@ -965,15 +989,7 @@ async def admin_settings_post(
     obj.announcement_enabled = bool(announcement_enabled)
     obj.announcement_title = announcement_title.strip()
     obj.announcement_text = announcement_text.strip()
-    try:
-        block_amount = money(web_charge_block_amount)
-        per_block = money(web_charge_per_block)
-        if block_amount <= 0 or per_block < 0:
-            raise ValueError
-        obj.web_charge_block_amount = block_amount
-        obj.web_charge_per_block = per_block
-    except Exception:
-        return render(request, db, "admin/settings.html", admin=admin, error="Enter valid positive web order charge settings.")
+    obj.kitchen_whatsapp = clean_phone(kitchen_whatsapp) if kitchen_whatsapp.strip() else ""
     allowed = {"image/png", "image/jpeg", "image/webp"}
     if logo and logo.filename:
         if logo.content_type not in allowed:
@@ -997,6 +1013,36 @@ async def admin_settings_post(
         obj.hero_image_content_type = hero_image.content_type
     db.commit()
     return RedirectResponse("/admin/settings?saved=1", status_code=303)
+
+
+@app.post("/admin/settings/reset-orders")
+def admin_reset_orders(
+    request: Request,
+    confirmation: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    if confirmation.strip().upper() != "RESET ORDERS":
+        return RedirectResponse("/admin/settings?reset_error=Type+RESET+ORDERS+exactly+to+confirm", status_code=303)
+    orders = db.scalars(
+        select(QuoteRequest).options(
+            selectinload(QuoteRequest.items),
+            selectinload(QuoteRequest.history),
+            selectinload(QuoteRequest.requested_dishes),
+            selectinload(QuoteRequest.payments),
+            selectinload(QuoteRequest.expenses),
+        )
+    ).all()
+    for order in orders:
+        db.delete(order)
+    biz = business(db)
+    biz.next_order_sequence = 1
+    db.commit()
+    return RedirectResponse("/admin/settings?orders_reset=1", status_code=303)
 
 
 @app.get("/business-logo")
@@ -1217,7 +1263,7 @@ def admin_orders(request: Request, q: str = "", status: str = "", db: Session = 
         like = f"%{q.strip()}%"
         stmt = stmt.join(Customer).where(or_(QuoteRequest.order_number.ilike(like), Customer.customer_number.ilike(like), Customer.name.ilike(like), Customer.phone.ilike(like), QuoteRequest.event_name.ilike(like)))
     orders = db.scalars(stmt).all()
-    return render(request, db, "admin/orders.html", admin=admin, orders=orders, q=q, selected_status=status, statuses=ALLOWED_STATUSES)
+    return render(request, db, "admin/orders.html", admin=admin, orders=orders, q=q, selected_status=status, statuses=FILTER_STATUSES)
 
 
 @app.get("/admin/orders/{order_id}", response_class=HTMLResponse)
@@ -1246,7 +1292,6 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         customer_whatsapp_url=customer_whatsapp_url, mailto_url=mailto_url,
         finance=finance_summary(order), pricing=pricing_breakdown(order),
         can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
-        web_charge_block=money(biz.web_charge_block_amount), web_charge_rate=money(biz.web_charge_per_block),
     )
 
 
@@ -1257,8 +1302,7 @@ def admin_order_update(
     status: str = Form(...),
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
-    delivery_price: str = Form("0"),
-    service_price: str = Form("0"),
+    delivery_service_charge: str = Form("0"),
     admin_notes: str = Form(""),
     customer_message: str = Form(""),
     csrf_token: str = Form(...),
@@ -1283,16 +1327,16 @@ def admin_order_update(
         try:
             adult = money(adult_charge)
             kid = money(kid_charge)
-            delivery = money(delivery_price)
-            service = money(service_price)
-            if min(adult, kid, delivery, service) < 0:
+            combined = money(delivery_service_charge)
+            if min(adult, kid, combined) < 0:
                 raise ValueError
-            calc = calculate_order_price(order, business(db), adult, kid, delivery, service)
+            calc = calculate_order_price(order, adult, kid, combined)
             order.adult_charge = calc["adult_charge"]
             order.kid_charge = calc["kid_charge"]
-            order.delivery_price = calc["delivery_price"]
-            order.service_price = calc["service_price"]
-            order.web_order_charge = calc["web_order_charge"]
+            order.delivery_service_charge = calc["delivery_service_charge"]
+            order.delivery_price = Decimal("0.00")
+            order.service_price = Decimal("0.00")
+            order.web_order_charge = Decimal("0.00")
             order.final_price = calc["total"]
         except Exception:
             return RedirectResponse(f"/admin/orders/{order_id}?error=Invalid+pricing", status_code=303)
@@ -1320,7 +1364,7 @@ def admin_order_kitchen_share(
     order = db.scalar(
         select(QuoteRequest)
         .where(QuoteRequest.id == order_id)
-        .options(selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
     )
     if not order:
         raise HTTPException(status_code=404)
@@ -1329,8 +1373,24 @@ def admin_order_kitchen_share(
         return RedirectResponse(f"/admin/orders/{order_id}?error=Kitchen+comments+are+required+before+sending", status_code=303)
     order.kitchen_comments = comments[:3000]
     db.commit()
-    share_url = "https://wa.me/?text=" + quote(build_kitchen_share_text(order))
+    pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
+    message = build_kitchen_share_text(order, pdf_url)
+    target = normalise_whatsapp_number(business(db).kitchen_whatsapp)
+    share_url = (f"https://wa.me/{target}?text=" if target else "https://wa.me/?text=") + quote(message)
     return RedirectResponse(share_url, status_code=303)
+
+
+@app.get("/kitchen/{token}.pdf")
+def public_kitchen_pdf(token: str, db: Session = Depends(get_db)):
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.public_token == token)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Kitchen sheet not found")
+    pdf = build_order_pdf(order, business(db))
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="Kitchen-{order.order_number}.pdf"', "Cache-Control": "no-store"})
 
 
 @app.post("/orders/{token}/confirm")
@@ -1457,173 +1517,64 @@ def admin_order_print(order_id: int, request: Request, db: Session = Depends(get
 
 
 def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
+    """Compact kitchen/event sheet optimised for A5 print and phone sharing."""
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=22, leftMargin=22, topMargin=22, bottomMargin=22)
+    doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=14, leftMargin=14, topMargin=14, bottomMargin=14)
     styles = getSampleStyleSheet()
+    tiny = ParagraphStyle("Tiny", parent=styles["BodyText"], fontSize=7.4, leading=9)
+    small = ParagraphStyle("Small", parent=styles["BodyText"], fontSize=8.3, leading=10)
+    bold = ParagraphStyle("Bold", parent=small, fontName="Helvetica-Bold")
+    title = ParagraphStyle("KitchenTitle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=15, leading=17, spaceAfter=2)
+    section = ParagraphStyle("KitchenSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=10, leading=12, textColor=colors.white, backColor=colors.HexColor("#222222"), borderPadding=5, spaceBefore=6, spaceAfter=4)
+    cat = ParagraphStyle("KitchenCat", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10, leading=12, textColor=colors.HexColor("#111111"), spaceBefore=5, spaceAfter=2)
+    item = ParagraphStyle("KitchenItem", parent=small, fontName="Helvetica-Bold", leftIndent=7, spaceAfter=1.5)
 
-    company_style = ParagraphStyle(
-        "CompanyTitle",
-        parent=styles["Title"],
-        fontName="Helvetica-Bold",
-        fontSize=17,
-        leading=19,
-        alignment=0,
-        textColor=colors.HexColor("#111111"),
-        spaceAfter=3,
-    )
-    event_label = ParagraphStyle(
-        "EventLabel",
-        parent=styles["BodyText"],
-        fontName="Helvetica-Bold",
-        fontSize=7,
-        leading=8,
-        textColor=colors.HexColor("#666666"),
-    )
-    event_value = ParagraphStyle(
-        "EventValue",
-        parent=styles["BodyText"],
-        fontName="Helvetica-Bold",
-        fontSize=13,
-        leading=15,
-        textColor=colors.HexColor("#111111"),
-    )
-    h2 = ParagraphStyle(
-        "H2Custom",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=14,
-        textColor=colors.white,
-        backColor=colors.HexColor("#333333"),
-        borderPadding=6,
-        spaceBefore=10,
-        spaceAfter=6,
-    )
-    h3 = ParagraphStyle(
-        "H3Custom",
-        parent=styles["Heading3"],
-        fontName="Helvetica-Bold",
-        fontSize=10,
-        leading=13,
-        textColor=colors.HexColor("#333333"),
-        spaceBefore=6,
-        spaceAfter=4,
-    )
-    item_style = ParagraphStyle(
-        "ItemCustom",
-        parent=styles["BodyText"],
-        fontName="Helvetica-Bold",
-        fontSize=10,
-        leading=14,
-        leftIndent=8,
-        spaceAfter=3,
-    )
-    body = styles["BodyText"]
+    company = biz.company_name.strip() or "Spice India Catering"
+    header = Table([[Paragraph(company, title), Paragraph(f"<b>{order.order_number}</b><br/>Kitchen / Catering Sheet", small)]], colWidths=[235, 135])
+    header.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("ALIGN",(1,0),(1,0),"RIGHT"),("LINEBELOW",(0,0),(-1,-1),1.5,colors.black),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
 
-    name = biz.company_name.strip() or "Catering Order"
-    left_header = [
-        Paragraph("CATERING CONFIRMATION", ParagraphStyle("Kicker", parent=body, fontName="Helvetica-Bold", fontSize=7, textColor=colors.HexColor("#777777"), leading=9)),
-        Paragraph(name, company_style),
-        Paragraph(order.order_number, body),
-        Paragraph(f"<b>Status:</b> {order.status.replace('_', ' ').title()}", body),
-    ]
-    right_header = Table([
-        [Paragraph("DATE", event_label), Paragraph(order.event_date.strftime("%d/%m/%Y"), event_value)],
-        [Paragraph("DAY", event_label), Paragraph(order.event_date.strftime("%A"), event_value)],
-        [Paragraph("EVENT TIME", event_label), Paragraph(order.event_time.strftime("%H:%M"), event_value)],
-        [Paragraph("DELIVERY", event_label), Paragraph(order.delivery_time.strftime("%H:%M") if order.delivery_time else "—", event_value)],
-    ], colWidths=[54, 80])
-    right_header.setStyle(TableStyle([
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-        ("LINEBELOW", (0,0), (-1,-1), 0.5, colors.HexColor("#CCCCCC")),
-    ]))
+    timing = Table([[
+        Paragraph(f"<b>DATE</b><br/>{order.event_date.strftime('%d/%m/%Y')}", small),
+        Paragraph(f"<b>DAY</b><br/>{event_day(order)}", small),
+        Paragraph(f"<b>EVENT TIME</b><br/>{order.event_time.strftime('%H:%M')}", small),
+        Paragraph(f"<b>DELIVERY TIME</b><br/>{order.delivery_time.strftime('%H:%M') if order.delivery_time else '—'}", small),
+    ]], colWidths=[92.5]*4)
+    timing.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor('#777777')),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor('#BBBBBB')),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
 
-    header = Table([[left_header, right_header]], colWidths=[220, 150])
-    header.setStyle(TableStyle([
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("LINEBELOW", (0,0), (-1,-1), 2, colors.HexColor("#111111")),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
-    ]))
+    details = Table([[
+        Paragraph(f"<b>CUSTOMER</b><br/>{html.escape(order.customer.name)}", tiny),
+        Paragraph(f"<b>PHONE</b><br/>{html.escape(order.customer.phone)}", tiny),
+        Paragraph(f"<b>EVENT</b><br/>{html.escape(order.event_name)}", tiny),
+        Paragraph(f"<b>GUESTS</b><br/>{order.adults} adults · {order.kids} kids · <b>{order.adults + order.kids} total</b>", tiny),
+    ],[
+        Paragraph(f"<b>ADDRESS</b><br/>{html.escape(order.address)}", tiny),
+        Paragraph(f"<b>EIRCODE</b><br/>{html.escape(order.eircode)}", tiny),
+        Paragraph(f"<b>WHATSAPP</b><br/>{html.escape(order.customer.whatsapp)}", tiny),
+        Paragraph(f"<b>CUSTOMER NO.</b><br/>{html.escape(order.customer.customer_number)}", tiny),
+    ]], colWidths=[92.5]*4)
+    details.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor('#999999')),("INNERGRID",(0,0),(-1,-1),0.25,colors.HexColor('#CCCCCC')),("VALIGN",(0,0),(-1,-1),"TOP"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
 
-    guest_style = ParagraphStyle("GuestValue", parent=body, fontName="Helvetica-Bold", fontSize=15, leading=17, alignment=TA_CENTER)
-    guest_label = ParagraphStyle("GuestLabel", parent=body, fontName="Helvetica-Bold", fontSize=7, leading=8, alignment=TA_CENTER, textColor=colors.HexColor("#555555"))
-    total_people = order.adults + order.kids
-    guest_table = Table([
-        [Paragraph("ADULTS", guest_label), Paragraph("KIDS", guest_label), Paragraph("TOTAL PEOPLE", guest_label)],
-        [Paragraph(str(order.adults), guest_style), Paragraph(str(order.kids), guest_style), Paragraph(str(total_people), guest_style)],
-    ], colWidths=[123, 123, 124])
-    guest_table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F1F3F3")),
-        ("BOX", (0,0), (-1,-1), 0.8, colors.HexColor("#444444")),
-        ("INNERGRID", (0,0), (-1,-1), 0.4, colors.HexColor("#AAAAAA")),
-        ("TOPPADDING", (0,0), (-1,-1), 6),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-    ]))
-
-    story = [header, Spacer(1, 10), guest_table, Spacer(1, 10)]
-
-    details = [
-        ["Customer", order.customer.name],
-        ["Customer No.", order.customer.customer_number],
-        ["Phone", order.customer.phone],
-        ["WhatsApp", order.customer.whatsapp],
-        ["Event", order.event_name],
-        ["Address", f"{order.address}, {order.eircode}"],
-    ]
-    if order.final_price is not None:
-        p = pricing_breakdown(order)
-        details.extend([
-            ["Adult charge", f"€{p['adult_charge']:.2f} / head"],
-            ["Kid charge", f"€{p['kid_charge']:.2f} / head"],
-            ["Delivery", f"€{p['delivery_price']:.2f}"],
-            ["Service", f"€{p['service_price']:.2f}"],
-            ["Web order", f"€{p['web_order_charge']:.2f}"],
-            ["Total price", f"€{p['total']:.2f}"],
-        ])
-    table = Table(details, colWidths=[76, 299])
-    table.setStyle(TableStyle([
-        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
-        ("FONTNAME", (1,0), (1,-1), "Helvetica"),
-        ("FONTSIZE", (0,0), (-1,-1), 9),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-        ("LINEBELOW", (0,0), (-1,-1), 0.25, colors.HexColor("#DDDDDD")),
-    ]))
-    story.append(table)
-    story.append(Spacer(1, 10))
-    story.append(Paragraph("CONFIRMED MENU", ParagraphStyle("MenuTitle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=16, leading=18, alignment=TA_CENTER, spaceAfter=7)))
-
+    story = [header, Spacer(1,6), timing, Spacer(1,6), details, Spacer(1,7), Paragraph("CONFIRMED MENU", section)]
     for menu_name, categories in order_groups(order).items():
-        story.append(Paragraph(menu_name, h2))
+        story.append(Paragraph(html.escape(menu_name), bold))
         for cat_name, subs in categories.items():
-            story.append(Paragraph(cat_name, h3))
+            story.append(Paragraph(html.escape(cat_name).upper(), cat))
             counter = 1
             for sub_name, items in subs.items():
                 if sub_name and sub_name != "Main Selection":
-                    story.append(Paragraph(sub_name, body))
-                for item in items:
-                    story.append(Paragraph(f"{counter}. {html.escape(item.item_name)}", item_style))
+                    story.append(Paragraph(html.escape(sub_name), tiny))
+                for menu_item in items:
+                    story.append(Paragraph(f"{counter}. {html.escape(menu_item.item_name)}", item))
                     counter += 1
-
-    approved_requests = [d for d in order.requested_dishes if d.status == "approved"]
-    if approved_requests:
-        story.append(Paragraph("Approved special requests", h2))
-        for dish in approved_requests:
-            story.append(Paragraph(f"• {dish.name}", item_style))
-
-    if order.kitchen_comments:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("KITCHEN COMMENTS", h2))
-        story.append(Paragraph(f"<b>{html.escape(order.kitchen_comments)}</b>", body))
-
-    comments = [x for x in [order.customer_notes, order.customer_message] if x]
-    if comments:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Comments / notes", h2))
-        for comment in comments:
-            story.append(Paragraph(comment, body))
-
+    approved = [d for d in order.requested_dishes if d.status == "approved"]
+    if approved:
+        story.append(Paragraph("APPROVED REQUESTED DISHES", cat))
+        for idx, dish in enumerate(approved, 1):
+            story.append(Paragraph(f"{idx}. {html.escape(dish.name)}", item))
+    if order.kitchen_comments.strip():
+        story.extend([Spacer(1,5), Paragraph("KITCHEN COMMENTS", section), Paragraph(f"<b>{html.escape(order.kitchen_comments)}</b>", bold)])
+    if order.customer_notes.strip():
+        story.extend([Spacer(1,4), Paragraph("CUSTOMER NOTES", section), Paragraph(html.escape(order.customer_notes), small)])
     doc.build(story)
     return buffer.getvalue()
 
@@ -1681,6 +1632,7 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         ["Phone", order.customer.phone],
         ["Event", order.event_name],
         ["Event date", order.event_date.strftime("%d %b %Y")],
+        ["Day", event_day(order)],
         ["Event time", order.event_time.strftime("%H:%M")],
         ["Delivery time", order.delivery_time.strftime("%H:%M") if order.delivery_time else "—"],
         ["Event address", f"{order.address}, {order.eircode}"],
@@ -1714,9 +1666,7 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
     amount_rows = [
         [f"Adults · {order.adults} × €{p['adult_charge']:.2f}", f"€{money(order.adults) * p['adult_charge']:.2f}"],
         [f"Kids · {order.kids} × €{p['kid_charge']:.2f}", f"€{money(order.kids) * p['kid_charge']:.2f}"],
-        ["Delivery", f"€{p['delivery_price']:.2f}"],
-        ["Service", f"€{p['service_price']:.2f}"],
-        ["Web order charge", f"€{p['web_order_charge']:.2f}"],
+        ["Delivery & Service", f"€{p['delivery_service_charge']:.2f}"],
         ["Total catering price", f"€{finance['final_price']:.2f}" if order.final_price is not None else "Not priced"],
         ["Payments received", f"€{finance['total_paid']:.2f}"],
         ["Balance due", f"€{finance['balance_due']:.2f}"],
@@ -1975,15 +1925,21 @@ def admin_customer_edit(
         raise HTTPException(status_code=404, detail="Customer not found")
 
     clean_name = name.strip()
-    clean_customer_phone = clean_phone(phone)
-    clean_whatsapp = clean_phone(whatsapp) if whatsapp.strip() else ""
+    phone_raw = phone.strip()
+    whatsapp_raw = whatsapp.strip()
+    clean_customer_phone = clean_phone(phone_raw)
+    clean_whatsapp = clean_phone(whatsapp_raw) if whatsapp_raw else ""
     clean_address = address.strip()
-    clean_eircode = eircode.strip().upper()
+    normalized_eircode = clean_eircode(eircode)
 
     if len(clean_name) < 2:
         return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+customer+name", status_code=303)
-    if len(clean_customer_phone) < 7:
-        return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+phone+number", status_code=303)
+    if not re.fullmatch(r"[0-9]{7,10}", phone_raw):
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=Phone+must+contain+digits+only+and+be+no+more+than+10+digits", status_code=303)
+    if whatsapp_raw and not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw):
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=WhatsApp+must+contain+digits+only+and+be+no+more+than+10+digits", status_code=303)
+    if normalized_eircode and not valid_eircode(normalized_eircode):
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=Eircode+must+be+exactly+7+letters+and+numbers", status_code=303)
 
     duplicate = db.scalar(
         select(Customer).where(Customer.phone == clean_customer_phone, Customer.id != customer_id).limit(1)
@@ -1998,7 +1954,7 @@ def admin_customer_edit(
     customer.phone = clean_customer_phone
     customer.whatsapp = clean_whatsapp
     customer.address = clean_address
-    customer.eircode = clean_eircode
+    customer.eircode = normalized_eircode
     db.commit()
     return RedirectResponse(f"/admin/customers/{customer_id}?saved=1", status_code=303)
 
@@ -2180,8 +2136,6 @@ def admin_transaction_detail(order_id: int, request: Request, db: Session = Depe
         invoice_url=str(request.base_url).rstrip("/") + f"/orders/{order.public_token}/invoice",
         admin_invoice_url=f"/admin/orders/{order.id}/invoice",
         pricing=pricing_breakdown(order),
-        web_charge_block=money(business(db).web_charge_block_amount),
-        web_charge_rate=money(business(db).web_charge_per_block),
     )
 
 
@@ -2191,8 +2145,7 @@ def admin_transaction_price(
     request: Request,
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
-    delivery_price: str = Form("0"),
-    service_price: str = Form("0"),
+    delivery_service_charge: str = Form("0"),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -2206,16 +2159,16 @@ def admin_transaction_price(
     try:
         adult = money(adult_charge)
         kid = money(kid_charge)
-        delivery = money(delivery_price)
-        service = money(service_price)
-        if min(adult, kid, delivery, service) < 0:
+        combined = money(delivery_service_charge)
+        if min(adult, kid, combined) < 0:
             raise ValueError
-        calc = calculate_order_price(order, business(db), adult, kid, delivery, service)
+        calc = calculate_order_price(order, adult, kid, combined)
         order.adult_charge = calc["adult_charge"]
         order.kid_charge = calc["kid_charge"]
-        order.delivery_price = calc["delivery_price"]
-        order.service_price = calc["service_price"]
-        order.web_order_charge = calc["web_order_charge"]
+        order.delivery_service_charge = calc["delivery_service_charge"]
+        order.delivery_price = Decimal("0.00")
+        order.service_price = Decimal("0.00")
+        order.web_order_charge = Decimal("0.00")
         order.final_price = calc["total"]
     except Exception:
         return RedirectResponse(f"/admin/transactions/{order_id}?error=Invalid+pricing", status_code=303)

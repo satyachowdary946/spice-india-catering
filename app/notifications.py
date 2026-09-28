@@ -112,6 +112,7 @@ async def notify_admin_new_quote_email(
     customer_phone: str,
     event_name: str,
     event_date: str,
+    event_day: str,
     event_time: str,
     delivery_time: str,
     total_people: int,
@@ -129,6 +130,7 @@ async def notify_admin_new_quote_email(
     safe_customer_phone = html.escape(customer_phone)
     safe_event_name = html.escape(event_name)
     safe_event_date = html.escape(event_date)
+    safe_event_day = html.escape(event_day)
     safe_event_time = html.escape(event_time)
     safe_delivery_time = html.escape(delivery_time)
     safe_admin_url = html.escape(admin_url, quote=True)
@@ -151,6 +153,7 @@ async def notify_admin_new_quote_email(
               <tr><td style="padding:8px 0;font-weight:bold">Phone</td><td>{safe_customer_phone}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Event</td><td>{safe_event_name}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Date</td><td>{safe_event_date}</td></tr>
+              <tr><td style="padding:8px 0;font-weight:bold">Day</td><td>{safe_event_day}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Event time</td><td>{safe_event_time}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Delivery time</td><td>{safe_delivery_time}</td></tr>
               <tr><td style="padding:8px 0;font-weight:bold">Guests</td><td>{total_people}</td></tr>
