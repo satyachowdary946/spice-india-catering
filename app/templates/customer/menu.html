@@ -16,11 +16,21 @@
     </div>
   </div>
 
-  <div class="category-sticky-bar" data-category-sticky-bar>
-    <div class="container">
-      <div class="category-tabs" data-category-tabs aria-label="Menu categories"></div>
+  <button class="floating-category-trigger" type="button" data-open-category-panel aria-haspopup="dialog" aria-controls="category-picker-dialog">
+    <span class="floating-category-icon" aria-hidden="true">☰</span>
+    <span class="floating-category-copy"><small>Categories</small><strong data-current-category>Browse Menu</strong></span>
+  </button>
+
+  <dialog class="request-dialog category-picker-dialog" id="category-picker-dialog" data-category-dialog aria-labelledby="category-picker-title">
+    <div class="request-dialog-card">
+      <div class="admin-title">
+        <div><div class="eyebrow">Quick Menu Navigation</div><h2 id="category-picker-title">Choose A Category</h2></div>
+        <button class="icon-close" type="button" data-close-category-panel aria-label="Close">×</button>
+      </div>
+      <p class="muted category-picker-help">Jump between categories at any time. This menu stays available while you browse dishes.</p>
+      <div class="category-tabs category-picker-grid" data-category-tabs aria-label="Menu categories"></div>
     </div>
-  </div>
+  </dialog>
 
   <div class="container">
     <section class="special-request-banner" aria-labelledby="special-request-title">

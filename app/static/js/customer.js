@@ -62,6 +62,7 @@ function initMenu(){
   const dietBtns=[...document.querySelectorAll('[data-diet-choice]')];
   const categoryTabs=document.querySelector('[data-category-tabs]'), content=document.querySelector('[data-menu-content]');
   const filterDialog=document.querySelector('[data-menu-filter-dialog]'), requestDialog=document.querySelector('[data-request-dialog]');
+  const categoryDialog=document.querySelector('[data-category-dialog]'), currentCategoryLabel=document.querySelector('[data-current-category]');
   const requestInput=document.querySelector('[data-request-input]'), requestCount=document.querySelector('[data-request-count]');
   const comboDialog=document.querySelector('[data-combo-dialog]'), comboList=document.querySelector('[data-combo-list]'), comboTitle=document.querySelector('[data-combo-title]');
   let selectedMenu=null;
@@ -84,6 +85,9 @@ function initMenu(){
   requestDialog?.addEventListener('click',e=>{if(e.target===requestDialog)requestDialog.close();});
   document.querySelector('[data-open-menu-filter]')?.addEventListener('click',()=>filterDialog?.showModal());
   filterDialog?.addEventListener('click',e=>{if(e.target===filterDialog)filterDialog.close();});
+  document.querySelector('[data-open-category-panel]')?.addEventListener('click',()=>categoryDialog?.showModal());
+  document.querySelector('[data-close-category-panel]')?.addEventListener('click',()=>categoryDialog?.close());
+  categoryDialog?.addEventListener('click',e=>{if(e.target===categoryDialog)categoryDialog.close();});
   document.querySelectorAll('[data-close-combo]').forEach(btn=>btn.addEventListener('click',()=>comboDialog?.close()));
   comboDialog?.addEventListener('click',e=>{if(e.target===comboDialog)comboDialog.close();});
 
@@ -139,11 +143,20 @@ function initMenu(){
     const cats=buildCategories();
     if(!activeCategory||!cats.some(c=>c.id===activeCategory))activeCategory=cats[0]?.id||null;
     categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}">${escapeHtml(c.name)}</button>`).join('');
-    categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{activeCategory=btn.dataset.cat;categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));});document.getElementById(activeCategory)?.scrollIntoView({behavior:'smooth',block:'start'});}));
+    const updateCurrentCategoryLabel=()=>{const current=cats.find(c=>c.id===activeCategory);if(currentCategoryLabel)currentCategoryLabel.textContent=current?.name||'Browse Menu';};
+    updateCurrentCategoryLabel();
+    categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{
+      activeCategory=btn.dataset.cat;
+      categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));});
+      updateCurrentCategoryLabel();
+      categoryDialog?.close();
+      const target=document.getElementById(activeCategory);
+      if(target){const y=target.getBoundingClientRect().top+window.scrollY-82;window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}
+    }));
     const draft=DraftStore.load();
     content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,sub)=>n+sub.items.length,0)} choices</span></div>${c.subs.map(sub=>`<div class="menu-subsection"><div class="subcategory-title" style="--heading-color:${safeHeadingColor(sub.heading_color)}">${escapeHtml(sub.name)}</div><div class="menu-list">${sub.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
     if(categoryObserver)categoryObserver.disconnect();
-    if('IntersectionObserver' in window){categoryObserver=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(!visible)return;activeCategory=visible.target.id;categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));if(on)x.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});});},{rootMargin:'-145px 0px -62% 0px',threshold:[0,.01]});content.querySelectorAll('.menu-section').forEach(section=>categoryObserver.observe(section));}
+    if('IntersectionObserver' in window){categoryObserver=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(!visible)return;activeCategory=visible.target.id;categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));});const current=cats.find(c=>c.id===activeCategory);if(currentCategoryLabel)currentCategoryLabel.textContent=current?.name||'Browse Menu';},{rootMargin:'-86px 0px -58% 0px',threshold:[0,.01]});content.querySelectorAll('.menu-section').forEach(section=>categoryObserver.observe(section));}
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
       const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
     }));

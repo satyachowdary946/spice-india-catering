@@ -259,7 +259,8 @@ def test_excel_menu_import_and_combination_rules():
     with TestClient(app) as client:
         menu_page = client.get("/menu")
         assert menu_page.status_code == 200
-        assert "category-sticky-bar" in menu_page.text
+        assert "floating-category-trigger" in menu_page.text
+        assert "category-picker-dialog" in menu_page.text
         assert "https://example.com/appam.jpg" in menu_page.text
         assert '"price": 4.5' in menu_page.text or '"price":4.5' in menu_page.text
         response = client.get("/api/menu-combinations", params={"item_id": appam_id})

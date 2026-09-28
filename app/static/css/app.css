@@ -1436,14 +1436,20 @@ html,body{max-width:100%;overflow-x:hidden}
   .form-card .admin-title h1{font-size:2rem!important;line-height:1.05}.form-card .lead{font-size:.98rem}
 }
 
-/* Build 11 — Excel-only menu + pinned category navigation */
+/* Build 11.1 — Excel-only menu + floating category navigation */
 .customer-menu-toolbar{position:relative!important;top:auto!important;z-index:10!important}
-.category-sticky-bar{position:sticky;top:66px;z-index:24;background:rgba(31,39,39,.97);border-top:1px solid rgba(255,255,255,.05);border-bottom:1px solid #46514f;backdrop-filter:blur(14px);box-shadow:0 8px 18px rgba(0,0,0,.16)}
-.category-sticky-bar .container{padding-top:8px;padding-bottom:8px}
-.category-sticky-bar .category-tabs{margin:0;display:flex;flex-wrap:nowrap;overflow-x:auto;gap:7px;padding:1px 1px 5px;scrollbar-width:none;scroll-snap-type:x proximity}
-.category-sticky-bar .category-tabs::-webkit-scrollbar{display:none}
-.category-sticky-bar .category-tabs button{flex:0 0 auto;white-space:nowrap;scroll-snap-align:start;min-height:42px;padding:9px 14px;font-size:.82rem}
-.menu-section{scroll-margin-top:132px}
+.floating-category-trigger{position:fixed;right:14px;bottom:calc(92px + env(safe-area-inset-bottom));z-index:27;display:flex;align-items:center;gap:10px;max-width:min(78vw,330px);min-height:54px;padding:9px 14px;border:1px solid #35d5bd;border-radius:18px;background:rgba(9,31,27,.97);color:#fff;box-shadow:0 12px 34px rgba(0,0,0,.38),0 0 0 1px rgba(53,213,189,.08);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);text-align:left}
+.floating-category-trigger:active{transform:translateY(1px)}
+.floating-category-icon{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:11px;background:#24c9b4;color:#071311;font-size:1.05rem;font-weight:950}
+.floating-category-copy{display:grid;min-width:0;line-height:1.05}
+.floating-category-copy small{font-size:.65rem;letter-spacing:.08em;text-transform:uppercase;color:#a9c6c0;font-weight:850}
+.floating-category-copy strong{margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.9rem;color:#fff}
+.category-picker-dialog{width:min(92vw,520px)}
+.category-picker-help{margin:10px 0 14px;line-height:1.45}
+.category-picker-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px!important;overflow:visible!important;margin:0!important;padding:0!important}
+.category-picker-grid button{width:100%;min-height:52px!important;white-space:normal!important;text-align:left;border-radius:14px!important;padding:11px 12px!important;font-size:.86rem!important;line-height:1.25}
+.category-picker-grid button.active{background:#0b3c35!important;color:#7df1df!important;border-color:#2ed3bb!important;box-shadow:inset 0 0 0 1px rgba(46,211,187,.16)!important}
+.menu-section{scroll-margin-top:82px}
 .menu-section-title{position:static!important;top:auto!important;background:transparent!important;backdrop-filter:none!important}
 .subcategory-title{--heading-color:#94A3B8;color:var(--heading-color)!important;font-weight:900;letter-spacing:.04em;border-left:4px solid var(--heading-color);padding:7px 10px;margin:12px 0 9px;background:color-mix(in srgb,var(--heading-color) 8%,transparent);border-radius:0 9px 9px 0}
 .menu-item-price{margin-top:4px;font-weight:900;font-size:.95rem;color:#eef8f5}
@@ -1453,10 +1459,14 @@ html,body{max-width:100%;overflow-x:hidden}
 .excel-source-grid span{color:#b8c4c0;font-size:.88rem;line-height:1.4}
 .excel-only-menu-card .btn{margin-top:4px}
 @media(max-width:700px){
-  .category-sticky-bar{top:68px}
-  .category-sticky-bar .container{width:min(100% - 12px,var(--max));padding-top:7px;padding-bottom:6px}
-  .category-sticky-bar .category-tabs button{min-height:40px;padding:8px 12px;font-size:.78rem}
-  .menu-section{scroll-margin-top:124px}
+  .floating-category-trigger{right:10px;bottom:calc(88px + env(safe-area-inset-bottom));max-width:72vw;min-height:50px;padding:8px 11px;border-radius:16px}
+  .floating-category-icon{width:32px;height:32px;flex-basis:32px}
+  .floating-category-copy strong{font-size:.82rem}
+  .category-picker-dialog[open]{position:fixed;inset:auto 8px calc(84px + env(safe-area-inset-bottom)) 8px;margin:0;width:auto;max-width:none;max-height:62dvh;border-radius:20px}
+  .category-picker-dialog .request-dialog-card{max-height:62dvh;overflow-y:auto;padding:16px 14px}
+  .category-picker-grid{grid-template-columns:1fr 1fr}
+  .category-picker-grid button{min-height:48px!important;font-size:.8rem!important}
+  .menu-section{scroll-margin-top:76px}
   .subcategory-title{font-size:.92rem;margin:10px 0 8px;padding:7px 9px}
   .excel-source-grid{grid-template-columns:1fr}
 }

@@ -182,3 +182,10 @@ The public catering menu is now managed only through **Admin → Menus → Impor
 - Customer category tabs remain pinned below the mobile header while scrolling through dishes.
 
 The current workbook is available inside the app at `/static/templates/Spice_India_Catering_Menu_Excel_Source.xlsx`.
+
+
+### Build 11.1 — floating customer category navigation
+- Replaces the pinned top category strip with a floating Categories control above the basket.
+- Category picker can be reopened at any point while browsing.
+- Removes the automatic tab `scrollIntoView()` feedback loop that could pull the phone viewport back toward the navigation area.
+- Selecting a category scrolls once to that category, then leaves the customer free to browse and add dishes normally.
