@@ -1,13 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
+import re
 from typing import Any
 
 from openpyxl import load_workbook
 
 
 YES_VALUES = {"yes", "y", "true", "1", "active"}
+COLOUR_NAMES = {
+    "green": "#22C55E",
+    "red": "#EF4444",
+    "teal": "#2DD4BF",
+    "gold": "#F59E0B",
+    "white": "#F8FAFC",
+    "grey": "#94A3B8",
+    "gray": "#94A3B8",
+}
 
 
 def _text(value: Any) -> str:
@@ -28,6 +38,49 @@ def _int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _decimal(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        cleaned = str(value).replace("€", "").replace(",", "").strip()
+        amount = Decimal(cleaned)
+        if amount < 0:
+            raise ValueError
+        return amount.quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"Invalid price '{value}'. Use a positive number or leave it blank.")
+
+
+def _colour(value: Any, default: str = "#94A3B8") -> str:
+    raw = _text(value)
+    if not raw:
+        return default
+    named = COLOUR_NAMES.get(raw.casefold())
+    if named:
+        return named
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", raw):
+        return raw.upper()
+    if re.fullmatch(r"#[0-9A-Fa-f]{3}", raw):
+        return "#" + "".join(ch * 2 for ch in raw[1:]).upper()
+    return default
+
+
+
+
+def _cell_colour(cell, default: str) -> str:
+    typed = _text(cell.value)
+    if typed:
+        return _colour(typed, default)
+    try:
+        fill = cell.fill
+        fg = fill.fgColor
+        rgb = str(getattr(fg, "rgb", "") or "")
+        if fill.fill_type and len(rgb) >= 6:
+            return _colour("#" + rgb[-6:], default)
+    except Exception:
+        pass
+    return default
+
 def _find_header(ws, required: str, max_rows: int = 12) -> tuple[int, dict[str, int]]:
     for row in range(1, min(ws.max_row, max_rows) + 1):
         headers: dict[str, int] = {}
@@ -40,8 +93,27 @@ def _find_header(ws, required: str, max_rows: int = 12) -> tuple[int, dict[str, 
     raise ValueError(f"Could not find the '{required}' header in sheet '{ws.title}'.")
 
 
+def _embedded_images_by_row(ws, image_col: int, header_row: int) -> dict[int, tuple[bytes, str]]:
+    """Return images anchored in the Item Image column, keyed by 1-based worksheet row."""
+    result: dict[int, tuple[bytes, str]] = {}
+    for image in getattr(ws, "_images", []):
+        try:
+            anchor = image.anchor._from
+            row = int(anchor.row) + 1
+            col = int(anchor.col) + 1
+            if row <= header_row or col != image_col:
+                continue
+            raw = image._data()
+            fmt = str(getattr(image, "format", "png") or "png").lower()
+            content_type = "image/jpeg" if fmt in {"jpg", "jpeg"} else f"image/{fmt}"
+            result[row] = (raw, content_type)
+        except Exception:
+            continue
+    return result
+
+
 def parse_menu_workbook(data: bytes) -> dict[str, Any]:
-    """Parse the catering import workbook without mutating the database."""
+    """Parse the Excel-only catering menu workbook without mutating the database."""
     try:
         wb = load_workbook(BytesIO(data), data_only=False, read_only=False)
     except Exception as exc:
@@ -65,6 +137,10 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
         name = _text(ws.cell(header_row, col).value)
         if name:
             region_columns.append((name, col))
+
+    image_col = headers.get("Item Image")
+    embedded_images = _embedded_images_by_row(ws, image_col, header_row) if image_col else {}
+    price_col = headers.get("Display Price (€)") or headers.get("Price (€)") or headers.get("Price")
 
     items: list[dict[str, Any]] = []
     seen_ids: set[int] = set()
@@ -95,6 +171,12 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
         if not regions:
             regions = [region_name for region_name, _ in region_columns]
 
+        try:
+            display_price = _decimal(ws.cell(row, price_col).value) if price_col else None
+        except ValueError as exc:
+            raise ValueError(f"Menu Import row {row}: {exc}") from exc
+
+        embedded = embedded_images.get(row)
         items.append({
             "item_id": item_id,
             "main_category": main_category,
@@ -103,69 +185,105 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
             "category": _text(ws.cell(row, headers["Sub Category"]).value) or "Other",
             "section": _text(ws.cell(row, headers["Menu Section"]).value) or "Main Selection",
             "name": name,
-            "image_reference": _text(ws.cell(row, headers.get("Item Image", 0)).value) if headers.get("Item Image") else "",
+            "image_reference": _text(ws.cell(row, image_col).value) if image_col else "",
+            "image_bytes": embedded[0] if embedded else None,
+            "image_content_type": embedded[1] if embedded else None,
+            "display_price": display_price,
             "sort_order": _int(ws.cell(row, headers["Display Order"]).value, 0),
             "active": _yes(ws.cell(row, headers["Active"]).value, True),
             "notes": _text(ws.cell(row, headers.get("Notes", 0)).value) if headers.get("Notes") else "",
         })
 
     side_filters: list[dict[str, Any]] = []
+    category_setup: dict[str, dict[str, Any]] = {}
     if "Category Setup" in wb.sheetnames:
         setup = wb["Category Setup"]
         try:
             setup_header, sh = _find_header(setup, "Type")
             for row in range(setup_header + 1, setup.max_row + 1):
-                if _text(setup.cell(row, sh["Type"]).value).casefold() == "side filter":
+                type_name = _text(setup.cell(row, sh["Type"]).value).casefold()
+                name = _text(setup.cell(row, sh.get("Name", 0)).value)
+                if not name:
+                    continue
+                if type_name == "side filter":
                     side_filters.append({
-                        "name": _text(setup.cell(row, sh.get("Name", 0)).value),
+                        "name": name,
                         "sort_order": _int(setup.cell(row, sh.get("Display Order", 0)).value, 0),
                     })
+                elif type_name == "sub category":
+                    category_setup[name.casefold()] = {
+                        "name": name,
+                        "sort_order": _int(setup.cell(row, sh.get("Display Order", 0)).value, 0),
+                    }
         except ValueError:
             pass
     if not side_filters:
         side_filters = [{"name": name, "sort_order": idx + 1} for idx, (name, _) in enumerate(region_columns)]
     side_filters = [f for f in side_filters if f["name"]]
 
+    section_setup: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if "Section Setup" in wb.sheetnames:
+        sw = wb["Section Setup"]
+        try:
+            section_header, sh = _find_header(sw, "Menu Section")
+            required_section = ["Main Category", "Sub Category", "Menu Section", "Display Order", "Heading Colour", "Active"]
+            missing_section = [name for name in required_section if name not in sh]
+            if missing_section:
+                raise ValueError("Section Setup is missing columns: " + ", ".join(missing_section))
+            for row in range(section_header + 1, sw.max_row + 1):
+                main = _text(sw.cell(row, sh["Main Category"]).value)
+                category = _text(sw.cell(row, sh["Sub Category"]).value)
+                section = _text(sw.cell(row, sh["Menu Section"]).value)
+                if not section:
+                    continue
+                default_colour = "#EF4444" if "non" in main.casefold() and "veg" in main.casefold() else "#22C55E" if "veg" in main.casefold() else "#2DD4BF"
+                section_setup[(main.casefold(), category.casefold(), section.casefold())] = {
+                    "sort_order": _int(sw.cell(row, sh["Display Order"]).value, 0),
+                    "heading_color": _cell_colour(sw.cell(row, sh["Heading Colour"]), default_colour),
+                    "active": _yes(sw.cell(row, sh["Active"]).value, True),
+                }
+        except ValueError as exc:
+            raise exc
+
     combinations: list[dict[str, Any]] | None = None
     if "Combinations" in wb.sheetnames:
         combinations = []
         cw = wb["Combinations"]
-        try:
-            combo_header, ch = _find_header(cw, "Trigger Item ID")
-            required_combo = ["Trigger Item ID", "Recommended Item ID", "Priority", "Active", "Reciprocal"]
-            missing_combo = [name for name in required_combo if name not in ch]
-            if missing_combo:
-                raise ValueError("Combinations is missing columns: " + ", ".join(missing_combo))
-            for row in range(combo_header + 1, cw.max_row + 1):
-                trigger_raw = cw.cell(row, ch["Trigger Item ID"]).value
-                rec_raw = cw.cell(row, ch["Recommended Item ID"]).value
-                if trigger_raw in (None, "") and rec_raw in (None, ""):
-                    continue
-                trigger = _int(trigger_raw, -1)
-                recommended = _int(rec_raw, -1)
-                if trigger <= 0 or recommended <= 0:
-                    raise ValueError(f"Combinations row {row}: Trigger and Recommended Item IDs must be positive numbers.")
-                if trigger == recommended:
-                    raise ValueError(f"Combinations row {row}: an item cannot recommend itself.")
-                if trigger not in seen_ids:
-                    raise ValueError(f"Combinations row {row}: Trigger Item ID {trigger} is not in Menu Import.")
-                if recommended not in seen_ids:
-                    raise ValueError(f"Combinations row {row}: Recommended Item ID {recommended} is not in Menu Import.")
-                combinations.append({
-                    "trigger_item_id": trigger,
-                    "recommended_item_id": recommended,
-                    "priority": max(1, _int(cw.cell(row, ch["Priority"]).value, 1)),
-                    "active": _yes(cw.cell(row, ch["Active"]).value, True),
-                    "reciprocal": _yes(cw.cell(row, ch["Reciprocal"]).value, False),
-                    "popup_title": _text(cw.cell(row, ch.get("Popup Title", 0)).value) if ch.get("Popup Title") else "",
-                    "notes": _text(cw.cell(row, ch.get("Notes", 0)).value) if ch.get("Notes") else "",
-                })
-        except ValueError as exc:
-            raise exc
+        combo_header, ch = _find_header(cw, "Trigger Item ID")
+        required_combo = ["Trigger Item ID", "Recommended Item ID", "Priority", "Active", "Reciprocal"]
+        missing_combo = [name for name in required_combo if name not in ch]
+        if missing_combo:
+            raise ValueError("Combinations is missing columns: " + ", ".join(missing_combo))
+        for row in range(combo_header + 1, cw.max_row + 1):
+            trigger_raw = cw.cell(row, ch["Trigger Item ID"]).value
+            rec_raw = cw.cell(row, ch["Recommended Item ID"]).value
+            if trigger_raw in (None, "") and rec_raw in (None, ""):
+                continue
+            trigger = _int(trigger_raw, -1)
+            recommended = _int(rec_raw, -1)
+            if trigger <= 0 or recommended <= 0:
+                raise ValueError(f"Combinations row {row}: Trigger and Recommended Item IDs must be positive numbers.")
+            if trigger == recommended:
+                raise ValueError(f"Combinations row {row}: an item cannot recommend itself.")
+            if trigger not in seen_ids:
+                raise ValueError(f"Combinations row {row}: Trigger Item ID {trigger} is not in Menu Import.")
+            if recommended not in seen_ids:
+                raise ValueError(f"Combinations row {row}: Recommended Item ID {recommended} is not in Menu Import.")
+            combinations.append({
+                "trigger_item_id": trigger,
+                "recommended_item_id": recommended,
+                "priority": max(1, _int(cw.cell(row, ch["Priority"]).value, 1)),
+                "active": _yes(cw.cell(row, ch["Active"]).value, True),
+                "reciprocal": _yes(cw.cell(row, ch["Reciprocal"]).value, False),
+                "popup_title": _text(cw.cell(row, ch.get("Popup Title", 0)).value) if ch.get("Popup Title") else "",
+                "notes": _text(cw.cell(row, ch.get("Notes", 0)).value) if ch.get("Notes") else "",
+            })
 
     return {
         "items": items,
         "side_filters": side_filters,
+        "category_setup": category_setup,
+        "section_setup": section_setup,
         "combinations": combinations,
         "region_columns": [name for name, _ in region_columns],
     }

@@ -139,11 +139,20 @@ def ensure_schema_compatibility() -> None:
             "image_content_type": "VARCHAR(100)",
             "import_item_id": "INTEGER",
             "image_reference": "VARCHAR(500) DEFAULT ''",
+            "display_price": "NUMERIC(10,2)",
+            "section_heading_color": "VARCHAR(20) DEFAULT '#94A3B8'",
         }
         for name, ddl in additions.items():
             if name not in columns:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE menu_items ADD COLUMN {name} {ddl}"))
+
+
+    if "subcategories" in tables:
+        columns = {c["name"] for c in inspector.get_columns("subcategories")}
+        if "heading_color" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE subcategories ADD COLUMN heading_color VARCHAR(20) DEFAULT '#94A3B8'"))
 
     if "business_settings" in tables:
         columns = {c["name"] for c in inspector.get_columns("business_settings")}
@@ -571,7 +580,7 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
             .load_only(
                 MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description,
                 MenuItem.dietary, MenuItem.active, MenuItem.sort_order, MenuItem.image_content_type,
-                MenuItem.import_item_id
+                MenuItem.import_item_id, MenuItem.image_reference, MenuItem.display_price, MenuItem.section_heading_color
             )
         )
         .order_by(Menu.sort_order, Menu.name)
@@ -597,6 +606,13 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
                 items = []
                 for item in sorted([item for item in sub.items if item.active], key=lambda x: (x.sort_order, x.name)):
                     public_id = canonical.get(int(item.import_item_id), item.id) if item.import_item_id is not None else item.id
+                    image_ref = (item.image_reference or "").strip()
+                    if item.image_content_type:
+                        image_url = f"/menu-item-image/{public_id}"
+                    elif image_ref.startswith(("https://", "http://", "/")):
+                        image_url = image_ref
+                    else:
+                        image_url = ""
                     items.append({
                         "id": public_id,
                         "source_id": item.id,
@@ -605,9 +621,14 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
                         "description": item.description or "",
                         "dietary": item.dietary,
                         "sort_order": item.sort_order,
-                        "image_url": f"/menu-item-image/{public_id}" if item.image_content_type else "",
+                        "price": float(item.display_price) if item.display_price is not None else None,
+                        "heading_color": item.section_heading_color or "#94A3B8",
+                        "image_url": image_url,
                     })
-                subs.append({"id": sub.id, "name": sub.name, "items": items, "sort_order": sub.sort_order})
+                subs.append({
+                    "id": sub.id, "name": sub.name, "items": items, "sort_order": sub.sort_order,
+                    "heading_color": sub.heading_color or "#94A3B8"
+                })
             categories.append({"id": c.id, "name": c.name, "subcategories": subs, "sort_order": c.sort_order})
         menu_data.append({"id": m.id, "name": m.name, "slug": m.slug, "categories": categories, "sort_order": m.sort_order})
     return render(request, db, "customer/menu.html", menu_data=menu_data, menus=menus)
@@ -625,7 +646,7 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
         select(MenuItem)
         .where(MenuItem.id.in_(item_ids))
         .options(
-            load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.dietary, MenuItem.image_content_type),
+            load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.dietary, MenuItem.image_content_type, MenuItem.image_reference, MenuItem.display_price, MenuItem.section_heading_color),
             selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu),
         )
     ).all()
@@ -637,10 +658,14 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
             continue
         s = i.subcategory; c = s.category; m = c.menu
         diet_group = "Veg Cuisine" if i.dietary == "veg" else ("Non Veg Cuisine" if i.dietary == "nonveg" else "Shared Menu")
+        image_ref = (i.image_reference or "").strip()
+        image_url = f"/menu-item-image/{i.id}" if i.image_content_type else (image_ref if image_ref.startswith(("https://", "http://", "/")) else "")
         result.append({
             "id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary,
             "menu": diet_group, "category": c.name, "subcategory": s.name,
-            "image_url": f"/menu-item-image/{i.id}" if i.image_content_type else ""
+            "price": float(i.display_price) if i.display_price is not None else None,
+            "heading_color": i.section_heading_color or "#94A3B8",
+            "image_url": image_url
         })
     return result
 
@@ -1249,8 +1274,7 @@ async def read_menu_image(image: UploadFile | None) -> tuple[bytes | None, str |
 def admin_menus(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    menus = db.scalars(select(Menu).options(selectinload(Menu.categories)).order_by(Menu.sort_order, Menu.name)).all()
-    return render(request, db, "admin/menus.html", admin=admin, menus=menus)
+    return RedirectResponse("/admin/menu-import", status_code=303)
 
 
 @app.post("/admin/menus")
@@ -1279,12 +1303,7 @@ def admin_menu_create(
 def admin_menu_detail(menu_id: int, request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    menu = db.scalar(
-        select(Menu).where(Menu.id == menu_id)
-        .options(selectinload(Menu.categories).selectinload(Category.subcategories).selectinload(Subcategory.items))
-    )
-    if not menu: raise HTTPException(status_code=404)
-    return render(request, db, "admin/menu_detail.html", admin=admin, menu=menu)
+    return RedirectResponse("/admin/menu-import", status_code=303)
 
 
 @app.post("/admin/menus/{menu_id}/edit")
@@ -1461,33 +1480,65 @@ def _get_or_create_subcategory(db: Session, category_id: int, name: str, sort_or
 
 
 def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
-    """Merge spreadsheet menu data into the editable admin menu structure."""
+    """Synchronise the public menu from Excel. Excel is the menu source of truth."""
     region_sort = {x["name"]: int(x.get("sort_order") or 0) for x in parsed.get("side_filters", [])}
     for index, region in enumerate(parsed.get("region_columns", []), 1):
         region_sort.setdefault(region, index)
     menus_by_name = {name: _get_or_create_menu(db, name, order) for name, order in region_sort.items()}
+    active_menu_ids = {m.id for m in menus_by_name.values()}
+
+    # Any regional menu no longer present in Excel is hidden from the customer site.
+    for menu in db.scalars(select(Menu)).all():
+        menu.active = menu.id in active_menu_ids
 
     created = updated = deactivated = 0
     category_orders: dict[tuple[int, str], int] = {}
     section_orders: dict[tuple[int, str, str], int] = {}
-    for row_index, item_data in enumerate(parsed.get("items", []), 1):
+    category_setup = parsed.get("category_setup", {}) or {}
+    section_setup = parsed.get("section_setup", {}) or {}
+    workbook_item_ids = {int(x["item_id"]) for x in parsed.get("items", [])}
+    touched_category_ids: set[int] = set()
+    touched_subcategory_ids: set[int] = set()
+
+    for item_data in parsed.get("items", []):
         target_menu_ids: set[int] = set()
         category_name = item_data["category"]
         section_name = item_data["section"]
+        cat_rule = category_setup.get(category_name.casefold(), {})
+        section_rule = section_setup.get((
+            item_data.get("main_category", "").casefold(),
+            category_name.casefold(),
+            section_name.casefold(),
+        ), {})
+        default_heading = "#EF4444" if item_data["dietary"] == "nonveg" else "#22C55E" if item_data["dietary"] == "veg" else "#2DD4BF"
+        heading_color = section_rule.get("heading_color") or default_heading
+        section_active = bool(section_rule.get("active", True))
+
         for region in item_data["regions"]:
             menu = menus_by_name.get(region)
             if not menu:
                 menu = _get_or_create_menu(db, region, len(menus_by_name) + 1)
                 menus_by_name[region] = menu
+                active_menu_ids.add(menu.id)
             target_menu_ids.add(menu.id)
+
             cat_key = (menu.id, category_name.casefold())
             if cat_key not in category_orders:
-                category_orders[cat_key] = len([k for k in category_orders if k[0] == menu.id]) + 1
+                fallback = len([k for k in category_orders if k[0] == menu.id]) + 1
+                category_orders[cat_key] = int(cat_rule.get("sort_order") or fallback)
             cat = _get_or_create_category(db, menu.id, category_name, category_orders[cat_key])
+            cat.active = True
+            touched_category_ids.add(cat.id)
+
             sub_key = (cat.id, category_name.casefold(), section_name.casefold())
             if sub_key not in section_orders:
-                section_orders[sub_key] = len([k for k in section_orders if k[0] == cat.id]) + 1
+                fallback = len([k for k in section_orders if k[0] == cat.id]) + 1
+                section_orders[sub_key] = int(section_rule.get("sort_order") or fallback)
             sub = _get_or_create_subcategory(db, cat.id, section_name, section_orders[sub_key])
+            sub.active = True
+            sub.heading_color = heading_color
+            touched_subcategory_ids.add(sub.id)
+
             existing = db.scalar(
                 select(MenuItem)
                 .join(Subcategory, MenuItem.subcategory_id == Subcategory.id)
@@ -1502,14 +1553,25 @@ def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
                 created += 1
                 item = MenuItem(subcategory_id=sub.id, import_item_id=item_data["item_id"])
                 db.add(item)
+
             item.name = item_data["name"]
             item.description = item_data["notes"]
             item.dietary = item_data["dietary"]
-            item.active = bool(item_data["active"])
+            item.active = bool(item_data["active"]) and section_active
             item.sort_order = int(item_data["sort_order"] or 0)
+            item.display_price = item_data.get("display_price")
+            item.section_heading_color = heading_color
             item.image_reference = item_data.get("image_reference", "")
+            image_bytes = item_data.get("image_bytes")
+            if image_bytes:
+                item.image_blob = image_bytes
+                item.image_content_type = item_data.get("image_content_type") or "image/png"
+            else:
+                # Excel is authoritative: a URL uses the reference directly; a blank cell removes the old image.
+                item.image_blob = None
+                item.image_content_type = None
 
-        # If the Excel region membership changed, hide importer-managed copies from regions no longer selected.
+        # If Excel region membership changed, hide copies from regions no longer selected.
         old_copies = db.scalars(
             select(MenuItem)
             .join(Subcategory, MenuItem.subcategory_id == Subcategory.id)
@@ -1522,7 +1584,20 @@ def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
                 copy.active = False
                 deactivated += 1
 
-    # The Excel Combinations sheet is the source of truth whenever it is present.
+    # Removing an Item ID from the workbook removes it from the public menu on the next import.
+    for old_item in db.scalars(select(MenuItem).where(MenuItem.import_item_id.is_not(None))).all():
+        if int(old_item.import_item_id) not in workbook_item_ids and old_item.active:
+            old_item.active = False
+            deactivated += 1
+
+    # Categories/sections removed from the workbook are hidden too.
+    for cat in db.scalars(select(Category).where(Category.menu_id.in_(active_menu_ids))).all():
+        cat.active = cat.id in touched_category_ids
+    if touched_category_ids:
+        for sub in db.scalars(select(Subcategory).where(Subcategory.category_id.in_(touched_category_ids))).all():
+            sub.active = sub.id in touched_subcategory_ids
+
+    # Combinations are also Excel-managed whenever the sheet exists.
     combo_rows = parsed.get("combinations")
     if combo_rows is not None:
         for old in db.scalars(select(MenuCombination)).all():
@@ -1547,7 +1622,6 @@ def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
         "combinations": len(combo_rows or []),
         "regions": len(menus_by_name),
     }
-
 
 def canonical_import_items(db: Session) -> list[MenuItem]:
     items = db.scalars(
@@ -1604,10 +1678,7 @@ async def admin_menu_import_apply(
 def admin_menu_combinations(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    items = canonical_import_items(db)
-    item_names = {int(i.import_item_id): i.name for i in items if i.import_item_id is not None}
-    combinations = db.scalars(select(MenuCombination).order_by(MenuCombination.trigger_import_item_id, MenuCombination.priority, MenuCombination.id)).all()
-    return render(request, db, "admin/combinations.html", admin=admin, items=items, item_names=item_names, combinations=combinations)
+    return RedirectResponse("/admin/menu-import", status_code=303)
 
 
 @app.post("/admin/menu-combinations")
@@ -1713,12 +1784,15 @@ def api_menu_combinations(item_id: int, db: Session = Depends(get_db)):
         seen.add(target_import_id)
         if rule.popup_title and title == "Goes Well With This":
             title = rule.popup_title
+        image_ref = (target.image_reference or "").strip()
+        image_url = f"/menu-item-image/{target.id}" if target.image_content_type else (image_ref if image_ref.startswith(("https://", "http://", "/")) else "")
         recommendations.append({
             "id": target.id,
             "name": target.name,
             "description": target.description or "",
             "dietary": target.dietary,
-            "image_url": f"/menu-item-image/{target.id}" if target.image_content_type else "",
+            "price": float(target.display_price) if target.display_price is not None else None,
+            "image_url": image_url,
         })
     return {"title": title, "items": recommendations}
 

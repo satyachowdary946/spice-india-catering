@@ -73,6 +73,7 @@ class Subcategory(Base):
     name: Mapped[str] = mapped_column(String(120))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    heading_color: Mapped[str] = mapped_column(String(20), default="#94A3B8")
     category: Mapped[Category] = relationship(back_populates="subcategories")
     items: Mapped[list[MenuItem]] = relationship(back_populates="subcategory", cascade="all, delete-orphan", order_by="MenuItem.sort_order")
 
@@ -90,6 +91,8 @@ class MenuItem(Base):
     image_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     import_item_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     image_reference: Mapped[str] = mapped_column(String(500), default="")
+    display_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    section_heading_color: Mapped[str] = mapped_column(String(20), default="#94A3B8")
     subcategory: Mapped[Subcategory] = relationship(back_populates="items")
 
 

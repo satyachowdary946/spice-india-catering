@@ -15,6 +15,8 @@ window.DraftStore=DraftStore;
 
 function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function formatCount(n){return `${n} item${n===1?'':'s'} selected`;}
+function safeHeadingColor(v){const s=String(v||'').trim();return /^#[0-9a-f]{6}$/i.test(s)?s:'#94A3B8';}
+function formatMenuPrice(v){const n=Number(v);return Number.isFinite(n)?`€${n.toFixed(2)}`:'';}
 function dayFromDate(value){if(!value)return '';const d=new Date(value+'T12:00:00');return Number.isFinite(d.getTime())?d.toLocaleDateString('en-IE',{weekday:'long'}):'';}
 
 function initDetailsForm(){
@@ -66,6 +68,7 @@ function initMenu(){
   let selectedDiet='veg';
   let activeCategory=null;
   let searchTerm='';
+  let categoryObserver=null;
   const itemMap=new Map();
   data.forEach(m=>m.categories.forEach(c=>c.subcategories.forEach(sub=>sub.items.forEach(i=>{if(!itemMap.has(i.id))itemMap.set(i.id,{...i,menu:m.name,category:c.name,subcategory:sub.name});}))));
   window.__menuItemMap=itemMap;
@@ -92,13 +95,13 @@ function initMenu(){
       if(!cat){cat={id:`cat-${categories.size}`,name:category.name,subs:new Map()};categories.set(category.name,cat);}
       category.subcategories.forEach(sub=>{
         let targetSub=cat.subs.get(sub.name);
-        if(!targetSub){targetSub={id:sub.id,name:sub.name,items:new Map(),sort_order:sub.sort_order};cat.subs.set(sub.name,targetSub);}
+        if(!targetSub){targetSub={id:sub.id,name:sub.name,items:new Map(),sort_order:sub.sort_order,heading_color:sub.heading_color||'#94A3B8'};cat.subs.set(sub.name,targetSub);}
         sub.items.forEach(item=>{
           const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
           const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name).toLowerCase();
           const matchesSearch=!searchTerm||haystack.includes(searchTerm);
           if(!matchesDiet||!matchesSearch)return;
-          if(!targetSub.items.has(item.id))targetSub.items.set(item.id,{...item,menu:menu.name});
+          if(!targetSub.items.has(item.id)){targetSub.items.set(item.id,{...item,menu:menu.name});if(item.heading_color)targetSub.heading_color=item.heading_color;}
         });
       });
     }));
@@ -119,7 +122,7 @@ function initMenu(){
       comboTitle.textContent=body.title||'Goes Well With This';
       comboList.innerHTML=items.map(item=>{
         const label=item.dietary==='veg'?'Veg':item.dietary==='nonveg'?'Non Veg':'Both';
-        return `<article class="combo-suggestion-card ${escapeHtml(item.dietary)}">${item.image_url?`<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.name)}" loading="lazy">`:''}<div class="combo-suggestion-copy"><strong>${escapeHtml(item.name)}</strong>${item.description?`<span>${escapeHtml(item.description)}</span>`:''}<span class="diet-dot ${escapeHtml(item.dietary)}">${label}</span></div><button type="button" class="btn small combo-add" data-combo-add="${item.id}">Add</button></article>`;
+        return `<article class="combo-suggestion-card ${escapeHtml(item.dietary)}">${item.image_url?`<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.name)}" loading="lazy">`:''}<div class="combo-suggestion-copy"><strong>${escapeHtml(item.name)}</strong>${item.description?`<span>${escapeHtml(item.description)}</span>`:''}${item.price!=null?`<span class="combo-price">${formatMenuPrice(item.price)}</span>`:''}<span class="diet-dot ${escapeHtml(item.dietary)}">${label}</span></div><button type="button" class="btn small combo-add" data-combo-add="${item.id}">Add</button></article>`;
       }).join('');
       comboList.querySelectorAll('[data-combo-add]').forEach(btn=>btn.addEventListener('click',()=>{
         const id=Number(btn.dataset.comboAdd);const state=DraftStore.load();
@@ -135,16 +138,18 @@ function initMenu(){
     dietBtns.forEach(b=>b.classList.toggle('active',b.dataset.dietChoice===selectedDiet));
     const cats=buildCategories();
     if(!activeCategory||!cats.some(c=>c.id===activeCategory))activeCategory=cats[0]?.id||null;
-    categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}">${escapeHtml(c.name)}</button>`).join('');
-    categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{activeCategory=btn.dataset.cat;categoryTabs.querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.cat===activeCategory));document.getElementById(activeCategory)?.scrollIntoView({behavior:'smooth',block:'start'});}));
+    categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}">${escapeHtml(c.name)}</button>`).join('');
+    categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{activeCategory=btn.dataset.cat;categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));});document.getElementById(activeCategory)?.scrollIntoView({behavior:'smooth',block:'start'});}));
     const draft=DraftStore.load();
-    content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,sub)=>n+sub.items.length,0)} choices</span></div>${c.subs.map(sub=>`<div class="menu-subsection"><div class="subcategory-title">${escapeHtml(sub.name)}</div><div class="menu-list">${sub.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
+    content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,sub)=>n+sub.items.length,0)} choices</span></div>${c.subs.map(sub=>`<div class="menu-subsection"><div class="subcategory-title" style="--heading-color:${safeHeadingColor(sub.heading_color)}">${escapeHtml(sub.name)}</div><div class="menu-list">${sub.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
+    if(categoryObserver)categoryObserver.disconnect();
+    if('IntersectionObserver' in window){categoryObserver=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(!visible)return;activeCategory=visible.target.id;categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));if(on)x.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});});},{rootMargin:'-145px 0px -62% 0px',threshold:[0,.01]});content.querySelectorAll('.menu-section').forEach(section=>categoryObserver.observe(section));}
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
       const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
     }));
     updateBasketBar();
   }
-  function itemCard(i,selected){const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} dietary-card-${escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
+  function itemCard(i,selected){const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} dietary-card-${escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice;activeCategory=null;render();if(b.closest('[data-menu-filter-dialog]'))filterDialog?.close();}));
   const searchInput=document.querySelector('[data-menu-search]');
@@ -174,7 +179,7 @@ function initReview(){
 async function renderReviewItems(ids,box,submit,requestedCount=0){
   if(!ids.length){box.innerHTML='<div class="empty">No standard menu items selected. <a href="/menu"><strong>Choose Menu Items</strong></a></div>';if(submit)submit.disabled=requestedCount===0;return;}
   try{const res=await fetch('/api/menu-items?ids='+encodeURIComponent(ids.join(','))),items=await res.json(),groups={};items.forEach(i=>{(((groups[i.menu]??={})[i.category]??={})[i.subcategory]??=[]).push(i)});
-    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;return `<div class="review-category review-category-highlight">${escapeHtml(c)}</div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item ${escapeHtml(i.dietary)}"><span>${escapeHtml(i.name)}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
+    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;return `<div class="review-category review-category-highlight">${escapeHtml(c)}</div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item ${escapeHtml(i.dietary)}"><span>${escapeHtml(i.name)}${i.price!=null?` <strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
     box.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>DraftStore.removeItem(Number(b.dataset.remove))));if(submit)submit.disabled=false;
   }catch{box.innerHTML='<div class="notice error">Could not load your selected items. Return to the menu and try again.</div>';if(submit)submit.disabled=true;}
 }

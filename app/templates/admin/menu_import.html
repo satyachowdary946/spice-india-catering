@@ -1,45 +1,53 @@
 {% extends "admin/admin_base.html" %}
-{% block title %}Excel Menu Import · Catering Admin{% endblock %}
+{% block title %}Menus · Excel Import · Catering Admin{% endblock %}
 {% block body %}
 <div class="admin-title">
   <div>
-    <div class="eyebrow">Bulk Menu Management</div>
-    <h1>Excel Menu Import</h1>
-    <p class="muted">Upload the approved Spice India catering workbook. Existing imported dishes are updated by Item ID; new Item IDs are added.</p>
+    <div class="eyebrow">Excel-Only Menu Management</div>
+    <h1>Import Website Menu</h1>
+    <p class="muted">Excel is now the only source of truth for the customer menu. Edit the workbook, upload it here, and the website synchronises to match it.</p>
   </div>
-  <a class="btn secondary" href="/admin/menus">Back to Menus</a>
 </div>
 
 {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
 {% if result %}
 <div class="notice success">
-  Import complete: {{ result.items }} source items processed, {{ result.created }} menu records created, {{ result.updated }} updated, {{ result.deactivated }} old regional copies hidden, {{ result.combinations }} combination rules loaded.
+  Menu updated: {{ result.items }} Excel items processed, {{ result.created }} website records created, {{ result.updated }} updated, {{ result.deactivated }} removed/old records hidden, and {{ result.combinations }} combination rules loaded.
 </div>
 {% endif %}
 
-<section class="card import-workflow-card">
-  <h2>Import Workbook</h2>
-  <p class="muted">The workbook must contain <strong>Menu Import</strong>. If it also contains <strong>Combinations</strong>, those recommendation rules are imported at the same time.</p><p><a class="btn secondary small" href="/static/templates/Spice_India_Catering_Menu_With_Combinations.xlsx" download>Download Current Excel Template</a></p>
+<section class="card import-workflow-card excel-only-menu-card">
+  <div class="eyebrow">1 · Edit The Master Workbook</div>
+  <h2>Download Current Excel Menu</h2>
+  <p class="muted">Control item names, categories, section headings, heading colours, display order, optional prices, images, active/inactive items and combination recommendations from this workbook.</p>
+  <p><a class="btn secondary" href="/static/templates/Spice_India_Catering_Menu_Excel_Source.xlsx" download>Download Master Menu Excel</a></p>
+
+  <div class="excel-source-grid">
+    <div><strong>Menu Import</strong><span>Dishes, price, image, category, order and active status.</span></div>
+    <div><strong>Section Setup</strong><span>Headings such as Vegetarian Starters / Naans, their order, colour and visibility.</span></div>
+    <div><strong>Category Setup</strong><span>Veg / Non Veg structure, regional filters and the pinned top category tabs.</span></div>
+    <div><strong>Combinations</strong><span>Controls every “Goes well with this” recommendation.</span></div>
+  </div>
+</section>
+
+<section class="card import-workflow-card" style="margin-top:16px">
+  <div class="eyebrow">2 · Replace / Update Website Menu</div>
+  <h2>Upload Updated Excel</h2>
+  <p class="muted">The import uses stable Item IDs. Existing IDs are updated, new IDs are added, and imported Item IDs removed from Excel are hidden from the website.</p>
   <form method="post" action="/admin/menu-import" enctype="multipart/form-data" class="compact">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field">
-      <label for="menu-workbook">Excel File (.xlsx)</label>
+      <label for="menu-workbook">Master Menu Excel (.xlsx)</label>
       <input id="menu-workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
-      <span class="help">Maximum 8 MB. Images are not embedded from the workbook; upload dish photos from the normal Menu Builder after import.</span>
+      <span class="help">Maximum 8 MB. For images, paste/insert the picture in the Item Image cell or use a full HTTPS image URL.</span>
     </div>
-    <button class="btn" type="submit">Import / Update Menu</button>
+    <button class="btn" type="submit">Import / Replace Website Menu</button>
   </form>
 </section>
 
-<section class="card">
-  <h2>How Importing Works</h2>
-  <div class="import-rules-grid">
-    <div><strong>Item ID</strong><span>Stable key used to update the same dish next time.</span></div>
-    <div><strong>Veg / Non Veg / Both</strong><span>Controls the main customer cuisine selector.</span></div>
-    <div><strong>South / North</strong><span>Controls optional regional filters.</span></div>
-    <div><strong>Sub Category</strong><span>Creates customer sections such as Starter, Main Course and Biriyani's.</span></div>
-    <div><strong>Menu Section</strong><span>Creates the smaller section inside each category.</span></div>
-    <div><strong>Combinations</strong><span>Creates "Goes well with this" suggestions after a customer adds a dish.</span></div>
-  </div>
+<section class="card" style="margin-top:16px">
+  <div class="eyebrow">Important</div>
+  <h2>No Manual Menu Editing In Admin</h2>
+  <p class="muted">To prevent the website and spreadsheet getting out of sync, menu items are no longer edited individually in Admin. Make the change in Excel and import the workbook again.</p>
 </section>
 {% endblock %}

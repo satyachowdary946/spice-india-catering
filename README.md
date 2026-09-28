@@ -168,3 +168,17 @@ The test-order reset can only be used once. After the reset succeeds, the whole 
 
 ### Add more dishes
 Before an order is confirmed, the customer can open **Add More Dishes** from the order page. Changing the menu invalidates the existing quote, returns the order to New, and requires the catering team to issue a revised quote.
+
+## Build 11 — Excel-only menu source
+
+The public catering menu is now managed only through **Admin → Menus → Import Website Menu**.
+
+- `Menu Import` controls item ID, cuisine/dietary type, regional membership, pinned category, section, item name, image, optional display price, order, active status and notes.
+- `Section Setup` controls inner menu headings such as Vegetarian Starters / Naans: display order, heading colour and active status.
+- `Category Setup` controls regional filters and the pinned top category structure.
+- `Combinations` controls all add-on / “goes well with this” suggestions.
+- Re-importing synchronises imported menu data. Imported Item IDs removed from the workbook are hidden from the public menu.
+- `Item Image` accepts a full HTTP(S) image URL or an image pasted/inserted and anchored in that Excel cell.
+- Customer category tabs remain pinned below the mobile header while scrolling through dishes.
+
+The current workbook is available inside the app at `/static/templates/Spice_India_Catering_Menu_Excel_Source.xlsx`.

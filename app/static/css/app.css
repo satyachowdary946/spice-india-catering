@@ -1435,3 +1435,29 @@ html,body{max-width:100%;overflow-x:hidden}
   .home-page .brand-logo{width:116px;height:52px}.home-page .nav a{font-size:.86rem}.home-page .branch-label{display:none}
   .form-card .admin-title h1{font-size:2rem!important;line-height:1.05}.form-card .lead{font-size:.98rem}
 }
+
+/* Build 11 — Excel-only menu + pinned category navigation */
+.customer-menu-toolbar{position:relative!important;top:auto!important;z-index:10!important}
+.category-sticky-bar{position:sticky;top:66px;z-index:24;background:rgba(31,39,39,.97);border-top:1px solid rgba(255,255,255,.05);border-bottom:1px solid #46514f;backdrop-filter:blur(14px);box-shadow:0 8px 18px rgba(0,0,0,.16)}
+.category-sticky-bar .container{padding-top:8px;padding-bottom:8px}
+.category-sticky-bar .category-tabs{margin:0;display:flex;flex-wrap:nowrap;overflow-x:auto;gap:7px;padding:1px 1px 5px;scrollbar-width:none;scroll-snap-type:x proximity}
+.category-sticky-bar .category-tabs::-webkit-scrollbar{display:none}
+.category-sticky-bar .category-tabs button{flex:0 0 auto;white-space:nowrap;scroll-snap-align:start;min-height:42px;padding:9px 14px;font-size:.82rem}
+.menu-section{scroll-margin-top:132px}
+.menu-section-title{position:static!important;top:auto!important;background:transparent!important;backdrop-filter:none!important}
+.subcategory-title{--heading-color:#94A3B8;color:var(--heading-color)!important;font-weight:900;letter-spacing:.04em;border-left:4px solid var(--heading-color);padding:7px 10px;margin:12px 0 9px;background:color-mix(in srgb,var(--heading-color) 8%,transparent);border-radius:0 9px 9px 0}
+.menu-item-price{margin-top:4px;font-weight:900;font-size:.95rem;color:#eef8f5}
+.combo-price{font-weight:900;color:#ecfdf8}
+.excel-source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px}
+.excel-source-grid>div{display:flex;flex-direction:column;gap:5px;padding:13px;border:1px solid #44514f;border-radius:14px;background:#101817}
+.excel-source-grid span{color:#b8c4c0;font-size:.88rem;line-height:1.4}
+.excel-only-menu-card .btn{margin-top:4px}
+@media(max-width:700px){
+  .category-sticky-bar{top:68px}
+  .category-sticky-bar .container{width:min(100% - 12px,var(--max));padding-top:7px;padding-bottom:6px}
+  .category-sticky-bar .category-tabs button{min-height:40px;padding:8px 12px;font-size:.78rem}
+  .menu-section{scroll-margin-top:124px}
+  .subcategory-title{font-size:.92rem;margin:10px 0 8px;padding:7px 9px}
+  .excel-source-grid{grid-template-columns:1fr}
+}
+.review-item-price{margin-left:7px;color:#9ff3e6;font-size:.9em;white-space:nowrap}

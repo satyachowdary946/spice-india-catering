@@ -26,10 +26,7 @@ def quote_payload(phone="0891234567", event_name="Test Event", days=10):
             "phone": phone,
             "whatsapp": phone,
             "email": "customer@example.com",
-            "event_date": str(
-    datetime.now(ZoneInfo("Europe/Dublin")).date()
-    + timedelta(days=days)
-),
+            "event_date": str(datetime.now(ZoneInfo("Europe/Dublin")).date() + timedelta(days=days)),
             "event_day": "ignored-server-side",
             "event_name": event_name,
             "event_time": "18:30",
@@ -159,10 +156,14 @@ def test_build8_mobile_workflow():
         assert kitchen_pdf.status_code == 200
         assert kitchen_pdf.content.startswith(b"%PDF")
 
-        # Admin-managed regional filter page is explicit.
-        menus = client.get("/admin/menus")
-        assert "Regional Menu Filters" in menus.text
-        assert "Add Regional Filter" in menus.text
+        # Menu administration is Excel-only.
+        menus = client.get("/admin/menus", follow_redirects=False)
+        assert menus.status_code == 303
+        assert menus.headers["location"] == "/admin/menu-import"
+        menu_import = client.get("/admin/menu-import")
+        assert menu_import.status_code == 200
+        assert "Excel-Only Menu Management" in menu_import.text
+        assert "No Manual Menu Editing In Admin" in menu_import.text
 
         settings = client.get("/admin/settings")
         assert "Web Order Charge" not in settings.text
@@ -215,15 +216,23 @@ def test_excel_menu_import_and_combination_rules():
     ws.title = "Menu Import"
     ws.append(["Complete Menu"])
     ws.append([])
-    ws.append(["Item ID", "Main Category", "South Indian", "North Indian", "Sub Category", "Menu Section", "Menu Item Name", "Item Image", "Display Order", "Active", "Notes"])
-    ws.append([501, "Veg Cuisine", "Yes", "Yes", "Rice / Naans / Starter", "Indian Breads", "Test Appam", "", 1, "Yes", ""])
-    ws.append([502, "Non Veg Cuisine", "Yes", "Yes", "Main Course", "Non-Vegetarian Main Course", "Test Curry", "", 1, "Yes", ""])
+    ws.append(["Item ID", "Main Category", "South Indian", "North Indian", "Sub Category", "Menu Section", "Menu Item Name", "Item Image", "Display Price (€)", "Display Order", "Active", "Notes"])
+    ws.append([501, "Veg Cuisine", "Yes", "Yes", "Rice / Naans / Starter", "Indian Breads", "Test Appam", "https://example.com/appam.jpg", 4.50, 1, "Yes", ""])
+    ws.append([502, "Non Veg Cuisine", "Yes", "Yes", "Main Course", "Non-Vegetarian Main Course", "Test Curry", "", 9.95, 1, "Yes", ""])
     setup = wb.create_sheet("Category Setup")
     setup.append(["Website Category Structure"])
     setup.append([])
     setup.append(["Type", "Name", "Display Order", "Image / Icon"])
     setup.append(["Side Filter", "South Indian", 1, ""])
     setup.append(["Side Filter", "North Indian", 2, ""])
+    setup.append(["Sub Category", "Rice / Naans / Starter", 1, ""])
+    setup.append(["Sub Category", "Main Course", 2, ""])
+    sections = wb.create_sheet("Section Setup")
+    sections.append(["Menu Section Headings"])
+    sections.append([])
+    sections.append(["Main Category", "Sub Category", "Menu Section", "Display Order", "Heading Colour", "Active"])
+    sections.append(["Veg Cuisine", "Rice / Naans / Starter", "Indian Breads", 1, "Green", "Yes"])
+    sections.append(["Non Veg Cuisine", "Main Course", "Non-Vegetarian Main Course", 1, "Red", "Yes"])
     combos = wb.create_sheet("Combinations")
     combos.append(["Combination Rules"])
     combos.append([])
@@ -240,10 +249,19 @@ def test_excel_menu_import_and_combination_rules():
         appam = db.scalar(select(MenuItem).where(MenuItem.import_item_id == 501).order_by(MenuItem.id))
         curry = db.scalar(select(MenuItem).where(MenuItem.import_item_id == 502).order_by(MenuItem.id))
         assert appam and curry
+        assert float(appam.display_price) == 4.50
+        assert appam.image_reference == "https://example.com/appam.jpg"
+        assert appam.section_heading_color == "#22C55E"
+        assert curry.section_heading_color == "#EF4444"
         assert db.scalar(select(MenuCombination).where(MenuCombination.trigger_import_item_id == 501))
         appam_id, curry_id = appam.id, curry.id
 
     with TestClient(app) as client:
+        menu_page = client.get("/menu")
+        assert menu_page.status_code == 200
+        assert "category-sticky-bar" in menu_page.text
+        assert "https://example.com/appam.jpg" in menu_page.text
+        assert '"price": 4.5' in menu_page.text or '"price":4.5' in menu_page.text
         response = client.get("/api/menu-combinations", params={"item_id": appam_id})
         assert response.status_code == 200
         assert response.json()["items"][0]["name"] == "Test Curry"
