@@ -63,21 +63,48 @@ function initMenu(){
   const categoryTabs=document.querySelector('[data-category-tabs]'), content=document.querySelector('[data-menu-content]');
   const filterDialog=document.querySelector('[data-menu-filter-dialog]'), requestDialog=document.querySelector('[data-request-dialog]');
   const categoryDialog=document.querySelector('[data-category-dialog]'), currentCategoryLabel=document.querySelector('[data-current-category]');
-  const requestInput=document.querySelector('[data-request-input]'), requestCount=document.querySelector('[data-request-count]');
+  const requestRows=document.querySelector('[data-request-rows]'), requestCount=document.querySelector('[data-request-count]');
   const comboDialog=document.querySelector('[data-combo-dialog]'), comboList=document.querySelector('[data-combo-list]'), comboTitle=document.querySelector('[data-combo-title]');
   let selectedMenu=null;
   let selectedDiet='veg';
   let activeCategory=null;
   let searchTerm='';
-  let categoryObserver=null;
+  let searchMode=false;
+  let categoryScrollHandler=null;
+  let categoryScrollRaf=0;
+  let categoryLockUntil=0;
   const itemMap=new Map();
   data.forEach(m=>m.categories.forEach(c=>c.subcategories.forEach(sub=>sub.items.forEach(i=>{if(!itemMap.has(i.id))itemMap.set(i.id,{...i,menu:m.name,category:c.name,subcategory:sub.name});}))));
   window.__menuItemMap=itemMap;
 
   const updateRequestCount=()=>{const n=DraftStore.load().requested_dishes.length;if(requestCount)requestCount.textContent=n?`(${n})`:'';};
-  document.querySelector('[data-open-request-dialog]')?.addEventListener('click',()=>{const d=DraftStore.load();requestInput.value=d.requested_dishes.join('\n');requestDialog?.showModal();});
+  const requestRowHtml=(value='',index=0)=>`<div class="requested-dish-row" data-request-row><div class="requested-dish-number">${index+1}</div><input type="text" maxlength="180" value="${escapeHtml(value)}" placeholder="Dish name" aria-label="Requested dish ${index+1}"><button type="button" class="request-remove-dish" data-remove-request-row aria-label="Remove requested dish ${index+1}">−</button></div>`;
+  const renderRequestRows=(values)=>{
+    if(!requestRows)return;
+    const dishes=(Array.isArray(values)?values:[]).slice(0,20);
+    if(!dishes.length)dishes.push('');
+    requestRows.innerHTML=dishes.map((value,index)=>requestRowHtml(value,index)).join('');
+    requestRows.querySelectorAll('[data-remove-request-row]').forEach(btn=>btn.addEventListener('click',()=>{
+      const row=btn.closest('[data-request-row]');
+      if(!row)return;
+      const rows=[...requestRows.querySelectorAll('[data-request-row]')];
+      if(rows.length===1){const input=row.querySelector('input');if(input)input.value='';return;}
+      row.remove();
+      [...requestRows.querySelectorAll('[data-request-row]')].forEach((r,i)=>{const n=r.querySelector('.requested-dish-number');const input=r.querySelector('input');const remove=r.querySelector('button');if(n)n.textContent=String(i+1);if(input)input.setAttribute('aria-label',`Requested dish ${i+1}`);if(remove)remove.setAttribute('aria-label',`Remove requested dish ${i+1}`);});
+    }));
+  };
+  document.querySelector('[data-open-request-dialog]')?.addEventListener('click',()=>{renderRequestRows(DraftStore.load().requested_dishes);requestDialog?.showModal();window.setTimeout(()=>requestRows?.querySelector('input')?.focus(),60);});
+  document.querySelector('[data-add-request-row]')?.addEventListener('click',()=>{
+    if(!requestRows)return;
+    const rows=[...requestRows.querySelectorAll('[data-request-row]')];
+    if(rows.length>=20){alert('Please request no more than 20 dishes.');return;}
+    requestRows.insertAdjacentHTML('beforeend',requestRowHtml('',rows.length));
+    const row=requestRows.lastElementChild;
+    row?.querySelector('[data-remove-request-row]')?.addEventListener('click',()=>{row.remove();renderRequestRows([...requestRows.querySelectorAll('input')].map(x=>x.value));});
+    row?.querySelector('input')?.focus();
+  });
   document.querySelector('[data-save-requests]')?.addEventListener('click',()=>{
-    const lines=String(requestInput?.value||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean), unique=[], seen=new Set();
+    const lines=[...(requestRows?.querySelectorAll('input')||[])].map(input=>String(input.value||'').replace(/\s+/g,' ').trim()).filter(Boolean), unique=[], seen=new Set();
     for(const line of lines){const key=line.toLowerCase();if(!seen.has(key)){seen.add(key);unique.push(line.slice(0,180));}}
     if(unique.length>20){alert('Please request no more than 20 dishes.');return;}
     DraftStore.setRequestedDishes(unique);updateRequestCount();requestDialog?.close();
@@ -137,26 +164,105 @@ function initMenu(){
     }catch{}
   }
 
+  const menuRoot=document.querySelector('[data-menu-root]');
+  const toolbar=document.querySelector('.customer-menu-toolbar');
+  const searchInput=document.querySelector('[data-menu-search]');
+  const enterSearchMode=()=>{
+    if(searchMode)return;
+    searchMode=true;
+    menuRoot?.classList.add('menu-search-mode');
+    window.requestAnimationFrame(()=>{if(toolbar){const y=toolbar.getBoundingClientRect().top+window.scrollY;window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}});
+    render();
+  };
+  const exitSearchMode=()=>{
+    searchMode=false;searchTerm='';
+    if(searchInput)searchInput.value='';
+    menuRoot?.classList.remove('menu-search-mode');
+    searchInput?.blur();
+    render();
+  };
+  const buildSearchItems=()=>{
+    const results=new Map();
+    visibleMenus().forEach(menu=>menu.categories.forEach(category=>category.subcategories.forEach(sub=>sub.items.forEach(item=>{
+      const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name+' '+menu.name).toLowerCase();
+      if(searchTerm&&haystack.includes(searchTerm)&&!results.has(item.id))results.set(item.id,{...item,menu:menu.name,category:category.name,subcategory:sub.name});
+    }))));
+    return [...results.values()];
+  };
+
   function render(){
     regionBtns.forEach(b=>b.classList.toggle('active',b.dataset.menuChoice==='all'?selectedMenu===null:Number(b.dataset.menuChoice)===selectedMenu));
     dietBtns.forEach(b=>b.classList.toggle('active',b.dataset.dietChoice===selectedDiet));
     const cats=buildCategories();
+    if(searchMode){
+      const draft=DraftStore.load();
+      const results=buildSearchItems();
+      categoryTabs.innerHTML='';
+      if(currentCategoryLabel)currentCategoryLabel.textContent='Browse Menu';
+      content.innerHTML=searchTerm
+        ? `<section class="search-results-section"><div class="search-results-head"><div><div class="eyebrow">Search Results</div><h2>${results.length?`${results.length} Dish${results.length===1?'':'es'} Found`:'No Dishes Found'}</h2></div>${results.length?`<span class="muted">Tap + to add</span>`:''}</div><div class="menu-list search-result-list">${results.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div>${results.length?'':`<div class="empty search-empty"><strong>No menu dishes match “${escapeHtml(searchTerm)}”.</strong><span>Try another dish name or return to the full menu.</span></div>`}</section>`
+        : '<div class="search-start-state"><div class="search-start-icon">⌕</div><h2>Search The Menu</h2><p>Start typing a dish name such as Biriyani, Paneer, Naan or Dosa.</p></div>';
+      content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
+        const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
+      }));
+      updateBasketBar();
+      return;
+    }
     if(!activeCategory||!cats.some(c=>c.id===activeCategory))activeCategory=cats[0]?.id||null;
+
+    const syncCategoryUI=()=>{
+      categoryTabs.querySelectorAll('button').forEach(x=>{
+        const on=x.dataset.cat===activeCategory;
+        x.classList.toggle('active',on);
+        x.setAttribute('aria-pressed',String(on));
+      });
+      const current=cats.find(c=>c.id===activeCategory);
+      if(currentCategoryLabel)currentCategoryLabel.textContent=current?.name||'Browse Menu';
+    };
+
     categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}">${escapeHtml(c.name)}</button>`).join('');
-    const updateCurrentCategoryLabel=()=>{const current=cats.find(c=>c.id===activeCategory);if(currentCategoryLabel)currentCategoryLabel.textContent=current?.name||'Browse Menu';};
-    updateCurrentCategoryLabel();
+    syncCategoryUI();
+
     categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{
       activeCategory=btn.dataset.cat;
-      categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));});
-      updateCurrentCategoryLabel();
+      categoryLockUntil=Date.now()+1100;
+      syncCategoryUI();
       categoryDialog?.close();
       const target=document.getElementById(activeCategory);
-      if(target){const y=target.getBoundingClientRect().top+window.scrollY-82;window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}
+      if(target){
+        const y=target.getBoundingClientRect().top+window.scrollY-74;
+        window.scrollTo({top:Math.max(0,y),behavior:'smooth'});
+        window.setTimeout(()=>{
+          if(Date.now()>=categoryLockUntil)updateCategoryFromScroll();
+        },1150);
+      }
     }));
+
     const draft=DraftStore.load();
-    content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,sub)=>n+sub.items.length,0)} choices</span></div>${c.subs.map(sub=>`<div class="menu-subsection"><div class="subcategory-title" style="--heading-color:${safeHeadingColor(sub.heading_color)}">${escapeHtml(sub.name)}</div><div class="menu-list">${sub.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
-    if(categoryObserver)categoryObserver.disconnect();
-    if('IntersectionObserver' in window){categoryObserver=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(!visible)return;activeCategory=visible.target.id;categoryTabs.querySelectorAll('button').forEach(x=>{const on=x.dataset.cat===activeCategory;x.classList.toggle('active',on);x.setAttribute('aria-pressed',String(on));});const current=cats.find(c=>c.id===activeCategory);if(currentCategoryLabel)currentCategoryLabel.textContent=current?.name||'Browse Menu';},{rootMargin:'-86px 0px -58% 0px',threshold:[0,.01]});content.querySelectorAll('.menu-section').forEach(section=>categoryObserver.observe(section));}
+    content.innerHTML=cats.map(c=>`<section class="menu-section" id="${c.id}" data-category-section="${c.id}"><div class="menu-section-title"><h2>${escapeHtml(c.name)}</h2><span class="muted">${c.subs.reduce((n,sub)=>n+sub.items.length,0)} choices</span></div>${c.subs.map(sub=>`<div class="menu-subsection"><div class="subcategory-title" style="--heading-color:${safeHeadingColor(sub.heading_color)}">${escapeHtml(sub.name)}</div><div class="menu-list">${sub.items.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div></div>`).join('')}</section>`).join('')||'<div class="empty">No items match these filters.</div>';
+
+    const updateCategoryFromScroll=()=>{
+      if(Date.now()<categoryLockUntil)return;
+      const sections=[...content.querySelectorAll('[data-category-section]')];
+      if(!sections.length)return;
+      const anchor=window.scrollY+Math.min(180,Math.max(100,window.innerHeight*.22));
+      let current=sections[0];
+      for(const section of sections){
+        const top=section.getBoundingClientRect().top+window.scrollY;
+        if(top<=anchor)current=section;else break;
+      }
+      const id=current?.dataset.categorySection;
+      if(id&&id!==activeCategory){activeCategory=id;syncCategoryUI();}
+    };
+
+    if(categoryScrollHandler)window.removeEventListener('scroll',categoryScrollHandler);
+    categoryScrollHandler=()=>{
+      if(categoryScrollRaf)return;
+      categoryScrollRaf=requestAnimationFrame(()=>{categoryScrollRaf=0;updateCategoryFromScroll();});
+    };
+    window.addEventListener('scroll',categoryScrollHandler,{passive:true});
+    updateCategoryFromScroll();
+
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
       const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
     }));
@@ -165,8 +271,11 @@ function initMenu(){
   function itemCard(i,selected){const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} dietary-card-${escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice;activeCategory=null;render();if(b.closest('[data-menu-filter-dialog]'))filterDialog?.close();}));
-  const searchInput=document.querySelector('[data-menu-search]');
-  searchInput?.addEventListener('input',()=>{searchTerm=String(searchInput.value||'').trim().toLowerCase();activeCategory=null;render();});
+  searchInput?.addEventListener('focus',enterSearchMode);
+  searchInput?.addEventListener('input',()=>{if(!searchMode)enterSearchMode();searchTerm=String(searchInput.value||'').trim().toLowerCase();render();});
+  searchInput?.addEventListener('search',()=>{searchTerm=String(searchInput.value||'').trim().toLowerCase();searchInput.blur();render();});
+  searchInput?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();searchTerm=String(searchInput.value||'').trim().toLowerCase();searchInput.blur();render();}});
+  document.querySelector('[data-exit-search]')?.addEventListener('click',exitSearchMode);
   updateRequestCount();render();
 }
 

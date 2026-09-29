@@ -53,7 +53,8 @@ from .notifications import (
     whatsapp_confirmation_configured,
 )
 from .seed import ensure_seed_data
-from .menu_excel import parse_menu_workbook
+from .menu_excel import parse_menu_workbook, update_workbook_image_references
+from .storage import extension_for_content_type, get_bytes as storage_get_bytes, key_from_reference, put_bytes as storage_put_bytes, r2_configured
 
 BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="Catering Quote Portal", version="1.0.0")
@@ -169,6 +170,10 @@ def ensure_schema_compatibility() -> None:
             "kitchen_whatsapp_group_url": "VARCHAR(500) DEFAULT ''",
             "orders_reset_completed": "BOOLEAN DEFAULT FALSE",
             "next_order_sequence": "INTEGER DEFAULT 1",
+            "menu_workbook_blob": "BYTEA" if engine.dialect.name == "postgresql" else "BLOB",
+            "menu_workbook_filename": "VARCHAR(255) DEFAULT ''",
+            "menu_workbook_cloud_key": "VARCHAR(500) DEFAULT ''",
+            "menu_workbook_uploaded_at": "TIMESTAMP",
         }
         for name, ddl in additions.items():
             if name not in columns:
@@ -198,6 +203,129 @@ def business(db: Session) -> BusinessSettings:
         db.commit()
         db.refresh(obj)
     return obj
+
+def menu_image_url(item: MenuItem, public_id: int | None = None) -> str:
+    """Return a stable customer-facing URL for a menu image."""
+    import_id = int(item.import_item_id) if item.import_item_id is not None else None
+    reference = (item.image_reference or "").strip()
+    if item.image_blob:
+        return f"/menu-image/by-import/{import_id}" if import_id is not None else f"/menu-item-image/{public_id or item.id}"
+    if reference.startswith("r2://"):
+        return f"/menu-image/by-import/{import_id}" if import_id is not None else ""
+    if reference.startswith(("https://", "http://", "/")):
+        return reference
+    return ""
+
+
+def store_menu_image_bytes(import_item_id: int, data: bytes, content_type: str) -> tuple[str, bool]:
+    """Store an image in R2 when configured; otherwise signal database-blob fallback."""
+    if r2_configured():
+        try:
+            ext = extension_for_content_type(content_type)
+            key = f"menu/images/{int(import_item_id)}{ext}"
+            return storage_put_bytes(key, data, content_type), True
+        except Exception:
+            # Database storage remains a durable fallback and keeps ordering available if R2 is temporarily unavailable.
+            pass
+    return f"/menu-image/by-import/{int(import_item_id)}", False
+
+
+def save_master_workbook(db: Session, data: bytes, filename: str) -> BusinessSettings:
+    """Persist the current master workbook in PostgreSQL and mirror it to R2 when available."""
+    biz = business(db)
+    safe_name = Path(filename or "Spice_India_Catering_Master_Menu.xlsx").name
+    if not safe_name.lower().endswith(".xlsx"):
+        safe_name += ".xlsx"
+    biz.menu_workbook_blob = data
+    biz.menu_workbook_filename = safe_name
+    biz.menu_workbook_uploaded_at = datetime.utcnow()
+    if r2_configured():
+        try:
+            key = "menu/master/Spice_India_Catering_Master_Menu.xlsx"
+            storage_put_bytes(
+                key, data,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                cache_control="no-cache, max-age=0",
+            )
+            biz.menu_workbook_cloud_key = key
+        except Exception:
+            # The database copy is the authoritative fallback.
+            biz.menu_workbook_cloud_key = biz.menu_workbook_cloud_key or ""
+    db.flush()
+    return biz
+
+
+def prepare_parsed_menu_images(parsed: dict[str, Any]) -> None:
+    """Move embedded Excel images to durable storage and ignore machine-local file paths."""
+    for item in parsed.get("items", []):
+        import_id = int(item["item_id"])
+        image_bytes = item.get("image_bytes")
+        content_type = item.get("image_content_type") or "image/png"
+        reference = str(item.get("image_reference") or "").strip()
+        if image_bytes:
+            stored_reference, cloud = store_menu_image_bytes(import_id, image_bytes, content_type)
+            item["image_reference"] = stored_reference
+            if cloud:
+                item["image_bytes"] = None
+                item["image_content_type"] = None
+            continue
+        allowed = reference.startswith(("https://", "http://", "/", "r2://")) or reference.casefold() in {"remove", "delete", "none", "clear"}
+        if reference and not allowed:
+            # Paths such as C:\Users\... only exist on one laptop. Preserve the website image instead.
+            item["image_reference"] = ""
+
+
+def current_menu_image_references(db: Session) -> dict[int, str]:
+    refs: dict[int, str] = {}
+    for item in canonical_import_items(db):
+        if item.import_item_id is None:
+            continue
+        import_id = int(item.import_item_id)
+        reference = (item.image_reference or "").strip()
+        if item.image_blob and not reference:
+            reference = f"/menu-image/by-import/{import_id}"
+        if reference:
+            refs[import_id] = reference
+    return refs
+
+
+def menu_storage_stats(db: Session) -> dict[str, Any]:
+    items = [item for item in canonical_import_items(db) if item.active]
+    available = []
+    missing = []
+    for item in items:
+        has_image = bool(item.image_blob or (item.image_reference or "").strip())
+        target = available if has_image else missing
+        target.append(item)
+    biz = business(db)
+    return {
+        "total": len(items),
+        "available": len(available),
+        "missing": len(missing),
+        "missing_items": missing[:30],
+        "items": items,
+        "r2_configured": r2_configured(),
+        "master_filename": biz.menu_workbook_filename or "Spice_India_Catering_Master_Menu.xlsx",
+        "master_uploaded_at": biz.menu_workbook_uploaded_at,
+        "has_master": bool(biz.menu_workbook_blob or biz.menu_workbook_cloud_key),
+    }
+
+
+def load_master_workbook(db: Session) -> tuple[bytes | None, str]:
+    biz = business(db)
+    if biz.menu_workbook_blob:
+        return bytes(biz.menu_workbook_blob), (biz.menu_workbook_filename or "Spice_India_Catering_Master_Menu.xlsx")
+    if biz.menu_workbook_cloud_key and r2_configured():
+        try:
+            data, _ = storage_get_bytes(biz.menu_workbook_cloud_key)
+            return data, (biz.menu_workbook_filename or "Spice_India_Catering_Master_Menu.xlsx")
+        except Exception:
+            pass
+    template_path = BASE_DIR / "static" / "templates" / "Spice_India_Catering_Menu_Excel_Source.xlsx"
+    if template_path.exists():
+        return template_path.read_bytes(), "Spice_India_Catering_Master_Menu.xlsx"
+    return None, "Spice_India_Catering_Master_Menu.xlsx"
+
 
 def format_order_number(sequence: int) -> str:
     """Public numbering in 1,000-order series: CAT0001..CAT1000, CAT10001..CAT11000, etc."""
@@ -606,13 +734,7 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
                 items = []
                 for item in sorted([item for item in sub.items if item.active], key=lambda x: (x.sort_order, x.name)):
                     public_id = canonical.get(int(item.import_item_id), item.id) if item.import_item_id is not None else item.id
-                    image_ref = (item.image_reference or "").strip()
-                    if item.image_content_type:
-                        image_url = f"/menu-item-image/{public_id}"
-                    elif image_ref.startswith(("https://", "http://", "/")):
-                        image_url = image_ref
-                    else:
-                        image_url = ""
+                    image_url = menu_image_url(item, public_id)
                     items.append({
                         "id": public_id,
                         "source_id": item.id,
@@ -658,8 +780,7 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
             continue
         s = i.subcategory; c = s.category; m = c.menu
         diet_group = "Veg Cuisine" if i.dietary == "veg" else ("Non Veg Cuisine" if i.dietary == "nonveg" else "Shared Menu")
-        image_ref = (i.image_reference or "").strip()
-        image_url = f"/menu-item-image/{i.id}" if i.image_content_type else (image_ref if image_ref.startswith(("https://", "http://", "/")) else "")
+        image_url = menu_image_url(i, i.id)
         result.append({
             "id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary,
             "menu": diet_group, "category": c.name, "subcategory": s.name,
@@ -1246,6 +1367,37 @@ def menu_item_image(item_id: int, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/menu-image/by-import/{import_item_id}")
+def menu_image_by_import(import_item_id: int, db: Session = Depends(get_db)):
+    item = db.scalar(
+        select(MenuItem)
+        .where(MenuItem.import_item_id == import_item_id)
+        .order_by(MenuItem.active.desc(), MenuItem.id)
+    )
+    if not item:
+        raise HTTPException(status_code=404)
+    if item.image_blob:
+        return Response(
+            content=item.image_blob,
+            media_type=item.image_content_type or "image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    key = key_from_reference(item.image_reference or "")
+    if key and r2_configured():
+        try:
+            data, content_type = storage_get_bytes(key)
+            return Response(
+                content=data, media_type=content_type,
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+        except Exception:
+            raise HTTPException(status_code=404)
+    reference = (item.image_reference or "").strip()
+    if reference.startswith(("https://", "http://")):
+        return RedirectResponse(reference, status_code=302)
+    raise HTTPException(status_code=404)
+
+
 @app.get("/admin/share", response_class=HTMLResponse)
 def admin_share(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
@@ -1561,15 +1713,25 @@ def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
             item.sort_order = int(item_data["sort_order"] or 0)
             item.display_price = item_data.get("display_price")
             item.section_heading_color = heading_color
-            item.image_reference = item_data.get("image_reference", "")
+            new_reference = str(item_data.get("image_reference") or "").strip()
             image_bytes = item_data.get("image_bytes")
-            if image_bytes:
-                item.image_blob = image_bytes
-                item.image_content_type = item_data.get("image_content_type") or "image/png"
-            else:
-                # Excel is authoritative: a URL uses the reference directly; a blank cell removes the old image.
+            remove_image = new_reference.casefold() in {"remove", "delete", "none", "clear"}
+            if remove_image:
+                item.image_reference = ""
                 item.image_blob = None
                 item.image_content_type = None
+            elif image_bytes:
+                item.image_reference = new_reference or f"/menu-image/by-import/{int(item_data['item_id'])}"
+                item.image_blob = image_bytes
+                item.image_content_type = item_data.get("image_content_type") or "image/png"
+            elif new_reference:
+                # HTTPS/R2 references replace stored blobs. The stable local route preserves a database-backed image.
+                item.image_reference = new_reference
+                if not new_reference.startswith("/menu-image/by-import/"):
+                    item.image_blob = None
+                    item.image_content_type = None
+            # A blank Item Image cell deliberately preserves the current image. This makes Excel re-imports safe
+            # after images have been uploaded from Admin. Use REMOVE in the cell to delete an image explicitly.
 
         # If Excel region membership changed, hide copies from regions no longer selected.
         old_copies = db.scalars(
@@ -1628,7 +1790,7 @@ def canonical_import_items(db: Session) -> list[MenuItem]:
         select(MenuItem)
         .where(MenuItem.import_item_id.is_not(None))
         .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category))
-        .order_by(MenuItem.import_item_id, MenuItem.id)
+        .order_by(MenuItem.import_item_id, MenuItem.active.desc(), MenuItem.id)
     ).all()
     result: list[MenuItem] = []
     seen: set[int] = set()
@@ -1644,7 +1806,21 @@ def canonical_import_items(db: Session) -> list[MenuItem]:
 def admin_menu_import_page(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    return render(request, db, "admin/menu_import.html", admin=admin)
+    return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db))
+
+
+@app.get("/admin/menu-import/download")
+def admin_menu_import_download(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    data, filename = load_master_workbook(db)
+    if not data:
+        raise HTTPException(status_code=404, detail="No master menu workbook is available yet.")
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{Path(filename).name}"', "Cache-Control": "no-store"},
+    )
 
 
 @app.post("/admin/menu-import", response_class=HTMLResponse)
@@ -1658,20 +1834,62 @@ async def admin_menu_import_apply(
     if redirect: return redirect
     check_csrf(request, csrf_token)
     if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
-        return render(request, db, "admin/menu_import.html", admin=admin, error="Choose an .xlsx menu workbook.")
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error="Choose an .xlsx menu workbook.")
     data = await workbook.read()
     if len(data) > 8 * 1024 * 1024:
-        return render(request, db, "admin/menu_import.html", admin=admin, error="Workbook must be smaller than 8 MB.")
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error="Workbook must be smaller than 8 MB.")
     try:
         parsed = parse_menu_workbook(data)
+        prepare_parsed_menu_images(parsed)
         result = apply_menu_workbook(db, parsed)
+        references = current_menu_image_references(db)
+        normalized = update_workbook_image_references(data, references)
+        save_master_workbook(db, normalized, workbook.filename or "Spice_India_Catering_Master_Menu.xlsx")
+        db.commit()
     except ValueError as exc:
         db.rollback()
-        return render(request, db, "admin/menu_import.html", admin=admin, error=str(exc))
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error=str(exc))
     except Exception:
         db.rollback()
-        return render(request, db, "admin/menu_import.html", admin=admin, error="Import failed. Check the workbook format and try again.")
-    return render(request, db, "admin/menu_import.html", admin=admin, result=result)
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error="Import failed. Check the workbook format and try again.")
+    return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), result=result)
+
+
+@app.post("/admin/menu-import/image")
+async def admin_menu_image_upload(
+    request: Request,
+    import_item_id: int = Form(...),
+    csrf_token: str = Form(...),
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    try:
+        data, content_type = await read_menu_image(image)
+    except ValueError as exc:
+        return RedirectResponse(f"/admin/menu-import?image_error={quote(str(exc))}", status_code=303)
+    if not data or not content_type:
+        return RedirectResponse("/admin/menu-import?image_error=Choose+an+image", status_code=303)
+    copies = db.scalars(select(MenuItem).where(MenuItem.import_item_id == import_item_id)).all()
+    if not copies:
+        return RedirectResponse("/admin/menu-import?image_error=Menu+item+not+found", status_code=303)
+    reference, cloud = store_menu_image_bytes(import_item_id, data, content_type)
+    for item in copies:
+        item.image_reference = reference
+        if cloud:
+            item.image_blob = None
+            item.image_content_type = None
+        else:
+            item.image_blob = data
+            item.image_content_type = content_type
+    workbook_data, workbook_name = load_master_workbook(db)
+    if workbook_data:
+        updated_workbook = update_workbook_image_references(workbook_data, {int(import_item_id): reference})
+        save_master_workbook(db, updated_workbook, workbook_name)
+    db.commit()
+    return RedirectResponse("/admin/menu-import?image_saved=1", status_code=303)
 
 
 @app.get("/admin/menu-combinations", response_class=HTMLResponse)
@@ -1784,8 +2002,7 @@ def api_menu_combinations(item_id: int, db: Session = Depends(get_db)):
         seen.add(target_import_id)
         if rule.popup_title and title == "Goes Well With This":
             title = rule.popup_title
-        image_ref = (target.image_reference or "").strip()
-        image_url = f"/menu-item-image/{target.id}" if target.image_content_type else (image_ref if image_ref.startswith(("https://", "http://", "/")) else "")
+        image_url = menu_image_url(target, target.id)
         recommendations.append({
             "id": target.id,
             "name": target.name,

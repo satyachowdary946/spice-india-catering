@@ -1471,3 +1471,63 @@ html,body{max-width:100%;overflow-x:hidden}
   .excel-source-grid{grid-template-columns:1fr}
 }
 .review-item-price{margin-left:7px;color:#9ff3e6;font-size:.9em;white-space:nowrap}
+
+/* =========================================================
+   BUILD 12 — DURABLE MENU STORAGE + STABLE FLOATING NAV
+   ========================================================= */
+.menu-management-summary{max-width:920px}.menu-master-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.menu-master-head h2{margin:4px 0}.storage-pill{display:inline-flex;align-items:center;min-height:32px;padding:6px 10px;border-radius:999px;border:1px solid #52605d;font-size:.76rem;font-weight:900;white-space:nowrap}.storage-pill.cloud{border-color:#25b99f;background:#0b312b;color:#8ff2df}.storage-pill.fallback{border-color:#8d7448;background:#2b2415;color:#f1d494}.admin-action-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.menu-image-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}.menu-image-stats>div{display:grid;gap:4px;padding:14px;border:1px solid #3e4d49;border-radius:14px;background:#101817}.menu-image-stats strong{font-size:1.65rem;color:#7cf1df}.menu-image-stats span{font-size:.8rem;color:#aebbb7}.menu-image-upload-form{display:grid;grid-template-columns:minmax(220px,1.4fr) minmax(220px,1fr) auto;gap:12px;align-items:end;margin-top:14px}.menu-image-upload-form .field{margin:0}.missing-image-list{border-top:1px solid #33413e;padding-top:14px}.missing-image-list summary{cursor:pointer;font-weight:900}.missing-image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 16px;margin-top:12px}.missing-image-grid span{font-size:.84rem;color:#c7d2ce}.missing-image-grid strong{display:inline-block;min-width:42px;color:#70e7d5}
+
+/* Category state only follows the user's position. It never forces the menu back to another category. */
+.floating-category-trigger strong{transition:color .15s ease}.floating-category-trigger:focus-visible{outline:3px solid rgba(58,222,196,.42);outline-offset:2px}.category-picker-grid button.active{transform:none!important}
+
+@media(max-width:760px){.menu-master-head{flex-direction:column}.menu-image-upload-form{grid-template-columns:1fr}.menu-image-upload-form .btn{width:100%}.missing-image-grid{grid-template-columns:1fr}.menu-image-stats{grid-template-columns:repeat(3,1fr)}.menu-image-stats>div{padding:11px 9px}.menu-image-stats strong{font-size:1.35rem}.menu-image-stats span{font-size:.68rem}}
+@media(max-width:390px){.menu-image-stats{grid-template-columns:1fr 1fr}.menu-image-stats>div:first-child{grid-column:1/-1}}
+
+
+/* =========================================================
+   BUILD 12.1 — PHONE SEARCH MODE + REQUESTED DISH ROWS
+   ========================================================= */
+.site-header .brand-logo{width:148px;height:64px;object-fit:contain;object-position:left center}
+.menu-search-row{display:flex;align-items:center;gap:9px}
+.menu-search-field{position:relative;flex:1;min-width:0}
+.menu-search-field input{width:100%;min-height:48px;border-radius:14px;padding:10px 44px 10px 15px;background:#0f1716;border:1px solid #465652;color:#fff}
+.menu-search-field>span{position:absolute;right:15px;top:50%;transform:translateY(-50%);font-size:1.35rem;color:#91a39e;pointer-events:none}
+.search-back-btn{display:none;align-items:center;gap:5px;min-height:44px;padding:8px 10px;border:1px solid #53635f;border-radius:12px;background:#111a18;color:#fff;font-weight:900;white-space:nowrap}
+.menu-search-mode .search-back-btn{display:inline-flex}
+.menu-search-mode .customer-menu-toolbar{position:sticky!important;top:0!important;z-index:29!important;padding-bottom:8px;background:#30383b;box-shadow:0 8px 24px rgba(0,0,0,.28)}
+.menu-search-mode [data-browse-controls],
+.menu-search-mode .stepbar,
+.menu-search-mode [data-special-request-banner],
+.menu-search-mode .floating-category-trigger{display:none!important}
+.menu-search-mode .menu-search-row{margin:0;padding:8px 0 4px;position:relative;top:auto;background:transparent}
+.menu-search-mode .container:has(> [data-menu-content]){padding-top:12px}
+.search-results-section{padding:4px 0 22px}
+.search-results-head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:14px;border-bottom:1px solid #465552;padding-bottom:10px}
+.search-results-head h2{margin:3px 0 0;font-size:1.45rem}
+.search-result-list{display:grid;gap:10px}
+.search-empty,.search-start-state{min-height:38dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;color:#b8c7c3;padding:28px 16px}
+.search-empty strong,.search-start-state h2{color:#fff}.search-empty span,.search-start-state p{max-width:420px;margin:0;color:#aebbb7}
+.search-start-icon{display:grid;place-items:center;width:62px;height:62px;border-radius:18px;border:1px solid #36cdb7;background:#0c332e;color:#7df3e0;font-size:2rem}
+.requested-dish-editor{display:grid;gap:9px;margin-top:14px}
+.requested-dish-row{display:grid;grid-template-columns:32px minmax(0,1fr) 44px;gap:8px;align-items:center}
+.requested-dish-number{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:#15322d;border:1px solid #2eb9a4;color:#8df2e1;font-weight:950}
+.requested-dish-row input{width:100%;min-height:46px;border:1px solid #53635f;border-radius:12px;background:#0e1715;color:#fff;padding:10px 12px;font-size:1rem}
+.request-remove-dish{width:44px;height:44px;border-radius:12px;border:1px solid #8b5550;background:#271514;color:#ff9a91;font-size:1.65rem;font-weight:900;line-height:1}
+.request-another-dish{width:100%;min-height:46px;margin-top:12px;border:1px dashed #37cdb7;border-radius:12px;background:#0d2d28;color:#8cf2e1;font-weight:950;font-size:.95rem}
+.request-another-dish:active,.request-remove-dish:active{transform:translateY(1px)}
+@media(max-width:700px){
+  .site-header .brand-logo{width:132px!important;height:58px!important}
+  .site-header .brand{max-width:none}
+  .menu-search-mode .customer-menu-toolbar .container{width:min(100% - 16px,var(--max))}
+  .menu-search-mode .menu-search-field input{font-size:16px}
+  .search-back-btn span{display:none}
+  .search-back-btn{width:44px;padding:8px;justify-content:center;font-size:1.25rem}
+  .request-dialog[data-request-dialog][open]{width:min(94vw,560px)}
+  .requested-dish-row{grid-template-columns:28px minmax(0,1fr) 42px}
+  .requested-dish-number{width:28px;height:28px;font-size:.8rem}
+}
+@media(max-width:420px){
+  .site-header .brand-logo{width:126px!important;height:56px!important}
+  .site-header .nav a{padding-inline:8px}
+  .search-results-head h2{font-size:1.25rem}
+}

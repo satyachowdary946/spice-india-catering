@@ -1,53 +1,98 @@
 {% extends "admin/admin_base.html" %}
-{% block title %}Menus · Excel Import · Catering Admin{% endblock %}
+{% block title %}Menus · Excel Management · Catering Admin{% endblock %}
 {% block body %}
 <div class="admin-title">
   <div>
     <div class="eyebrow">Excel-Only Menu Management</div>
-    <h1>Import Website Menu</h1>
-    <p class="muted">Excel is now the only source of truth for the customer menu. Edit the workbook, upload it here, and the website synchronises to match it.</p>
+    <h1>Menu Management</h1>
+    <p class="muted">The master Excel workbook controls the website menu. Download it, make your changes, and upload it again.</p>
   </div>
 </div>
 
 {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+{% if request.query_params.get('image_error') %}<div class="notice error">{{ request.query_params.get('image_error') }}</div>{% endif %}
+{% if request.query_params.get('image_saved') %}<div class="notice success">Menu image saved and linked to the master Excel by Item ID.</div>{% endif %}
 {% if result %}
 <div class="notice success">
-  Menu updated: {{ result.items }} Excel items processed, {{ result.created }} website records created, {{ result.updated }} updated, {{ result.deactivated }} removed/old records hidden, and {{ result.combinations }} combination rules loaded.
+  Menu updated: {{ result.items }} Excel items processed, {{ result.created }} website records created, {{ result.updated }} updated, {{ result.deactivated }} old records hidden, and {{ result.combinations }} combination rules loaded.
 </div>
 {% endif %}
 
-<section class="card import-workflow-card excel-only-menu-card">
-  <div class="eyebrow">1 · Edit The Master Workbook</div>
-  <h2>Download Current Excel Menu</h2>
-  <p class="muted">Control item names, categories, section headings, heading colours, display order, optional prices, images, active/inactive items and combination recommendations from this workbook.</p>
-  <p><a class="btn secondary" href="/static/templates/Spice_India_Catering_Menu_Excel_Source.xlsx" download>Download Master Menu Excel</a></p>
-
-  <div class="excel-source-grid">
-    <div><strong>Menu Import</strong><span>Dishes, price, image, category, order and active status.</span></div>
-    <div><strong>Section Setup</strong><span>Headings such as Vegetarian Starters / Naans, their order, colour and visibility.</span></div>
-    <div><strong>Category Setup</strong><span>Veg / Non Veg structure, regional filters and the pinned top category tabs.</span></div>
-    <div><strong>Combinations</strong><span>Controls every “Goes well with this” recommendation.</span></div>
+<section class="card menu-management-summary">
+  <div class="eyebrow">Master Menu Excel</div>
+  <div class="menu-master-head">
+    <div>
+      <h2>{{ storage.master_filename }}</h2>
+      {% if storage.master_uploaded_at %}<p class="muted">Last imported: {{ storage.master_uploaded_at.strftime('%d %b %Y · %H:%M') }}</p>{% else %}<p class="muted">No uploaded master workbook yet. The starter workbook is available below.</p>{% endif %}
+    </div>
+    <span class="storage-pill {% if storage.r2_configured %}cloud{% else %}fallback{% endif %}">{% if storage.r2_configured %}Cloud backup connected{% else %}Database backup active{% endif %}</span>
   </div>
+  <div class="admin-action-row">
+    <a class="btn secondary" href="/admin/menu-import/download">Download Current Excel</a>
+  </div>
+  <p class="help">Your current workbook is stored with the website, so changing or losing your laptop does not remove the menu file. When Cloudflare R2 is configured it is also mirrored there.</p>
 </section>
 
 <section class="card import-workflow-card" style="margin-top:16px">
-  <div class="eyebrow">2 · Replace / Update Website Menu</div>
+  <div class="eyebrow">Update Website Menu</div>
   <h2>Upload Updated Excel</h2>
-  <p class="muted">The import uses stable Item IDs. Existing IDs are updated, new IDs are added, and imported Item IDs removed from Excel are hidden from the website.</p>
+  <p class="muted">Item names, prices, categories, section headings, heading colours, visibility, order and combinations are controlled from the workbook.</p>
   <form method="post" action="/admin/menu-import" enctype="multipart/form-data" class="compact">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field">
       <label for="menu-workbook">Master Menu Excel (.xlsx)</label>
       <input id="menu-workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
-      <span class="help">Maximum 8 MB. For images, paste/insert the picture in the Item Image cell or use a full HTTPS image URL.</span>
+      <span class="help">Maximum 8 MB. A blank Item Image cell preserves the existing image. Type REMOVE in the Item Image cell to delete an image.</span>
     </div>
     <button class="btn" type="submit">Import / Replace Website Menu</button>
   </form>
 </section>
 
 <section class="card" style="margin-top:16px">
-  <div class="eyebrow">Important</div>
-  <h2>No Manual Menu Editing In Admin</h2>
-  <p class="muted">To prevent the website and spreadsheet getting out of sync, menu items are no longer edited individually in Admin. Make the change in Excel and import the workbook again.</p>
+  <div class="eyebrow">Menu Images</div>
+  <div class="menu-image-stats">
+    <div><strong>{{ storage.total }}</strong><span>Dishes</span></div>
+    <div><strong>{{ storage.available }}</strong><span>Images available</span></div>
+    <div><strong>{{ storage.missing }}</strong><span>Images missing</span></div>
+  </div>
+  <p class="muted">Upload an image against the permanent Excel Item ID. The website links it to every regional copy of that dish and writes the image reference back into the stored master Excel.</p>
+  {% if storage["items"] %}
+  <form method="post" action="/admin/menu-import/image" enctype="multipart/form-data" class="menu-image-upload-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="image-item-id">Dish</label>
+      <select id="image-item-id" name="import_item_id" required>
+        <option value="">Select dish</option>
+        {% for item in storage["items"] %}<option value="{{ item.import_item_id }}">{{ item.import_item_id }} · {{ item.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="menu-image-file">Image</label>
+      <input id="menu-image-file" name="image" type="file" accept="image/png,image/jpeg,image/webp" required>
+      <span class="help">PNG, JPEG or WebP · maximum 3 MB.</span>
+    </div>
+    <button class="btn" type="submit">Upload & Link Image</button>
+  </form>
+  {% endif %}
+
+  {% if storage.missing_items %}
+  <details class="missing-image-list" style="margin-top:16px">
+    <summary>{{ storage.missing }} dishes still need images</summary>
+    <div class="missing-image-grid">
+      {% for item in storage.missing_items %}<span><strong>{{ item.import_item_id }}</strong> {{ item.name }}</span>{% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</section>
+
+<section class="card" style="margin-top:16px">
+  <div class="eyebrow">Storage Safety</div>
+  {% if storage.r2_configured %}
+  <h2>Cloudflare R2 Connected</h2>
+  <p class="muted">New menu images are stored in Cloudflare R2 and the master Excel is mirrored there. The current Excel is also retained in the website database as a recovery copy.</p>
+  {% else %}
+  <h2>Safe Database Backup Active</h2>
+  <p class="muted">The Excel and uploaded menu images are stored in the website database, so they are not tied to this laptop. For a second cloud copy and faster direct image delivery, add the Cloudflare R2 environment variables listed in <code>.env.example</code>.</p>
+  {% endif %}
 </section>
 {% endblock %}

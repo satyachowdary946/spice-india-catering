@@ -287,3 +287,27 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
         "combinations": combinations,
         "region_columns": [name for name, _ in region_columns],
     }
+
+
+def update_workbook_image_references(data: bytes, references: dict[int, str]) -> bytes:
+    """Return a workbook copy with Item Image cells updated by stable Item ID."""
+    if not references:
+        return data
+    try:
+        wb = load_workbook(BytesIO(data), data_only=False, read_only=False)
+    except Exception as exc:
+        raise ValueError("The stored master workbook is not readable.") from exc
+    if "Menu Import" not in wb.sheetnames:
+        raise ValueError("Workbook must contain a 'Menu Import' sheet.")
+    ws = wb["Menu Import"]
+    header_row, headers = _find_header(ws, "Item ID")
+    image_col = headers.get("Item Image")
+    if not image_col:
+        raise ValueError("Menu Import must contain an 'Item Image' column.")
+    for row in range(header_row + 1, ws.max_row + 1):
+        item_id = _int(ws.cell(row, headers["Item ID"]).value, -1)
+        if item_id in references:
+            ws.cell(row, image_col).value = references[item_id]
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()

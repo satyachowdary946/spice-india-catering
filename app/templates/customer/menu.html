@@ -5,14 +5,21 @@
   <div class="filter-block customer-menu-toolbar">
     <div class="container">
       <nav class="stepbar" style="padding:0 0 8px" aria-label="Quote request steps"><a href="/order?next=/menu">1 Event Details</a><span aria-hidden="true">›</span><a class="current" href="/menu" aria-current="step">2 Menu</a><span aria-hidden="true">›</span><a href="/review">3 Review</a></nav>
-      <div class="menu-primary-row">
+      <div class="menu-primary-row" data-browse-controls>
         <div class="segment dietary-primary" role="group" aria-label="Dietary menu">
           <button type="button" class="veg-choice" data-diet-choice="veg">Veg Cuisine</button>
           <button type="button" class="nonveg-choice" data-diet-choice="nonveg">Non Veg Cuisine</button>
         </div>
         <button class="menu-filter-trigger" type="button" data-open-menu-filter aria-haspopup="dialog" aria-controls="menu-filter-dialog"><span aria-hidden="true">☰</span> Filters</button>
       </div>
-      <div class="menu-search-row"><label class="sr-only" for="menu-search">Search dishes</label><input id="menu-search" data-menu-search type="search" placeholder="Search dishes" autocomplete="off"><span aria-hidden="true">⌕</span></div>
+      <div class="menu-search-row" data-search-row>
+        <button class="search-back-btn" type="button" data-exit-search aria-label="Back to full menu">← <span>Menu</span></button>
+        <div class="menu-search-field">
+          <label class="sr-only" for="menu-search">Search dishes</label>
+          <input id="menu-search" data-menu-search type="search" placeholder="Search dishes" autocomplete="off" enterkeyhint="search">
+          <span aria-hidden="true">⌕</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -33,7 +40,7 @@
   </dialog>
 
   <div class="container">
-    <section class="special-request-banner" aria-labelledby="special-request-title">
+    <section class="special-request-banner" data-special-request-banner aria-labelledby="special-request-title">
       <div>
         <div class="eyebrow">Something Missing?</div>
         <h2 id="special-request-title">Want A Dish That Is Not On The Menu?</h2>
@@ -71,8 +78,10 @@
         <div><div class="eyebrow">Special Request</div><h2 id="request-dialog-title">Request Dishes Not Listed</h2></div>
         <button class="icon-close" value="cancel" aria-label="Close">×</button>
       </div>
-      <p class="muted">Enter one dish per line. These are requests only; the owner will approve or reject each one before the order is final.</p>
-      <div class="field" style="margin-top:12px"><label for="requested-dishes-input">Dish Names</label><textarea id="requested-dishes-input" data-request-input maxlength="3800" placeholder="Example:\nPaneer 65\nSpecial chicken curry"></textarea><div class="help">Maximum 20 requested dishes.</div></div>
+      <p class="muted">Add each requested dish separately. These are requests only; the catering team will approve or reject them before the order is final.</p>
+      <div class="requested-dish-editor" data-request-rows aria-label="Requested dishes"></div>
+      <button class="request-another-dish" type="button" data-add-request-row>+ Request One More Dish</button>
+      <div class="help" style="margin-top:8px">Maximum 20 requested dishes.</div>
       <div class="request-dialog-actions"><button class="btn secondary" value="cancel">Cancel</button><button class="btn" type="button" data-save-requests>Save Requests</button></div>
     </form>
   </dialog>

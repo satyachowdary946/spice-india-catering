@@ -189,3 +189,20 @@ The current workbook is available inside the app at `/static/templates/Spice_Ind
 - Category picker can be reopened at any point while browsing.
 - Removes the automatic tab `scrollIntoView()` feedback loop that could pull the phone viewport back toward the navigation area.
 - Selecting a category scrolls once to that category, then leaves the customer free to browse and add dishes normally.
+
+## Build 12: durable Excel menu + menu images
+
+The Admin **Menus** page uses one master Excel workbook. Every successful import saves the current workbook in the production database, so the file is not tied to a laptop. If Cloudflare R2 is configured, the same workbook is also mirrored to R2.
+
+Menu images are linked by the permanent Excel **Item ID**. Images uploaded in Admin are written back into the stored master workbook as a permanent reference. A blank `Item Image` cell preserves an existing uploaded image on re-import; enter `REMOVE` in the cell to explicitly delete it.
+
+For Cloudflare R2, configure `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` in Render. `R2_PUBLIC_BASE_URL` is optional but recommended when an R2 public/custom domain is configured. Never commit R2 credentials.
+
+## Build 12.1 — Mobile menu search and requested-dish UX
+
+- The customer Menu page no longer repeats the Menu navigation link in the top header.
+- Spice India customer-header logo is enlarged on phones for better visibility.
+- Requested dishes are entered as individual add/remove rows with a maximum of 20 requests.
+- Tapping the dish search opens a focused mobile search mode: normal menu controls, category navigation and the special-request banner are temporarily hidden while matching dishes are shown directly below the search field.
+- The keyboard Search/Enter action dismisses the keyboard; the Back-to-menu control restores the normal browsing view.
+- The existing floating Categories control remains available in normal browsing mode only.

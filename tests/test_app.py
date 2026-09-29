@@ -54,6 +54,15 @@ def test_build8_mobile_workflow():
         assert home.status_code == 200
         assert '>Home<' in home.text
 
+        menu_page = client.get("/menu")
+        assert menu_page.status_code == 200
+        assert 'data-exit-search' in menu_page.text
+        assert 'data-request-rows' in menu_page.text
+        assert 'data-add-request-row' in menu_page.text
+        # The page is already the menu, so the primary header does not repeat a Menu link.
+        header_html = menu_page.text.split('</header>', 1)[0]
+        assert 'href="/menu">Menu</a>' not in header_html
+
         setup = client.get("/admin/setup")
         csrf = csrf_from(setup.text)
         r = client.post("/admin/setup", data={
@@ -163,7 +172,12 @@ def test_build8_mobile_workflow():
         menu_import = client.get("/admin/menu-import")
         assert menu_import.status_code == 200
         assert "Excel-Only Menu Management" in menu_import.text
-        assert "No Manual Menu Editing In Admin" in menu_import.text
+        assert "Download Current Excel" in menu_import.text
+        assert "Menu Images" in menu_import.text
+        assert "Database backup active" in menu_import.text or "Cloud backup connected" in menu_import.text
+        master_download = client.get("/admin/menu-import/download")
+        assert master_download.status_code == 200
+        assert master_download.content[:2] == b"PK"
 
         settings = client.get("/admin/settings")
         assert "Web Order Charge" not in settings.text
