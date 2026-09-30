@@ -185,6 +185,7 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
             "category": _text(ws.cell(row, headers["Sub Category"]).value) or "Other",
             "section": _text(ws.cell(row, headers["Menu Section"]).value) or "Main Selection",
             "name": name,
+            "description": _text(ws.cell(row, headers.get("Food Description", 0)).value) if headers.get("Food Description") else (_text(ws.cell(row, headers.get("Notes", 0)).value) if headers.get("Notes") else ""),
             "image_reference": _text(ws.cell(row, image_col).value) if image_col else "",
             "image_bytes": embedded[0] if embedded else None,
             "image_content_type": embedded[1] if embedded else None,
@@ -308,6 +309,78 @@ def update_workbook_image_references(data: bytes, references: dict[int, str]) ->
         item_id = _int(ws.cell(row, headers["Item ID"]).value, -1)
         if item_id in references:
             ws.cell(row, image_col).value = references[item_id]
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def update_workbook_category_setup(
+    data: bytes,
+    *,
+    old_name: str = "",
+    new_name: str,
+    display_order: int,
+) -> bytes:
+    """Rename/add a master Sub Category and keep Menu Import/Section Setup in sync.
+
+    The stored Excel remains the source of truth, so an Admin category edit must also
+    update the workbook or the next Excel import would undo the website change.
+    """
+    try:
+        wb = load_workbook(BytesIO(data), data_only=False, read_only=False)
+    except Exception as exc:
+        raise ValueError("The stored master workbook is not readable.") from exc
+
+    clean_new = _text(new_name)
+    clean_old = _text(old_name)
+    if not clean_new:
+        raise ValueError("Category name is required.")
+    if display_order < 1:
+        raise ValueError("Display order must be 1 or greater.")
+
+    if "Category Setup" not in wb.sheetnames:
+        raise ValueError("Workbook must contain a 'Category Setup' sheet.")
+    setup = wb["Category Setup"]
+    setup_header, sh = _find_header(setup, "Type")
+    if "Name" not in sh or "Display Order" not in sh:
+        raise ValueError("Category Setup must contain Name and Display Order columns.")
+
+    target_row = None
+    lookup = clean_old.casefold() if clean_old else clean_new.casefold()
+    for row in range(setup_header + 1, setup.max_row + 1):
+        type_name = _text(setup.cell(row, sh["Type"]).value).casefold()
+        name = _text(setup.cell(row, sh["Name"]).value)
+        if type_name == "sub category" and name.casefold() == lookup:
+            target_row = row
+            break
+
+    if target_row is None:
+        # Append after the last configured row. Blank/formatted rows are fine; using
+        # max_row + 1 avoids overwriting existing workbook notes.
+        target_row = setup.max_row + 1
+        setup.cell(target_row, sh["Type"]).value = "Sub Category"
+    setup.cell(target_row, sh["Name"]).value = clean_new
+    setup.cell(target_row, sh["Display Order"]).value = int(display_order)
+
+    if clean_old and clean_old.casefold() != clean_new.casefold():
+        if "Menu Import" in wb.sheetnames:
+            ws = wb["Menu Import"]
+            header_row, headers = _find_header(ws, "Item ID")
+            sub_col = headers.get("Sub Category")
+            if sub_col:
+                for row in range(header_row + 1, ws.max_row + 1):
+                    if _text(ws.cell(row, sub_col).value).casefold() == clean_old.casefold():
+                        ws.cell(row, sub_col).value = clean_new
+
+        if "Section Setup" in wb.sheetnames:
+            sw = wb["Section Setup"]
+            section_header, headers = _find_header(sw, "Menu Section")
+            sub_col = headers.get("Sub Category")
+            if sub_col:
+                for row in range(section_header + 1, sw.max_row + 1):
+                    if _text(sw.cell(row, sub_col).value).casefold() == clean_old.casefold():
+                        sw.cell(row, sub_col).value = clean_new
+
     out = BytesIO()
     wb.save(out)
     return out.getvalue()

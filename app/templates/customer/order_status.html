@@ -33,8 +33,9 @@
   {% if order.requested_dishes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Requested Dishes</h2><div class="requested-dish-list">{% for dish in order.requested_dishes %}<div class="requested-dish-row"><div><strong>{{ dish.name }}</strong>{% if dish.admin_response %}<div class="help">{{ dish.admin_response }}</div>{% endif %}</div><span class="request-status {{ dish.status }}">{{ dish.status.title() }}</span></div>{% endfor %}</div></section>{% endif %}
 
   <section class="card final-menu customer-selected-menu" style="margin-top:14px">
-    <div class="admin-title"><div><div class="eyebrow">Your Food</div><h2>Selected Menu</h2></div>{% if order.status not in ['confirmed','completed','cancelled','voided'] %}<a class="btn secondary small add-more-dishes-btn" href="/orders/{{ order.public_token }}/add-dishes">+ Add More Dishes</a>{% endif %}</div>
+    <div class="admin-title"><div><div class="eyebrow">Your Food</div><h2>Selected Menu</h2></div>{% if order.status == 'new' %}<a class="btn secondary small add-more-dishes-btn" href="/orders/{{ order.public_token }}/add-dishes">+ Add More Dishes</a>{% endif %}</div>
     {% for menu_name, categories in groups.items() %}<div class="menu-heading dietary-menu-heading {% if 'non' in menu_name|lower %}nonveg{% elif 'veg' in menu_name|lower %}veg{% endif %}">{{ menu_name }}</div>{% for cat_name, subs in categories.items() %}<div class="cat-heading review-category-highlight">{{ cat_name }}</div><ol class="review-numbered-list">{% for sub_name, items in subs.items() %}{% for item in items %}<li class="dietary-list-item {{ item.dietary }}">{{ item.item_name }}</li>{% endfor %}{% endfor %}</ol>{% endfor %}{% endfor %}
+    {% if order.status != 'new' %}<div class="notice" style="margin-top:14px"><strong>Need to change your menu?</strong><br>Please contact the Spice India Catering team. Once a quote is prepared, menu changes are handled by the catering team so your price stays accurate.</div>{% endif %}
   </section>
 
   {% if order.final_price is not none %}
@@ -46,17 +47,19 @@
       <div><span>Delivery &amp; Service Charge</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div>
     </div>
     <div class="quote-total"><span>Total Quote</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div>
-    {% if order.status not in ['confirmed','completed','cancelled','voided'] %}
+    {% if order.status == 'quoted' %}
       <div class="confirm-callout"><strong>Please check your details, menu and price above before confirming.</strong></div>
       <form method="post" action="/orders/{{ order.public_token }}/confirm"><button class="btn block customer-confirm-btn" type="submit">CONFIRM ORDER</button></form>
-    {% elif order.status == 'confirmed' %}<div class="notice success confirmed-lock"><strong>Order Confirmed</strong> · {{ order.confirmed_at.strftime('%d %b %Y %H:%M') if order.confirmed_at else '' }}</div>{% endif %}
+    {% elif order.status == 'new' %}
+      <div class="notice"><strong>Revised quote being prepared.</strong> The catering team will email you when this price is ready to confirm.</div>
+    {% elif order.status == 'confirmed' %}<div class="notice success confirmed-lock"><strong>Order Confirmed</strong> · {{ local_datetime(order.confirmed_at).strftime('%d %b %Y %H:%M') if order.confirmed_at else '' }}</div>{% endif %}
   </section>
   {% else %}<section class="notice" style="margin-top:14px"><strong>Quote Being Prepared.</strong> The catering team will email you when the price is ready.</section>{% endif %}
 
   {% if order.customer_message %}<div class="notice" style="margin-top:14px"><strong>Message From Catering Team</strong><br>{{ order.customer_message }}</div>{% endif %}
   {% if order.customer_notes %}<div class="notice" style="margin-top:14px"><strong>Your Notes / Special Requests</strong><br>{{ order.customer_notes }}</div>{% endif %}
 
-  <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Order Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong><small>{{ h.created_at.strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
+  <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Order Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong><small>{{ local_datetime(h.created_at).strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
   <div class="actions no-print customer-order-actions" style="margin-top:14px"><a class="btn secondary" href="/track">Track Another Order</a><button class="btn secondary" onclick="window.print()">Print This Order</button></div>
 </div></main>
 {% endblock %}

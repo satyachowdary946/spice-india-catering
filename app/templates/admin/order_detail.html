@@ -1,28 +1,142 @@
 {% extends "admin/admin_base.html" %}
 {% block title %}{{ order.order_number }} · Catering Admin{% endblock %}
 {% block body %}
-<div class="admin-title"><div><div class="eyebrow">{{ order.customer.customer_number }}</div><h1>{{ order.order_number }}</h1><p class="muted">Created {{ order.created_at.strftime('%d %b %Y %H:%M') }}</p></div><span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span></div>
-{% if request.query_params.get('saved') %}<div class="notice success">Order Updated.</div>{% endif %}{% if request.query_params.get('quote_emailed') %}<div class="notice success"><strong>Quote emailed to customer.</strong> The email includes the secure review & confirm link.</div>{% endif %}{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}{% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Voided Order.</strong> Excluded from Transactions and Reports.{% if order.void_reason %}<br>Reason: {{ order.void_reason }}{% endif %}</div>{% endif %}
-
-<div class="grid two">
-<section class="card"><h2 style="font-size:1.25rem">Customer & Event</h2><div class="meta-row"><strong>Name</strong><span>{{ order.customer.name }}</span></div><div class="meta-row"><strong>Phone</strong><span>{{ order.customer.phone }}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp }}</span></div><div class="meta-row"><strong>Email</strong><span>{{ order.customer.email or '—' }}</span></div><div class="meta-row"><strong>Event</strong><span>{{ order.event_name }}</span></div><div class="meta-row"><strong>Date</strong><span>{{ order.event_date.strftime('%d %b %Y') }}</span></div><div class="meta-row"><strong>Day</strong><span>{{ order.event_date.strftime('%A') }}</span></div><div class="meta-row"><strong>Event Time</strong><span>{{ order.event_time.strftime('%H:%M') }}</span></div><div class="meta-row"><strong>Delivery Time</strong><span>{{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '—' }}</span></div><div class="meta-row"><strong>Guests</strong><span>{{ order.adults }} Adults + {{ order.kids }} Kids = <strong>{{ order.adults + order.kids }}</strong></span></div><div class="meta-row"><strong>Address</strong><span>{{ order.address }}, {{ order.eircode }}</span></div></section>
-<section class="card"><h2 style="font-size:1.25rem">Quote & Confirmation</h2>{% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Workflow Locked.</strong></div>{% else %}<form method="post" action="/admin/orders/{{ order.id }}" data-pricing-form data-adults="{{ order.adults }}" data-kids="{{ order.kids }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Status</label><select name="status">{% if order.status not in statuses %}<option value="{{ order.status }}" selected>{{ order.status.replace('_',' ').title() }} (Historical)</option>{% endif %}{% for s in statuses %}<option value="{{ s }}" {% if order.status==s %}selected{% endif %}>{{ s.replace('_',' ').title() }}</option>{% endfor %}</select></div><div class="admin-form-grid two" style="margin-top:10px"><div class="field"><label>Adult Charge (€) · Per Head</label><input name="adult_charge" data-price-field type="number" min="0" step="0.01" value="{{ pricing.adult_charge if order.adult_charge is not none else '' }}"></div><div class="field"><label>Kid Charge (€) · Per Head</label><input name="kid_charge" data-price-field type="number" min="0" step="0.01" value="{{ pricing.kid_charge if order.kid_charge is not none else '' }}"></div><div class="field full-span"><label>Delivery & Service Charge (€)</label><input name="delivery_service_charge" data-price-field type="number" min="0" step="0.01" value="{{ pricing.delivery_service_charge if order.delivery_service_charge not in [none, 0] else '' }}"></div></div><div class="pricing-calculator" data-pricing-summary><div><span>Meal Base</span><strong>€{{ '%.2f'|format(pricing.meal_base) }}</strong></div><div><span>Delivery & Service</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div></div><div class="field" style="margin-top:10px"><label>Customer Message</label><textarea name="customer_message">{{ order.customer_message }}</textarea></div><div class="field" style="margin-top:10px"><label>Private Admin Notes</label><textarea name="admin_notes">{{ order.admin_notes }}</textarea></div><button class="btn" type="submit" style="margin-top:10px">Save Order</button></form>{% endif %}</section>
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">{{ order.customer.customer_number }}</div>
+    <h1>{{ order.order_number }}</h1>
+    <p class="muted">Request received {{ local_datetime(order.created_at).strftime('%d %b %Y · %H:%M') if local_datetime(order.created_at) else '' }}</p>
+  </div>
+  <span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span>
 </div>
+{% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}
+{% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Voided Order.</strong> Excluded from Transactions and Reports.{% if order.void_reason %}<br>Reason: {{ order.void_reason }}{% endif %}</div>{% endif %}
+
+<section class="card">
+  <div class="admin-title"><div><div class="eyebrow">Request</div><h2 style="font-size:1.25rem">Customer & Event Details</h2></div></div>
+  <div class="order-meta two-column-meta">
+    <div class="meta-row"><strong>Name</strong><span>{{ order.customer.name }}</span></div>
+    <div class="meta-row"><strong>Phone</strong><span>{{ order.customer.phone }}</span></div>
+    <div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp }}</span></div>
+    <div class="meta-row"><strong>Email</strong><span>{{ order.customer.email or '—' }}</span></div>
+    <div class="meta-row"><strong>Event</strong><span>{{ order.event_name }}</span></div>
+    <div class="meta-row"><strong>Request Sent</strong><span>{{ local_datetime(order.created_at).strftime('%d %b %Y · %H:%M') if local_datetime(order.created_at) else '—' }}</span></div>
+    <div class="meta-row"><strong>Date</strong><span>{{ order.event_date.strftime('%d %b %Y') }}</span></div>
+    <div class="meta-row"><strong>Day</strong><span>{{ order.event_date.strftime('%A') }}</span></div>
+    <div class="meta-row"><strong>Event Time</strong><span>{{ order.event_time.strftime('%H:%M') }}</span></div>
+    <div class="meta-row"><strong>Delivery Time</strong><span>{{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '—' }}</span></div>
+    <div class="meta-row"><strong>Guests</strong><span>{{ order.adults }} Adults + {{ order.kids }} Kids = <strong>{{ order.adults + order.kids }}</strong></span></div>
+    <div class="meta-row"><strong>Address</strong><span>{{ order.address }}, {{ order.eircode }}</span></div>
+  </div>
+</section>
+
+<section class="card final-menu admin-editable-menu" id="selected-menu" style="margin-top:14px">
+  <div class="admin-title">
+    <div><div class="eyebrow">Order Menu</div><h2>Selected Menu</h2><p class="muted">Admin can add, edit or remove dishes. If a Quoted or Confirmed order changes, it automatically returns to New so a revised quote can be sent.</p></div>
+  </div>
+
+  {% if order.status != 'voided' %}
+  <form class="order-add-dish-form" method="post" action="/admin/orders/{{ order.id }}/items/add">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label>Add Dish From Master Menu</label>
+      <select name="menu_item_id" required>
+        <option value="">Choose a dish</option>
+        {% for item in catalog_items %}<option value="{{ item.id }}">{% if item.import_item_id %}{{ '%04d'|format(item.import_item_id) }} · {% endif %}{{ item.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <button class="btn small" type="submit">+ Add Dish</button>
+  </form>
+  {% endif %}
+
+  {% for menu_name, categories in groups.items() %}
+    <div class="menu-heading">{{ menu_name }}</div>
+    {% for cat_name, subs in categories.items() %}
+      <div class="cat-heading review-category-highlight">{{ cat_name }}</div>
+      <div class="admin-order-menu-list">
+      {% for sub_name, items in subs.items() %}
+        {% if sub_name and sub_name != 'Main Selection' %}<div class="help admin-menu-subheading">{{ sub_name }}</div>{% endif %}
+        {% for item in items %}
+        <div class="admin-order-menu-item dietary-list-item {{ item.dietary }}">
+          <div><strong>{{ item.item_name }}</strong><small>{{ sub_name }}</small></div>
+          {% if order.status != 'voided' %}
+          <details class="order-item-editor">
+            <summary>Edit</summary>
+            <form method="post" action="/admin/orders/{{ order.id }}/items/{{ item.id }}/edit" class="compact">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <div class="admin-form-grid two">
+                <div class="field"><label>Dish Name</label><input name="item_name" value="{{ item.item_name }}" required maxlength="180"></div>
+                <div class="field"><label>Menu</label><input name="menu_name" value="{{ item.menu_name }}" required maxlength="120"></div>
+                <div class="field"><label>Category</label><input name="category_name" value="{{ item.category_name }}" required maxlength="120"></div>
+                <div class="field"><label>Subcategory</label><input name="subcategory_name" value="{{ item.subcategory_name }}" required maxlength="120"></div>
+                <div class="field"><label>Dietary</label><select name="dietary"><option value="veg" {% if item.dietary=='veg' %}selected{% endif %}>Veg</option><option value="nonveg" {% if item.dietary=='nonveg' %}selected{% endif %}>Non Veg</option><option value="both" {% if item.dietary=='both' %}selected{% endif %}>Both</option></select></div>
+              </div>
+              <button class="btn small" type="submit">Save Dish</button>
+            </form>
+            <form method="post" action="/admin/orders/{{ order.id }}/items/{{ item.id }}/delete" onsubmit="return confirm('Remove {{ item.item_name }} from this order?')" style="margin-top:8px">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="btn danger small" type="submit">Remove Dish</button>
+            </form>
+          </details>
+          {% endif %}
+        </div>
+        {% endfor %}
+      {% endfor %}
+      </div>
+    {% endfor %}
+  {% else %}<div class="empty">No standard menu items are attached to this order.</div>{% endfor %}
+
+  {% set approved = order.requested_dishes | selectattr('status','equalto','approved') | list %}
+  {% if approved %}<div class="menu-heading">Approved Requested Dishes</div><ol>{% for dish in approved %}<li>{{ dish.name }}</li>{% endfor %}</ol>{% endif %}
+</section>
 
 {% if order.customer_notes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Customer Comments / Notes</h2><p class="prewrap">{{ order.customer_notes }}</p></section>{% endif %}
 {% if order.requested_dishes %}<section class="card requested-admin-card" id="requested-dishes" style="margin-top:14px"><div class="admin-title"><div><h2 style="font-size:1.25rem">Requested Dishes</h2><p>Approve or reject each request.</p></div></div><div class="requested-admin-list">{% for dish in order.requested_dishes %}<form class="requested-admin-row" method="post" action="/admin/requested-dishes/{{ dish.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div><strong>{{ dish.name }}</strong><div class="help">Requested By Customer</div></div><div class="field compact"><label>Decision</label><select name="status"><option value="pending" {% if dish.status=='pending' %}selected{% endif %}>Pending</option><option value="approved" {% if dish.status=='approved' %}selected{% endif %}>Approved</option><option value="rejected" {% if dish.status=='rejected' %}selected{% endif %}>Rejected</option></select></div><div class="field compact"><label>Reply (Optional)</label><input name="admin_response" value="{{ dish.admin_response }}" maxlength="1000"></div><button class="btn small" type="submit">Save</button></form>{% endfor %}</div></section>{% endif %}
 
-<section class="card final-menu" style="margin-top:14px"><div class="admin-title"><div><h2>Final Menu List</h2><p class="muted">This snapshot stays with the order even if the master menu changes later.</p></div></div>{% for menu_name, categories in groups.items() %}<div class="menu-heading">{{ menu_name }}</div>{% for cat_name, subs in categories.items() %}<div class="cat-heading review-category-highlight">{{ cat_name }}</div><ol>{% for sub_name, items in subs.items() %}{% for item in items %}<li class="dietary-list-item {{ item.dietary }}">{{ item.item_name }}</li>{% endfor %}{% endfor %}</ol>{% endfor %}{% endfor %}{% set approved = order.requested_dishes | selectattr('status','equalto','approved') | list %}{% if approved %}<div class="menu-heading">Approved Requested Dishes</div><ol>{% for dish in approved %}<li>{{ dish.name }}</li>{% endfor %}</ol>{% endif %}</section>
+<section class="card" id="quote-confirmation" style="margin-top:14px">
+  <div class="admin-title"><div><div class="eyebrow">Pricing Workflow</div><h2 style="font-size:1.25rem">Quote & Confirmation</h2><p class="muted">Changing status to <strong>Quoted</strong> automatically emails the full quote to the customer. Confirmed / Completed / Cancelled status changes also send branded customer emails.</p></div></div>
+  {% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Workflow Locked.</strong></div>{% else %}
+  <form method="post" action="/admin/orders/{{ order.id }}" data-pricing-form data-adults="{{ order.adults }}" data-kids="{{ order.kids }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label>Status</label><select name="status">{% if order.status not in statuses %}<option value="{{ order.status }}" selected>{{ order.status.replace('_',' ').title() }} (Historical)</option>{% endif %}{% for s in statuses %}<option value="{{ s }}" {% if order.status==s %}selected{% endif %}>{{ s.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+    <div class="admin-form-grid two" style="margin-top:10px">
+      <div class="field"><label>Adult Charge (€) · Per Head</label><input name="adult_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.adult_charge if order.adult_charge is not none else '' }}"></div>
+      <div class="field"><label>Kid Charge (€) · Per Head</label><input name="kid_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.kid_charge if order.kid_charge is not none else '' }}"></div>
+      <div class="field full-span"><label>Delivery & Service Charge (€)</label><input name="delivery_service_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.delivery_service_charge if order.delivery_service_charge not in [none, 0] else '' }}"></div>
+    </div>
+    <div class="pricing-calculator" data-pricing-summary><div><span>Meal Base</span><strong>€{{ '%.2f'|format(pricing.meal_base) }}</strong></div><div><span>Delivery & Service</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div></div>
+    <div class="field" style="margin-top:10px"><label>Customer Message</label><textarea name="customer_message">{{ order.customer_message }}</textarea></div>
+    <div class="field" style="margin-top:10px"><label>Private Admin Notes</label><textarea name="admin_notes">{{ order.admin_notes }}</textarea></div>
+    <button class="btn" type="submit" style="margin-top:10px">Save Order</button>
+  </form>{% endif %}
+</section>
 
-<section class="card" id="kitchen-actions" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">The button saves the comments, creates a secure kitchen PDF link and opens WhatsApp with that link. Choose your kitchen group and press Send.</p></div><div class="actions"><a class="btn secondary small" href="/admin/orders/{{ order.id }}/pdf">Download PDF</a><a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Print Sheet</a></div></div><form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" target="_blank"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000">{{ order.kitchen_comments }}</textarea><span class="help">Printed in bold on the kitchen sheet.</span></div><button class="btn" type="submit" style="margin-top:10px">Generate PDF & Open Kitchen WhatsApp</button></form></section>
+<section class="card no-print" id="customer-sharing" style="margin-top:14px">
+  <div class="admin-title"><div><div class="eyebrow">Customer Quote</div><h2 style="font-size:1.25rem">Send / Resend Customer Quote</h2><p class="muted">Email, WhatsApp and confirmation-link sharing unlock only when the order status is <strong>Quoted</strong>.</p></div></div>
+  <div class="actions">
+    <form method="post" action="/admin/orders/{{ order.id }}/send-quote-email"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit" {% if not can_share_quote or not order.customer.email %}disabled{% endif %}>Email Quote To Customer</button></form>
+    {% if can_share_quote and customer_whatsapp_url %}<a class="btn secondary" href="{{ customer_whatsapp_url }}" target="_blank" rel="noopener" onclick="adminToast('WhatsApp opened for {{ order.customer.whatsapp }}. Press Send in WhatsApp.','success')">Send Quote On WhatsApp</a>{% else %}<button class="btn secondary" type="button" disabled>Send Quote On WhatsApp</button>{% endif %}
+    <button class="btn secondary" type="button" {% if not can_share_quote %}disabled{% endif %} onclick="copyAdminConfirmLink('{{ public_url }}')">Copy Confirm Link</button>
+  </div>
+  {% if order.status != 'quoted' %}<div class="help" style="margin-top:8px">Set the status to Quoted first. When you do, the first quote email is sent automatically.</div>{% elif not order.customer.email %}<div class="help" style="margin-top:8px">Customer email is missing. Add it in Customers before emailing the quote.</div>{% endif %}
+</section>
 
-<section class="card no-print" id="customer-sharing" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Customer Quote</div><h2 style="font-size:1.25rem">Email Quote To Customer</h2><p class="muted">Sends the full price summary and a secure REVIEW & CONFIRM ORDER button to {{ order.customer.email or 'the customer email' }}.</p></div></div><div class="actions"><form method="post" action="/admin/orders/{{ order.id }}/send-quote-email"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit" {% if not order.customer.email or order.final_price is none %}disabled{% endif %}>Email Quote To Customer</button></form><a class="btn secondary" href="{{ whatsapp_share_url }}" target="_blank" rel="noopener">Share Quote On WhatsApp</a><button class="btn secondary" type="button" onclick="navigator.clipboard.writeText('{{ public_url }}')">Copy Confirm Link</button></div>{% if not order.customer.email %}<div class="help" style="margin-top:8px">Add the customer's email in Customers before emailing the quote.</div>{% endif %}</section>
+<section class="card" id="kitchen-actions" style="margin-top:14px">
+  <div class="admin-title">
+    <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Kitchen sending unlocks only after the customer/order status is <strong>Confirmed</strong>.</p></div>
+    <div class="actions">{% if can_send_kitchen %}<a class="btn secondary small" href="/admin/orders/{{ order.id }}/pdf">Download PDF</a><a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Print Sheet</a>{% else %}<button class="btn secondary small" type="button" disabled>Download PDF</button><button class="btn secondary small" type="button" disabled>Print Sheet</button>{% endif %}</div>
+  </div>
+  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" target="_blank"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Printed in bold on the kitchen sheet.</span></div><button class="btn" type="submit" style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Open Kitchen WhatsApp</button></form>
+  {% if not can_send_kitchen %}<div class="help" style="margin-top:8px">Change the order status to Confirmed before sending anything to the kitchen.</div>{% endif %}
+</section>
 
 <section class="card order-admin-tools" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Order Administration</div><h2 style="font-size:1.25rem">Cancel, Void Or Permanently Delete</h2></div></div>{% if order.status == 'voided' %}<div class="voided-summary"><strong>Voided</strong><span>{{ order.void_reason or 'No reason recorded' }}</span></div>{% elif can_void %}<form class="order-void-form compact" method="post" action="/admin/orders/{{ order.id }}/void" onsubmit="return confirm('Void this order?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="admin-form-grid two"><div class="field"><label>Void Reason</label><select name="reason" required>{% for value,label in void_reason_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div><div class="field"><label>Extra Detail</label><input name="other_reason" maxlength="500"></div></div><button class="btn danger small" type="submit" style="margin-top:10px">Void Order</button></form>{% else %}<div class="notice">This order has financial history and cannot be voided.</div>{% endif %}<div class="permanent-delete-zone"><h3>Permanently Delete</h3>{% if can_delete %}<form class="compact" method="post" action="/admin/orders/{{ order.id }}/delete" onsubmit="return confirm('Permanently delete {{ order.order_number }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Type {{ order.order_number }} To Confirm</label><input name="confirmation" autocomplete="off" required></div><button class="btn danger small" type="submit" style="margin-top:10px">Delete Permanently</button></form>{% else %}<p class="help">Deletion is locked because this order has payments, expenses or invoice history.</p>{% endif %}</div></section>
 
-<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Status Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong><small>{{ h.created_at.strftime('%d %b %Y %H:%M') }}</small></div></div>{% endfor %}</div></section>
+<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Status Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong>{% if h.note %}<div class="help">{{ h.note }}</div>{% endif %}<small>{{ local_datetime(h.created_at).strftime('%d %b %Y %H:%M') if local_datetime(h.created_at) else '' }}</small></div></div>{% endfor %}</div></section>
 
 <section class="card finance-quick-card" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Order Finance</div><h2 style="font-size:1.25rem">Payments, Expenses & Profit</h2></div><div class="actions"><a class="btn secondary small" href="/admin/transactions/{{ order.id }}">Manage Transaction</a></div></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(finance.final_price) }}{% else %}—{% endif %}</strong></div><div class="finance-stat"><span>Collected</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat expense"><span>Expenses</span><strong>€{{ '%.2f'|format(finance.total_expenses) }}</strong></div><div class="finance-stat profit"><span>Expected Profit</span><strong>€{{ '%.2f'|format(finance.expected_profit) }}</strong></div></div></section>
 
-<script>(()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),base=adults*adult+kids*kid,total=base+extra;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));calc();})();</script>
+<script>
+(()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),base=adults*adult+kids*kid,total=base+extra;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));calc();})();
+</script>
 {% endblock %}

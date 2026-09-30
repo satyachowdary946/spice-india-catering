@@ -112,13 +112,20 @@ def test_build8_mobile_workflow():
         orders = client.get("/admin/orders")
         assert "Contacted" not in orders.text
         assert "Negotiating" not in orders.text
+        assert "Request From" in orders.text and "Request To" in orders.text
+        assert "Requested" in orders.text
+        dashboard = client.get("/admin")
+        assert "Requested" in dashboard.text
 
         detail = client.get("/admin/orders/1")
         assert detail.status_code == 200
         assert "Day" in detail.text
-        assert detail.text.index("Final Menu List") < detail.text.index("Kitchen Sheet & Sharing")
-        assert detail.text.index("Email Quote To Customer") < detail.text.index("Order Finance")
+        assert detail.text.index("Selected Menu") < detail.text.index("Quote & Confirmation")
+        assert detail.text.index("Quote & Confirmation") < detail.text.index("Kitchen Sheet & Sharing")
+        assert detail.text.index("Kitchen Sheet & Sharing") < detail.text.index("Order Finance")
         assert "Web Order Charge" not in detail.text
+        assert 'Set the status to Quoted first' in detail.text
+        assert 'Change the order status to Confirmed' in detail.text
         csrf = csrf_from(detail.text)
         upd = client.post("/admin/orders/1", data={
             "csrf_token": csrf,
@@ -139,6 +146,11 @@ def test_build8_mobile_workflow():
         assert "Invoice Available" not in customer.text
         assert "Cancel Order" not in customer.text
         assert "Wednesday" not in customer.text or "Day" in customer.text  # day is derived, date-dependent
+        assert "+ Add More Dishes" not in customer.text
+        assert "Please contact the Spice India Catering team" in customer.text
+        assert "CONFIRM ORDER" in customer.text
+        locked_edit = client.get("/orders/" + b1["token"] + "/add-dishes", follow_redirects=False)
+        assert locked_edit.status_code == 303
 
         transaction = client.get("/admin/transactions/1")
         assert transaction.status_code == 200
@@ -151,10 +163,32 @@ def test_build8_mobile_workflow():
         assert "Expenses" in transactions.text
         assert "Sort By" in transactions.text
 
+        # Kitchen actions are locked while Quoted.
         detail = client.get("/admin/orders/1")
         csrf = csrf_from(detail.text)
-        kitchen = client.post("/admin/orders/1/kitchen-share", data={
+        kitchen_locked = client.post("/admin/orders/1/kitchen-share", data={
             "csrf_token": csrf,
+            "kitchen_comments": "NO ONION IN 2 PORTIONS",
+        }, follow_redirects=False)
+        assert kitchen_locked.status_code == 303
+        assert kitchen_locked.headers["location"].startswith("/admin/orders/1?toast=")
+        assert client.get(f"/kitchen/{b1['token']}.pdf").status_code == 409
+
+        # Once Confirmed, kitchen PDF/WhatsApp unlocks.
+        detail = client.get("/admin/orders/1")
+        confirm_admin = client.post("/admin/orders/1", data={
+            "csrf_token": csrf_from(detail.text),
+            "status": "confirmed",
+            "adult_charge": "20.00",
+            "kid_charge": "10.00",
+            "delivery_service_charge": "55.00",
+            "admin_notes": "Kitchen note",
+            "customer_message": "Confirmed.",
+        }, follow_redirects=False)
+        assert confirm_admin.status_code == 303
+        detail = client.get("/admin/orders/1")
+        kitchen = client.post("/admin/orders/1/kitchen-share", data={
+            "csrf_token": csrf_from(detail.text),
             "kitchen_comments": "NO ONION IN 2 PORTIONS",
         }, follow_redirects=False)
         assert kitchen.status_code == 303
@@ -171,10 +205,11 @@ def test_build8_mobile_workflow():
         assert menus.headers["location"] == "/admin/menu-import"
         menu_import = client.get("/admin/menu-import")
         assert menu_import.status_code == 200
-        assert "Excel-Only Menu Management" in menu_import.text
+        assert "One Master Menu" in menu_import.text
         assert "Download Current Excel" in menu_import.text
         assert "Menu Images" in menu_import.text
-        assert "Database backup active" in menu_import.text or "Cloud backup connected" in menu_import.text
+        assert "Database backup active" in menu_import.text or "Cloudflare R2 backup connected" in menu_import.text
+        assert "Master Category Setup" in menu_import.text
         master_download = client.get("/admin/menu-import/download")
         assert master_download.status_code == 200
         assert master_download.content[:2] == b"PK"
@@ -230,23 +265,23 @@ def test_excel_menu_import_and_combination_rules():
     ws.title = "Menu Import"
     ws.append(["Complete Menu"])
     ws.append([])
-    ws.append(["Item ID", "Main Category", "South Indian", "North Indian", "Sub Category", "Menu Section", "Menu Item Name", "Item Image", "Display Price (€)", "Display Order", "Active", "Notes"])
-    ws.append([501, "Veg Cuisine", "Yes", "Yes", "Rice / Naans / Starter", "Indian Breads", "Test Appam", "https://example.com/appam.jpg", 4.50, 1, "Yes", ""])
-    ws.append([502, "Non Veg Cuisine", "Yes", "Yes", "Main Course", "Non-Vegetarian Main Course", "Test Curry", "", 9.95, 1, "Yes", ""])
+    ws.append(["Item ID", "Main Category", "South Indian", "North Indian", "Sub Category", "Menu Section", "Menu Item Name", "Item Image", "Display Price (€)", "Display Order", "Active", "Notes", "Food Description"])
+    ws.append([501, "Veg Cuisine", "Yes", "Yes", "Bread's/Rice", "Indian Breads", "Test Appam", "https://example.com/appam.jpg", 4.50, 1, "Yes", "", "Soft South Indian bread served fresh."])
+    ws.append([502, "Non Veg Cuisine", "Yes", "Yes", "Main", "Non-Vegetarian Main Course", "Test Curry", "", 9.95, 1, "Yes", "", "Rich house-style curry."])
     setup = wb.create_sheet("Category Setup")
     setup.append(["Website Category Structure"])
     setup.append([])
     setup.append(["Type", "Name", "Display Order", "Image / Icon"])
     setup.append(["Side Filter", "South Indian", 1, ""])
     setup.append(["Side Filter", "North Indian", 2, ""])
-    setup.append(["Sub Category", "Rice / Naans / Starter", 1, ""])
-    setup.append(["Sub Category", "Main Course", 2, ""])
+    setup.append(["Sub Category", "Bread's/Rice", 1, ""])
+    setup.append(["Sub Category", "Main", 2, ""])
     sections = wb.create_sheet("Section Setup")
     sections.append(["Menu Section Headings"])
     sections.append([])
     sections.append(["Main Category", "Sub Category", "Menu Section", "Display Order", "Heading Colour", "Active"])
-    sections.append(["Veg Cuisine", "Rice / Naans / Starter", "Indian Breads", 1, "Green", "Yes"])
-    sections.append(["Non Veg Cuisine", "Main Course", "Non-Vegetarian Main Course", 1, "Red", "Yes"])
+    sections.append(["Veg Cuisine", "Bread's/Rice", "Indian Breads", 1, "Green", "Yes"])
+    sections.append(["Non Veg Cuisine", "Main", "Non-Vegetarian Main Course", 1, "Red", "Yes"])
     combos = wb.create_sheet("Combinations")
     combos.append(["Combination Rules"])
     combos.append([])
@@ -265,6 +300,7 @@ def test_excel_menu_import_and_combination_rules():
         assert appam and curry
         assert float(appam.display_price) == 4.50
         assert appam.image_reference == "https://example.com/appam.jpg"
+        assert appam.description == "Soft South Indian bread served fresh."
         assert appam.section_heading_color == "#22C55E"
         assert curry.section_heading_color == "#EF4444"
         assert db.scalar(select(MenuCombination).where(MenuCombination.trigger_import_item_id == 501))
@@ -277,6 +313,8 @@ def test_excel_menu_import_and_combination_rules():
         assert "category-picker-dialog" in menu_page.text
         assert "https://example.com/appam.jpg" in menu_page.text
         assert '"price": 4.5' in menu_page.text or '"price":4.5' in menu_page.text
+        js = client.get("/static/js/customer.js")
+        assert "review-basket-image" in js.text
         response = client.get("/api/menu-combinations", params={"item_id": appam_id})
         assert response.status_code == 200
         assert response.json()["items"][0]["name"] == "Test Curry"

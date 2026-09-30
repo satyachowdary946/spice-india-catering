@@ -3,9 +3,9 @@
 {% block body %}
 <div class="admin-title">
   <div>
-    <div class="eyebrow">Excel-Only Menu Management</div>
+    <div class="eyebrow">One Master Menu</div>
     <h1>Menu Management</h1>
-    <p class="muted">The master Excel workbook controls the website menu. Download it, make your changes, and upload it again.</p>
+    <p class="muted">Edit the Excel once, upload it here once, and the website menu updates immediately. The same master workbook is saved with the website and mirrored to Cloudflare R2 when R2 is connected.</p>
   </div>
 </div>
 
@@ -14,7 +14,7 @@
 {% if request.query_params.get('image_saved') %}<div class="notice success">Menu image saved and linked to the master Excel by Item ID.</div>{% endif %}
 {% if result %}
 <div class="notice success">
-  Menu updated: {{ result.items }} Excel items processed, {{ result.created }} website records created, {{ result.updated }} updated, {{ result.deactivated }} old records hidden, and {{ result.combinations }} combination rules loaded.
+  Menu published: {{ result.items }} Excel items processed, {{ result.created }} website records created, {{ result.updated }} updated, {{ result.deactivated }} old records hidden, and {{ result.combinations }} combination rules loaded. The master workbook has also been saved for recovery{% if storage.r2_configured %} and backed up to Cloudflare R2{% endif %}.
 </div>
 {% endif %}
 
@@ -23,28 +23,50 @@
   <div class="menu-master-head">
     <div>
       <h2>{{ storage.master_filename }}</h2>
-      {% if storage.master_uploaded_at %}<p class="muted">Last imported: {{ storage.master_uploaded_at.strftime('%d %b %Y · %H:%M') }}</p>{% else %}<p class="muted">No uploaded master workbook yet. The starter workbook is available below.</p>{% endif %}
+      {% if storage.master_uploaded_at %}<p class="muted">Last published: {{ local_datetime(storage.master_uploaded_at).strftime('%d %b %Y · %H:%M') }}</p>{% else %}<p class="muted">No uploaded master workbook yet. The starter workbook is available below.</p>{% endif %}
     </div>
-    <span class="storage-pill {% if storage.r2_configured %}cloud{% else %}fallback{% endif %}">{% if storage.r2_configured %}Cloud backup connected{% else %}Database backup active{% endif %}</span>
+    <span class="storage-pill {% if storage.r2_configured %}cloud{% else %}fallback{% endif %}">{% if storage.r2_configured %}Cloudflare R2 backup connected{% else %}Database backup active{% endif %}</span>
   </div>
-  <div class="admin-action-row">
-    <a class="btn secondary" href="/admin/menu-import/download">Download Current Excel</a>
-  </div>
-  <p class="help">Your current workbook is stored with the website, so changing or losing your laptop does not remove the menu file. When Cloudflare R2 is configured it is also mirrored there.</p>
+  <div class="admin-action-row"><a class="btn secondary" href="/admin/menu-import/download">Download Current Excel</a></div>
+  <p class="help">The live customer menu reads from the database for speed. Publishing Excel updates that database, saves the same Excel as the master copy, and mirrors it to R2 when configured. You do not need to upload the Excel separately to Cloudflare.</p>
 </section>
 
 <section class="card import-workflow-card" style="margin-top:16px">
-  <div class="eyebrow">Update Website Menu</div>
-  <h2>Upload Updated Excel</h2>
-  <p class="muted">Item names, prices, categories, section headings, heading colours, visibility, order and combinations are controlled from the workbook.</p>
+  <div class="eyebrow">Publish Menu</div>
+  <h2>Upload Updated Excel Once</h2>
+  <p class="muted">The workbook controls item names, Food Description, images, prices, categories, section headings, visibility, display order and combination rules.</p>
   <form method="post" action="/admin/menu-import" enctype="multipart/form-data" class="compact">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field">
       <label for="menu-workbook">Master Menu Excel (.xlsx)</label>
       <input id="menu-workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
-      <span class="help">Maximum 8 MB. A blank Item Image cell preserves the existing image. Type REMOVE in the Item Image cell to delete an image.</span>
+      <span class="help">Maximum 8 MB. A blank Item Image cell preserves the existing image. Type REMOVE in Item Image to remove it.</span>
     </div>
-    <button class="btn" type="submit">Import / Replace Website Menu</button>
+    <button class="btn" type="submit">Publish Excel To Website</button>
+  </form>
+</section>
+
+<section class="card" id="category-setup" style="margin-top:16px">
+  <div class="eyebrow">Master Category Setup</div>
+  <h2>Category / Subcategory Names & Order</h2>
+  <p class="muted">These names come from the stored master Excel. Rename or add a category here and the change is written back to the master workbook, applied to matching menu rows, published to the website, and backed up to R2. Existing Item IDs stay unchanged.</p>
+  <div class="category-setup-grid">
+    {% for row in category_setup_rows %}
+    <form method="post" action="/admin/menu-import/category" class="category-setup-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="old_name" value="{{ row.name }}">
+      <div class="field"><label>Subcategory</label><input name="name" value="{{ row.name }}" required></div>
+      <div class="field"><label>Order</label><input name="display_order" type="number" min="1" value="{{ row.display_order or loop.index }}" required></div>
+      <button class="btn secondary" type="submit">Save</button>
+    </form>
+    {% else %}<div class="empty">Upload the Build 13 menu Excel once to create the master category setup.</div>{% endfor %}
+  </div>
+  <form method="post" action="/admin/menu-import/category" class="category-setup-row" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="old_name" value="">
+    <div class="field"><label>New Subcategory</label><input name="name" placeholder="e.g. Welcome Drink" required></div>
+    <div class="field"><label>Order</label><input name="display_order" type="number" min="1" value="{{ (category_setup_rows|length) + 1 }}" required></div>
+    <button class="btn" type="submit">+ Add Category</button>
   </form>
 </section>
 
@@ -55,44 +77,20 @@
     <div><strong>{{ storage.available }}</strong><span>Images available</span></div>
     <div><strong>{{ storage.missing }}</strong><span>Images missing</span></div>
   </div>
-  <p class="muted">Upload an image against the permanent Excel Item ID. The website links it to every regional copy of that dish and writes the image reference back into the stored master Excel.</p>
+  <p class="muted">Your R2 URLs in the Excel remain the preferred image source. You can also upload an individual replacement here against its permanent Item ID.</p>
   {% if storage["items"] %}
   <form method="post" action="/admin/menu-import/image" enctype="multipart/form-data" class="menu-image-upload-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="field">
-      <label for="image-item-id">Dish</label>
-      <select id="image-item-id" name="import_item_id" required>
-        <option value="">Select dish</option>
-        {% for item in storage["items"] %}<option value="{{ item.import_item_id }}">{{ item.import_item_id }} · {{ item.name }}</option>{% endfor %}
-      </select>
-    </div>
-    <div class="field">
-      <label for="menu-image-file">Image</label>
-      <input id="menu-image-file" name="image" type="file" accept="image/png,image/jpeg,image/webp" required>
-      <span class="help">PNG, JPEG or WebP · maximum 3 MB.</span>
-    </div>
+    <div class="field"><label for="image-item-id">Dish</label><select id="image-item-id" name="import_item_id" required><option value="">Select dish</option>{% for item in storage["items"] %}<option value="{{ item.import_item_id }}">{{ item.import_item_id }} · {{ item.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="menu-image-file">Image</label><input id="menu-image-file" name="image" type="file" accept="image/png,image/jpeg,image/webp" required><span class="help">PNG, JPEG or WebP · maximum 3 MB.</span></div>
     <button class="btn" type="submit">Upload & Link Image</button>
   </form>
   {% endif %}
-
-  {% if storage.missing_items %}
-  <details class="missing-image-list" style="margin-top:16px">
-    <summary>{{ storage.missing }} dishes still need images</summary>
-    <div class="missing-image-grid">
-      {% for item in storage.missing_items %}<span><strong>{{ item.import_item_id }}</strong> {{ item.name }}</span>{% endfor %}
-    </div>
-  </details>
-  {% endif %}
+  {% if storage.missing_items %}<details class="missing-image-list" style="margin-top:16px"><summary>{{ storage.missing }} dishes still need images</summary><div class="missing-image-grid">{% for item in storage.missing_items %}<span><strong>{{ item.import_item_id }}</strong> {{ item.name }}</span>{% endfor %}</div></details>{% endif %}
 </section>
 
 <section class="card" style="margin-top:16px">
   <div class="eyebrow">Storage Safety</div>
-  {% if storage.r2_configured %}
-  <h2>Cloudflare R2 Connected</h2>
-  <p class="muted">New menu images are stored in Cloudflare R2 and the master Excel is mirrored there. The current Excel is also retained in the website database as a recovery copy.</p>
-  {% else %}
-  <h2>Safe Database Backup Active</h2>
-  <p class="muted">The Excel and uploaded menu images are stored in the website database, so they are not tied to this laptop. For a second cloud copy and faster direct image delivery, add the Cloudflare R2 environment variables listed in <code>.env.example</code>.</p>
-  {% endif %}
+  {% if storage.r2_configured %}<h2>Cloudflare R2 Connected</h2><p class="muted">Every newly published master Excel is mirrored to <code>menu-data/Spice_India_Catering_Master_Menu.xlsx</code>. Menu images can continue to use <code>https://media.spiceindiacatering.party/menu/...</code>.</p>{% else %}<h2>Database Backup Active</h2><p class="muted">The Excel and uploaded images are retained in the website database. Configure R2 environment variables for the second cloud copy.</p>{% endif %}
 </section>
 {% endblock %}

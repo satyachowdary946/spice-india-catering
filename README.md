@@ -1,6 +1,24 @@
-# Spice India Catering Portal — Build 8
+# Spice India Catering Portal — Build 13
 
 Mobile-first catering quote, order-management and finance portal for Spice India Catering. The primary UX target is a phone browser (roughly 360–430 px wide), with responsive tablet/desktop admin support.
+
+
+## Build 13 — menu governance, quote controls and lifecycle communications
+
+Build 13 supersedes older workflow notes below wherever they conflict.
+
+- Master customer category order: **Welcome Drink → Stater → Biryani's → Main → Bread's/Rice → Dessert's**. Category Setup is persisted in the master Excel; renames are propagated to matching `Menu Import` and `Section Setup` rows.
+- `Menu Import` adds a dedicated **Food Description** column. Customer menu/review views render the description below the dish name when present.
+- Admin uploads the workbook once. A successful publish updates the live database, stores the master workbook and mirrors it to Cloudflare R2 at `menu-data/Spice_India_Catering_Master_Menu.xlsx` when R2 is configured.
+- Recent Requests and Orders show the actual request-received date/time. Orders support Request From / Request To filtering.
+- Admin order detail is ordered: **Customer/Event → Selected Menu → Quote & Confirmation → Customer Quote → Kitchen → administration/timeline → Order Finance**. Admin can add/edit/remove order dishes; changing a Quoted or Confirmed menu reopens the order to New and requires a revised quote.
+- Customer **Add More Dishes** is available only while status is New. Once Quoted, the customer is told to contact the catering team.
+- Email / customer WhatsApp / Copy Confirm Link unlock only when status is **Quoted**. Kitchen PDF/print/send actions unlock only when status is **Confirmed**. Server-side guards enforce the same rules.
+- Customer WhatsApp opens the stored customer number directly; Irish local `08...` numbers are normalized to the `353...` WhatsApp format. A browser share does not prove the message was sent, so the UI reports that WhatsApp was opened/prepared rather than falsely reporting delivery.
+- Admin actions use top-of-screen toast feedback for quote email success/failure and copy-link success/failure.
+- Review Basket shows food thumbnails from the stored/R2 image URL and the Food Description when present.
+- Professional customer lifecycle emails are automatic: request received, quoted, confirmed, completed and cancelled. They contain branded styling, order/event details, selected menu, relevant price information, tracking/confirmation CTA and event address. Email-provider failures never roll back the order/status change.
+- Existing automatic admin WhatsApp notification after customer confirmation is preserved.
 
 ## Build 8 highlights
 

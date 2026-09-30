@@ -1531,3 +1531,26 @@ html,body{max-width:100%;overflow-x:hidden}
   .site-header .nav a{padding-inline:8px}
   .search-results-head h2{font-size:1.25rem}
 }
+
+/* BUILD 13 — workflow toasts, editable order menu and image review basket */
+.admin-toast{position:fixed;z-index:9999;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translate(-50%,-18px);width:min(92vw,620px);padding:14px 18px;border-radius:14px;border:1px solid #2f735e;background:#10261f;color:#b9f2d9;font-weight:850;box-shadow:0 16px 44px rgba(0,0,0,.38);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease}
+.admin-toast.show{opacity:1;transform:translate(-50%,0)}
+.admin-toast.error{background:#321918;border-color:#9a4d47;color:#ffd1cc}
+.btn[disabled],.btn.disabled{opacity:.45;cursor:not-allowed;pointer-events:none;filter:saturate(.45)}
+.order-add-dish-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;padding:12px;border:1px solid #43504d;border-radius:13px;background:#0d1514;margin:12px 0 16px}
+.admin-order-menu-list{display:grid;gap:8px;margin:8px 0 14px}
+.admin-menu-subheading{margin:9px 0 2px;text-transform:uppercase;letter-spacing:.07em;font-weight:800}
+.admin-order-menu-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px 12px;border:1px solid #3b4744;border-radius:12px;background:#111a18}
+.admin-order-menu-item>div>strong{display:block}.admin-order-menu-item small{display:block;color:#9da9a6;margin-top:2px}
+.order-item-editor summary{cursor:pointer;font-weight:850;color:#59d9c8;list-style:none;padding:4px 0}.order-item-editor summary::-webkit-details-marker{display:none}
+.order-item-editor[open]{grid-column:1/-1;width:100%;padding-top:8px;border-top:1px solid #34413e}
+.order-item-editor form{margin-top:8px}
+.review-basket-list{display:grid;gap:10px;margin:8px 0 0;padding:0;list-style:none}
+.review-basket-item{display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px;border:1px solid #3b4744;border-radius:13px;background:#121a19}
+.review-basket-image,.review-basket-placeholder{width:72px;height:72px;border-radius:11px;object-fit:cover;border:1px solid #46524f;background:#0b1110}
+.review-basket-placeholder{display:grid;place-items:center;color:#59d9c8;font-weight:950;font-size:.8rem}
+.review-basket-copy{min-width:0}.review-basket-copy strong{display:block}.review-basket-copy small{display:block;color:#9eaaa7;margin-top:3px;line-height:1.35}.review-basket-copy .review-item-price{display:inline-block;margin-top:5px;color:#68e5d3}
+.review-basket-item button{border:0;background:transparent;color:#ff8378;font-weight:850;padding:8px}
+.category-setup-grid{display:grid;gap:10px}.category-setup-row{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;gap:10px;align-items:end;padding:10px;border:1px solid #46524f;border-radius:12px;background:#111a18}
+.category-setup-row .field{margin:0}
+@media(max-width:680px){.order-add-dish-form,.category-setup-row{grid-template-columns:1fr}.admin-order-menu-item{grid-template-columns:1fr}.review-basket-item{grid-template-columns:62px minmax(0,1fr) auto}.review-basket-image,.review-basket-placeholder{width:62px;height:62px}.admin-toast{top:calc(10px + env(safe-area-inset-top));font-size:.9rem}}

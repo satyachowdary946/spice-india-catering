@@ -48,12 +48,14 @@ from .notifications import (
     notify_admin_new_quote,
     notify_admin_new_quote_email,
     notify_admin_order_confirmed,
+    notify_customer_request_received_email,
     notify_customer_quote_email,
+    notify_customer_status_email,
     whatsapp_cloud_configured,
     whatsapp_confirmation_configured,
 )
 from .seed import ensure_seed_data
-from .menu_excel import parse_menu_workbook, update_workbook_image_references
+from .menu_excel import parse_menu_workbook, update_workbook_category_setup, update_workbook_image_references
 from .storage import extension_for_content_type, get_bytes as storage_get_bytes, key_from_reference, put_bytes as storage_put_bytes, r2_configured
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -86,6 +88,8 @@ FILTER_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "void
 VOID_REASON_OPTIONS = {"test": "Test order", "duplicate": "Duplicate order", "customer_mistake": "Customer mistake", "admin_mistake": "Admin mistake", "spam": "Spam", "other": "Other"}
 DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non Veg"}
 REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
+DUBLIN_TZ = ZoneInfo("Europe/Dublin")
+UTC_TZ = ZoneInfo("UTC")
 
 
 def ensure_schema_compatibility() -> None:
@@ -204,6 +208,23 @@ def business(db: Session) -> BusinessSettings:
         db.refresh(obj)
     return obj
 
+
+def local_datetime(value: datetime | None) -> datetime | None:
+    """Render stored UTC-naive timestamps in Europe/Dublin for the admin/customer UI."""
+    if value is None:
+        return None
+    aware = value if value.tzinfo else value.replace(tzinfo=UTC_TZ)
+    return aware.astimezone(DUBLIN_TZ)
+
+
+def local_date_utc_bounds(value: date) -> tuple[datetime, datetime]:
+    start_local = datetime.combine(value, time.min, tzinfo=DUBLIN_TZ)
+    end_local = start_local + timedelta(days=1)
+    return (
+        start_local.astimezone(UTC_TZ).replace(tzinfo=None),
+        end_local.astimezone(UTC_TZ).replace(tzinfo=None),
+    )
+
 def menu_image_url(item: MenuItem, public_id: int | None = None) -> str:
     """Return a stable customer-facing URL for a menu image."""
     import_id = int(item.import_item_id) if item.import_item_id is not None else None
@@ -241,7 +262,7 @@ def save_master_workbook(db: Session, data: bytes, filename: str) -> BusinessSet
     biz.menu_workbook_uploaded_at = datetime.utcnow()
     if r2_configured():
         try:
-            key = "menu/master/Spice_India_Catering_Master_Menu.xlsx"
+            key = "menu-data/Spice_India_Catering_Master_Menu.xlsx"
             storage_put_bytes(
                 key, data,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -325,6 +346,18 @@ def load_master_workbook(db: Session) -> tuple[bytes | None, str]:
     if template_path.exists():
         return template_path.read_bytes(), "Spice_India_Catering_Master_Menu.xlsx"
     return None, "Spice_India_Catering_Master_Menu.xlsx"
+
+
+def master_category_setup_rows(db: Session) -> list[dict[str, Any]]:
+    data, _ = load_master_workbook(db)
+    if not data:
+        return []
+    try:
+        parsed = parse_menu_workbook(data)
+    except Exception:
+        return []
+    rows = list((parsed.get("category_setup") or {}).values())
+    return sorted(rows, key=lambda row: (int(row.get("sort_order") or 999), str(row.get("name") or "")))
 
 
 def format_order_number(sequence: int) -> str:
@@ -485,6 +518,7 @@ def render(request: Request, db: Session, template: str, **context: Any):
         "admin_logged_in": bool(request.session.get("admin_id")),
         "csrf_token": ensure_csrf(request.session),
         "status_labels": {s: s.replace("_", " ").title() for s in ALLOWED_STATUSES},
+        "local_datetime": local_datetime,
     })
     return templates.TemplateResponse(template, context)
 
@@ -626,6 +660,54 @@ def order_groups(order: QuoteRequest):
     for item in order.items:
         groups.setdefault(item.menu_name, {}).setdefault(item.category_name, {}).setdefault(item.subcategory_name, []).append(item)
     return groups
+
+
+def order_menu_item_names(order: QuoteRequest) -> list[str]:
+    return [item.item_name for item in sorted(order.items, key=lambda x: (x.sort_order, x.id))]
+
+
+def invalidate_order_quote_after_menu_change(order: QuoteRequest, db: Session, note: str) -> bool:
+    """Reopen an active quoted/confirmed order after an admin changes its menu.
+
+    The public confirmation URL is stable, but the customer cannot confirm again until
+    the revised order has been deliberately moved back to Quoted.
+    """
+    if order.status not in {"quoted", "confirmed"}:
+        return False
+    order.status = "new"
+    order.confirmed_at = None
+    order.customer_message = "Your menu was updated by the catering team. A revised quote will be sent before confirmation."
+    db.add(StatusHistory(order_id=order.id, status="new", note=note[:500]))
+    return True
+
+
+async def send_customer_status_email_for_order(
+    order: QuoteRequest,
+    request: Request,
+    db: Session,
+    status: str,
+) -> tuple[bool, str]:
+    biz = business(db)
+    p = pricing_breakdown(order)
+    total = f"{p['total']:.2f}" if order.final_price is not None else ""
+    return await notify_customer_status_email(
+        status,
+        order.customer.email,
+        order.customer.name,
+        order.order_number,
+        order.event_name,
+        order.event_date.strftime("%d %b %Y"),
+        event_day(order),
+        order.event_time.strftime("%H:%M"),
+        order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+        order.adults,
+        order.kids,
+        public_order_url(request, order.public_token),
+        order_menu_item_names(order),
+        total,
+        biz.phone,
+        f"{order.address}, {order.eircode}".strip(", "),
+    )
 
 
 def public_order_url(request: Request, token: str) -> str:
@@ -975,6 +1057,25 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         adults + kids,
         admin_order_url(request, order.id),
     )
+    selected_names = [item_by_id[item_id].name for item_id in unique_ids if item_id in item_by_id]
+    received_local = local_datetime(order.created_at)
+    customer_email_sent, customer_email_message = await notify_customer_request_received_email(
+        customer.email,
+        customer.name,
+        order.order_number,
+        order.event_name,
+        order.event_date.strftime("%d %b %Y"),
+        event_day(order),
+        order.event_time.strftime("%H:%M"),
+        order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+        adults,
+        kids,
+        selected_names + requested_dishes,
+        public_order_url(request, order.public_token),
+        received_local.strftime("%d %b %Y · %H:%M") if received_local else "",
+        business(db).phone,
+        f"{order.address}, {order.eircode}".strip(", "),
+    )
     return {
         "ok": True,
         "order_number": order.order_number,
@@ -983,6 +1084,8 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         "notification_message": notify_message,
         "email_sent": email_sent,
         "email_message": email_message,
+        "customer_email_sent": customer_email_sent,
+        "customer_email_message": customer_email_message,
     }
 @app.get("/track", response_class=HTMLResponse)
 def track_order_page(request: Request, db: Session = Depends(get_db)):
@@ -1054,8 +1157,8 @@ def customer_add_dishes(token: str, request: Request, db: Session = Depends(get_
     )
     if not order:
         raise HTTPException(status_code=404)
-    if order.status in {"confirmed", "completed", "cancelled", "voided"}:
-        return RedirectResponse(f"/orders/{token}?error=Menu+changes+are+locked+for+this+order", status_code=303)
+    if order.status != "new":
+        return RedirectResponse(f"/orders/{token}?error=Menu+changes+are+locked+after+the+order+is+quoted.+Please+contact+the+catering+team", status_code=303)
     draft = {
         "details": {
             "name": order.customer.name,
@@ -1089,8 +1192,8 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     )
     if not order:
         return JSONResponse({"ok": False, "error": "Order not found."}, status_code=404)
-    if order.status in {"confirmed", "completed", "cancelled", "voided"}:
-        return JSONResponse({"ok": False, "error": "Menu changes are locked for this order."}, status_code=409)
+    if order.status != "new":
+        return JSONResponse({"ok": False, "error": "Menu changes are locked after the order is quoted. Please contact the catering team."}, status_code=409)
     try:
         payload = await request.json()
     except Exception:
@@ -1707,7 +1810,7 @@ def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
                 db.add(item)
 
             item.name = item_data["name"]
-            item.description = item_data["notes"]
+            item.description = item_data.get("description") or ""
             item.dietary = item_data["dietary"]
             item.active = bool(item_data["active"]) and section_active
             item.sort_order = int(item_data["sort_order"] or 0)
@@ -1806,7 +1909,10 @@ def canonical_import_items(db: Session) -> list[MenuItem]:
 def admin_menu_import_page(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db))
+    return render(
+        request, db, "admin/menu_import.html", admin=admin,
+        storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db),
+    )
 
 
 @app.get("/admin/menu-import/download")
@@ -1834,10 +1940,10 @@ async def admin_menu_import_apply(
     if redirect: return redirect
     check_csrf(request, csrf_token)
     if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
-        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error="Choose an .xlsx menu workbook.")
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), error="Choose an .xlsx menu workbook.")
     data = await workbook.read()
     if len(data) > 8 * 1024 * 1024:
-        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error="Workbook must be smaller than 8 MB.")
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), error="Workbook must be smaller than 8 MB.")
     try:
         parsed = parse_menu_workbook(data)
         prepare_parsed_menu_images(parsed)
@@ -1848,11 +1954,49 @@ async def admin_menu_import_apply(
         db.commit()
     except ValueError as exc:
         db.rollback()
-        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error=str(exc))
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), error=str(exc))
     except Exception:
         db.rollback()
-        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), error="Import failed. Check the workbook format and try again.")
-    return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), result=result)
+        return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), error="Import failed. Check the workbook format and try again.")
+    return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), result=result)
+
+
+@app.post("/admin/menu-import/category")
+def admin_menu_category_setup_update(
+    request: Request,
+    name: str = Form(...),
+    display_order: int = Form(...),
+    old_name: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    data, filename = load_master_workbook(db)
+    if not data:
+        return RedirectResponse("/admin/menu-import?toast=No+master+Excel+is+available&toast_type=error#category-setup", status_code=303)
+    try:
+        updated = update_workbook_category_setup(
+            data,
+            old_name=old_name,
+            new_name=name,
+            display_order=int(display_order),
+        )
+        parsed = parse_menu_workbook(updated)
+        prepare_parsed_menu_images(parsed)
+        apply_menu_workbook(db, parsed)
+        references = current_menu_image_references(db)
+        normalized = update_workbook_image_references(updated, references)
+        save_master_workbook(db, normalized, filename)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/menu-import?toast={quote(str(exc))}&toast_type=error#category-setup", status_code=303)
+    except Exception:
+        db.rollback()
+        return RedirectResponse("/admin/menu-import?toast=Category+update+failed.+Check+the+master+Excel+and+try+again&toast_type=error#category-setup", status_code=303)
+    return RedirectResponse("/admin/menu-import?toast=Category+setup+updated+across+the+website+and+master+Excel&toast_type=success#category-setup", status_code=303)
 
 
 @app.post("/admin/menu-import/image")
@@ -2016,17 +2160,43 @@ def api_menu_combinations(item_id: int, db: Session = Depends(get_db)):
 
 # ---------- Orders/customers ----------
 @app.get("/admin/orders", response_class=HTMLResponse)
-def admin_orders(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
+def admin_orders(
+    request: Request,
+    q: str = "",
+    status: str = "",
+    request_from: str = "",
+    request_to: str = "",
+    db: Session = Depends(get_db),
+):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
     stmt = select(QuoteRequest).options(selectinload(QuoteRequest.customer)).order_by(QuoteRequest.created_at.desc())
     if status in ALLOWED_STATUSES:
         stmt = stmt.where(QuoteRequest.status == status)
+    date_error = ""
+    if request_from.strip():
+        try:
+            from_day = date.fromisoformat(request_from.strip())
+            start_utc, _ = local_date_utc_bounds(from_day)
+            stmt = stmt.where(QuoteRequest.created_at >= start_utc)
+        except ValueError:
+            date_error = "Choose a valid request-from date."
+    if request_to.strip():
+        try:
+            to_day = date.fromisoformat(request_to.strip())
+            _, end_utc = local_date_utc_bounds(to_day)
+            stmt = stmt.where(QuoteRequest.created_at < end_utc)
+        except ValueError:
+            date_error = "Choose a valid request-to date."
     if q.strip():
         like = f"%{q.strip()}%"
         stmt = stmt.join(Customer).where(or_(QuoteRequest.order_number.ilike(like), Customer.customer_number.ilike(like), Customer.name.ilike(like), Customer.phone.ilike(like), QuoteRequest.event_name.ilike(like)))
     orders = db.scalars(stmt).all()
-    return render(request, db, "admin/orders.html", admin=admin, orders=orders, q=q, selected_status=status, statuses=FILTER_STATUSES)
+    return render(
+        request, db, "admin/orders.html", admin=admin, orders=orders, q=q,
+        selected_status=status, statuses=FILTER_STATUSES,
+        request_from=request_from, request_to=request_to, date_error=date_error,
+    )
 
 
 @app.get("/admin/orders/{order_id}", response_class=HTMLResponse)
@@ -2043,23 +2213,27 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
     customer_share_text = build_customer_share_text(order, biz, purl)
     customer_number = normalise_whatsapp_number(order.customer.whatsapp)
     customer_whatsapp_url = f"https://wa.me/{customer_number}?text={quote(customer_share_text)}" if customer_number else ""
-    whatsapp_share_url = "https://wa.me/?text=" + quote(customer_share_text)
+    whatsapp_share_url = customer_whatsapp_url
     mail_subject = quote(f"Catering quote {order.order_number}")
     mail_body = quote(customer_share_text)
     mailto_url = f"mailto:?subject={mail_subject}&body={mail_body}"
     can_void = not order.payments and not order.expenses and not order.invoice_sent_at and order.status != "voided"
     can_delete = not order.payments and not order.expenses and not order.invoice_sent_at
+    catalog_items = [item for item in canonical_import_items(db) if item.active]
     return render(
         request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order),
         statuses=EDITABLE_STATUSES, public_url=purl, whatsapp_share_url=whatsapp_share_url,
         customer_whatsapp_url=customer_whatsapp_url, mailto_url=mailto_url,
         finance=finance_summary(order), pricing=pricing_breakdown(order),
         can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
+        catalog_items=catalog_items,
+        can_share_quote=(order.status == "quoted" and order.final_price is not None),
+        can_send_kitchen=(order.status == "confirmed"),
     )
 
 
 @app.post("/admin/orders/{order_id}")
-def admin_order_update(
+async def admin_order_update(
     order_id: int,
     request: Request,
     status: str = Form(...),
@@ -2074,18 +2248,27 @@ def admin_order_update(
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
     check_csrf(request, csrf_token)
-    order = db.get(QuoteRequest, order_id)
+    order = db.scalar(
+        select(QuoteRequest)
+        .where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items))
+    )
     if not order: raise HTTPException(status_code=404)
     if order.status == "voided":
         status = "voided"
     elif status not in EDITABLE_STATUSES:
         status = order.status
     old_status = order.status
-    order.status = status
     order.admin_notes = admin_notes.strip()
     order.customer_message = customer_message.strip()
 
-    any_pricing = bool(adult_charge.strip() or kid_charge.strip())
+    old_pricing = (
+        money(order.adult_charge),
+        money(order.kid_charge),
+        money(order.delivery_service_charge),
+        money(order.final_price),
+    )
+    any_pricing = bool(adult_charge.strip() or kid_charge.strip() or delivery_service_charge.strip())
     if any_pricing:
         try:
             adult = money(adult_charge)
@@ -2102,14 +2285,188 @@ def admin_order_update(
             order.web_order_charge = Decimal("0.00")
             order.final_price = calc["total"]
         except Exception:
-            return RedirectResponse(f"/admin/orders/{order_id}?error=Invalid+pricing", status_code=303)
+            return RedirectResponse(f"/admin/orders/{order_id}?toast=Invalid+pricing&toast_type=error", status_code=303)
+
+    pricing_changed = old_pricing != (
+        money(order.adult_charge),
+        money(order.kid_charge),
+        money(order.delivery_service_charge),
+        money(order.final_price),
+    )
+
+    if status in {"quoted", "confirmed"} and order.final_price is None:
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast=Enter+pricing+before+changing+the+status+to+{quote(status.title())}&toast_type=error",
+            status_code=303,
+        )
+
+    # A confirmed order whose price is changed cannot remain confirmed without a
+    # fresh customer review. Reopen it unless the admin explicitly moved it to Quoted.
+    if old_status == "confirmed" and pricing_changed and status == "confirmed":
+        status = "new"
+        order.confirmed_at = None
+        order.customer_message = "The catering team updated your quote. A revised quote will be sent for confirmation."
+
+    order.status = status
 
     if status == "confirmed" and not order.confirmed_at:
         order.confirmed_at = datetime.utcnow()
+    elif status != "confirmed" and old_status == "confirmed":
+        order.confirmed_at = None
     if old_status != status:
         db.add(StatusHistory(order_id=order.id, status=status, note=""))
     db.commit()
-    return RedirectResponse(f"/admin/orders/{order_id}?saved=1", status_code=303)
+
+    should_email = status in {"quoted", "confirmed", "completed", "cancelled"} and (
+        old_status != status or (status == "quoted" and pricing_changed)
+    )
+    if should_email:
+        if status == "quoted":
+            p = pricing_breakdown(order)
+            sent, message = await notify_customer_quote_email(
+                order.customer.email,
+                order.customer.name,
+                order.order_number,
+                order.event_name,
+                order.event_date.strftime("%d %b %Y"),
+                event_day(order),
+                order.event_time.strftime("%H:%M"),
+                order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+                order.adults,
+                order.kids,
+                f"{p['adult_charge']:.2f}",
+                f"{p['kid_charge']:.2f}",
+                f"{p['delivery_service_charge']:.2f}",
+                f"{p['total']:.2f}",
+                order_menu_item_names(order),
+                public_order_url(request, order.public_token),
+                business(db).phone,
+                f"{order.address}, {order.eircode}".strip(", "),
+            )
+        else:
+            sent, message = await send_customer_status_email_for_order(order, request, db, status)
+
+        if sent:
+            label = "Quote email sent successfully" if status == "quoted" else f"{status.title()} email sent successfully"
+            return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(label)}&toast_type=success", status_code=303)
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast={quote('Order saved, but customer email was not sent: ' + message)}&toast_type=error",
+            status_code=303,
+        )
+
+    if old_status == "confirmed" and pricing_changed and status == "new":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast=Price+changed.+Order+moved+to+New+and+requires+a+revised+quote&toast_type=success",
+            status_code=303,
+        )
+    return RedirectResponse(f"/admin/orders/{order_id}?toast=Order+updated&toast_type=success", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/items/add")
+def admin_order_item_add(
+    order_id: int,
+    request: Request,
+    menu_item_id: int = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(
+        select(QuoteRequest).where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.items))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Voided+orders+cannot+be+edited&toast_type=error", status_code=303)
+    source = db.scalar(
+        select(MenuItem).where(MenuItem.id == menu_item_id)
+        .options(selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu))
+    )
+    if not source or not source.active:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Menu+item+is+not+available&toast_type=error", status_code=303)
+    if any(existing.item_id == source.id for existing in order.items):
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=That+dish+is+already+in+this+order&toast_type=error", status_code=303)
+    next_sort = max([item.sort_order for item in order.items] + [-1]) + 1
+    sub = source.subcategory
+    cat = sub.category
+    db.add(QuoteItem(
+        order_id=order.id,
+        item_id=source.id,
+        item_name=source.name,
+        menu_name=cat.menu.name,
+        category_name=cat.name,
+        subcategory_name=sub.name,
+        dietary=source.dietary,
+        sort_order=next_sort,
+    ))
+    reopened = invalidate_order_quote_after_menu_change(order, db, f'Admin added "{source.name}" to the selected menu.')
+    db.commit()
+    message = "Dish added. Previous quote reopened for revision" if reopened else "Dish added to order"
+    return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(message)}&toast_type=success#selected-menu", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/items/{quote_item_id}/edit")
+def admin_order_item_edit(
+    order_id: int,
+    quote_item_id: int,
+    request: Request,
+    item_name: str = Form(...),
+    menu_name: str = Form(...),
+    category_name: str = Form(...),
+    subcategory_name: str = Form(...),
+    dietary: str = Form("veg"),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id))
+    item = db.scalar(select(QuoteItem).where(QuoteItem.id == quote_item_id, QuoteItem.order_id == order_id))
+    if not order or not item:
+        raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Voided+orders+cannot+be+edited&toast_type=error", status_code=303)
+    clean_name = re.sub(r"\s+", " ", item_name or "").strip()[:180]
+    if not clean_name:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Dish+name+is+required&toast_type=error", status_code=303)
+    item.item_name = clean_name
+    item.menu_name = re.sub(r"\s+", " ", menu_name or "").strip()[:120] or item.menu_name
+    item.category_name = re.sub(r"\s+", " ", category_name or "").strip()[:120] or item.category_name
+    item.subcategory_name = re.sub(r"\s+", " ", subcategory_name or "").strip()[:120] or "Main Selection"
+    item.dietary = dietary if dietary in {"veg", "nonveg", "both"} else item.dietary
+    reopened = invalidate_order_quote_after_menu_change(order, db, f'Admin edited "{clean_name}" in the selected menu.')
+    db.commit()
+    message = "Dish updated. Previous quote reopened for revision" if reopened else "Dish updated"
+    return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(message)}&toast_type=success#selected-menu", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/items/{quote_item_id}/delete")
+def admin_order_item_delete(
+    order_id: int,
+    quote_item_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id))
+    item = db.scalar(select(QuoteItem).where(QuoteItem.id == quote_item_id, QuoteItem.order_id == order_id))
+    if not order or not item:
+        raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Voided+orders+cannot+be+edited&toast_type=error", status_code=303)
+    name = item.item_name
+    db.delete(item)
+    reopened = invalidate_order_quote_after_menu_change(order, db, f'Admin removed "{name}" from the selected menu.')
+    db.commit()
+    message = "Dish removed. Previous quote reopened for revision" if reopened else "Dish removed from order"
+    return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(message)}&toast_type=success#selected-menu", status_code=303)
 
 
 
@@ -2131,10 +2488,15 @@ async def admin_send_quote_email(
     )
     if not order:
         raise HTTPException(status_code=404)
+    if order.status != "quoted":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast=Change+the+order+status+to+Quoted+before+sending+the+customer+quote&toast_type=error",
+            status_code=303,
+        )
     if order.final_price is None:
-        return RedirectResponse(f"/admin/orders/{order_id}?error=Set+pricing+before+sending+the+quote", status_code=303)
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Set+pricing+before+sending+the+quote&toast_type=error", status_code=303)
     if not order.customer.email:
-        return RedirectResponse(f"/admin/orders/{order_id}?error=Customer+email+is+missing", status_code=303)
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Customer+email+is+missing&toast_type=error", status_code=303)
     p = pricing_breakdown(order)
     sent, message = await notify_customer_quote_email(
         order.customer.email,
@@ -2154,14 +2516,11 @@ async def admin_send_quote_email(
         [item.item_name for item in sorted(order.items, key=lambda x: x.sort_order)],
         public_order_url(request, order.public_token),
         business(db).phone,
+        f"{order.address}, {order.eircode}".strip(", "),
     )
     if not sent:
-        return RedirectResponse(f"/admin/orders/{order_id}?error={quote(message)}", status_code=303)
-    if order.status == "new":
-        order.status = "quoted"
-        db.add(StatusHistory(order_id=order.id, status="quoted", note=""))
-        db.commit()
-    return RedirectResponse(f"/admin/orders/{order_id}?quote_emailed=1", status_code=303)
+        return RedirectResponse(f"/admin/orders/{order_id}?toast={quote('Quote email was not sent: ' + message)}&toast_type=error", status_code=303)
+    return RedirectResponse(f"/admin/orders/{order_id}?toast=Quote+emailed+to+customer+successfully&toast_type=success", status_code=303)
 
 
 @app.post("/admin/orders/{order_id}/kitchen-share")
@@ -2183,6 +2542,11 @@ def admin_order_kitchen_share(
     )
     if not order:
         raise HTTPException(status_code=404)
+    if order.status != "confirmed":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast=Send+to+Kitchen+is+available+only+after+the+order+is+Confirmed&toast_type=error",
+            status_code=303,
+        )
     comments = kitchen_comments.strip()
     if not comments:
         return RedirectResponse(f"/admin/orders/{order_id}?error=Kitchen+comments+are+required+before+sending", status_code=303)
@@ -2211,6 +2575,11 @@ def admin_kitchen_share_ready(order_id: int, request: Request, db: Session = Dep
     )
     if not order:
         raise HTTPException(status_code=404)
+    if order.status != "confirmed":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast=Kitchen+sharing+is+available+only+for+Confirmed+orders&toast_type=error",
+            status_code=303,
+        )
     biz = business(db)
     pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
     return render(
@@ -2229,6 +2598,8 @@ def public_kitchen_pdf(token: str, db: Session = Depends(get_db)):
     )
     if not order:
         raise HTTPException(status_code=404, detail="Kitchen sheet not found")
+    if order.status != "confirmed":
+        raise HTTPException(status_code=409, detail="Kitchen sheet is available only after order confirmation")
     pdf = build_order_pdf(order, business(db))
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="Kitchen-{order.order_number}.pdf"', "Cache-Control": "no-store"})
 
@@ -2244,6 +2615,8 @@ async def customer_confirm_order(token: str, request: Request, db: Session = Dep
         raise HTTPException(status_code=404)
     if order.status in {"cancelled", "completed", "voided"}:
         return RedirectResponse(f"/orders/{token}?error=Order+cannot+be+confirmed", status_code=303)
+    if order.status != "quoted":
+        return RedirectResponse(f"/orders/{token}?error=This+order+is+not+currently+available+for+confirmation", status_code=303)
     if order.final_price is None:
         return RedirectResponse(f"/orders/{token}?error=Quote+price+is+not+ready", status_code=303)
     just_confirmed = order.status != "confirmed"
@@ -2266,6 +2639,7 @@ async def customer_confirm_order(token: str, request: Request, db: Session = Dep
             f"€{p['total']:.2f}",
             admin_order_url(request, order.id),
         )
+        await send_customer_status_email_for_order(order, request, db, "confirmed")
     return RedirectResponse(f"/orders/{token}?confirmed=1", status_code=303)
 
 
