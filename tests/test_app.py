@@ -11,7 +11,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["SESSION_SECRET"] = "test-secret-only-for-tests"
 
 from fastapi.testclient import TestClient
-from app.main import app, format_order_number
+from app.main import app, format_order_number, parse_order_sequence
+from app.db import SessionLocal
+from app.models import BusinessSettings
 
 
 def csrf_from(html: str) -> str:
@@ -47,6 +49,10 @@ def test_build8_mobile_workflow():
     assert format_order_number(1000) == "CAT1000"
     assert format_order_number(1001) == "CAT10001"
     assert format_order_number(2001) == "CAT20001"
+    assert parse_order_sequence("CAT0001") == 1
+    assert parse_order_sequence("CAT1000") == 1000
+    assert parse_order_sequence("CAT10001") == 1001
+    assert parse_order_sequence("CAT20001") == 2001
 
     with TestClient(app) as client:
         assert client.get("/health").json()["status"] == "ok"
@@ -98,6 +104,15 @@ def test_build8_mobile_workflow():
         assert q2.status_code == 200, q2.text
         b2 = q2.json()
         assert b2["order_number"] == "CAT0002"
+
+        # Regression: if the stored sequence falls behind, existing CAT numbers are skipped.
+        with SessionLocal() as db:
+            biz = db.get(BusinessSettings, 1)
+            biz.next_order_sequence = 1
+            db.commit()
+        q3 = client.post("/api/quotes", json=quote_payload(event_name="Sequence Collision Test", days=14))
+        assert q3.status_code == 200, q3.text
+        assert q3.json()["order_number"] == "CAT0003"
 
         # Tracking works with either identifier. Phone with several orders gives a chooser.
         tracked = client.post("/track", data={"order_number": b1["order_number"], "phone": ""}, follow_redirects=False)
@@ -234,7 +249,6 @@ def test_build8_mobile_workflow():
         assert reset_again.status_code == 303
 
         from sqlalchemy import func, select
-        from app.db import SessionLocal
         from app.models import QuoteRequest
         with SessionLocal() as db:
             assert (db.scalar(select(func.count(QuoteRequest.id))) or 0) == 0

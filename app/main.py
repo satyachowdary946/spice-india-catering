@@ -23,6 +23,7 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib import colors
 from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, load_only
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -368,29 +369,81 @@ def format_order_number(sequence: int) -> str:
     return f"CAT{within:04d}" if block == 0 else f"CAT{block}{within:04d}"
 
 
+def parse_order_sequence(order_number: str) -> int | None:
+    """Convert a CAT order number back to its internal sequence number."""
+    value = str(order_number or "").strip().upper()
+    if not value.startswith("CAT"):
+        return None
+
+    digits = value[3:]
+    if not digits.isdigit():
+        return None
+
+    try:
+        if len(digits) == 4:
+            within = int(digits)
+            return within if 1 <= within <= 1000 else None
+
+        if len(digits) > 4:
+            block = int(digits[:-4])
+            within = int(digits[-4:])
+            if block >= 1 and 1 <= within <= 1000:
+                return block * 1000 + within
+    except (TypeError, ValueError):
+        return None
+
+    return None
+
+
 def initialise_order_sequence(db: Session) -> None:
+    """Keep the stored next sequence at or above the highest real CAT order already in the database."""
     biz = business(db)
-    if not biz.next_order_sequence or biz.next_order_sequence < 1:
-        biz.next_order_sequence = 1
-    # Existing databases may predate the sequence field. Continue safely unless admin explicitly resets test orders.
-    existing_count = db.scalar(select(func.count(QuoteRequest.id))) or 0
-    if existing_count and biz.next_order_sequence <= 1:
-        biz.next_order_sequence = existing_count + 1
+    current_sequence = max(1, int(biz.next_order_sequence or 1))
+
+    existing_numbers = db.scalars(
+        select(QuoteRequest.order_number).where(QuoteRequest.order_number.like("CAT%"))
+    ).all()
+
+    highest_existing_sequence = 0
+    for order_number in existing_numbers:
+        sequence = parse_order_sequence(order_number)
+        if sequence is not None:
+            highest_existing_sequence = max(highest_existing_sequence, sequence)
+
+    # Never move backwards. If CAT0009 exists, next must be at least CAT0010.
+    biz.next_order_sequence = max(current_sequence, highest_existing_sequence + 1)
     db.commit()
 
 
 def allocate_order_number(db: Session) -> str:
+    """Allocate the first unused CAT number and serialize allocation on PostgreSQL."""
     stmt = select(BusinessSettings).where(BusinessSettings.id == 1)
     if engine.dialect.name == "postgresql":
         stmt = stmt.with_for_update()
+
     biz = db.scalar(stmt)
     if not biz:
         biz = BusinessSettings(id=1, next_order_sequence=1)
         db.add(biz)
         db.flush()
+
     sequence = max(1, int(biz.next_order_sequence or 1))
+
+    # The stored counter can fall behind after old test resets or deployments.
+    # Skip every public number that already exists instead of trusting the counter blindly.
+    while True:
+        candidate = format_order_number(sequence)
+        existing_id = db.scalar(
+            select(QuoteRequest.id)
+            .where(QuoteRequest.order_number == candidate)
+            .limit(1)
+        )
+        if existing_id is None:
+            break
+        sequence += 1
+
     biz.next_order_sequence = sequence + 1
-    return format_order_number(sequence)
+    return candidate
 
 
 def calculate_order_price(
@@ -1036,7 +1089,28 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     for dish_name in requested_dishes:
         db.add(RequestedDish(order_id=order.id, name=dish_name, status="pending"))
     db.add(StatusHistory(order_id=order.id, status="new", note=""))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        print(f"Quote request database integrity error: {exc!r}")
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "We could not create your catering request because the order number changed. Please try again once.",
+            },
+            status_code=409,
+        )
+    except Exception as exc:
+        db.rollback()
+        print(f"Quote request database error: {exc!r}")
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "We could not create your catering request. Please try again. If the problem continues, contact Spice India Catering.",
+            },
+            status_code=500,
+        )
     db.refresh(order)
 
     sent, notify_message = await notify_admin_new_quote(
