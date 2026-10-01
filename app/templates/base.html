@@ -10,11 +10,11 @@
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#0d0f12">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/app.css?v=build12_1">
+  <link rel="stylesheet" href="/static/css/app.css?v=build14">
   {% block head %}{% endblock %}
 </head>
-<body class="{% if request.url.path == '/' %}home-page{% endif %}">
-  <header class="site-header no-print">
+<body class="{% if request.url.path == '/' %}home-page{% endif %}{% if request.url.path == '/menu' %} menu-page{% endif %}">
+  {% if request.url.path != "/menu" %}<header class="site-header no-print">
     <div class="container header-row">
       <div class="header-brand-row">
         {% if request.url.path != '/' %}<button class="header-back" type="button" onclick="history.back()" aria-label="Go back">←</button>{% endif %}
@@ -30,13 +30,13 @@
         {% if admin_logged_in %}<a href="/admin">Admin</a>{% endif %}
       </nav>
     </div>
-  </header>
-  {% if business.announcement_enabled and business.announcement_text %}
+  </header>{% endif %}
+  {% if request.url.path != "/menu" and business.announcement_enabled and business.announcement_text %}
   <aside class="site-announcement no-print" aria-label="Catering announcement"><div class="container announcement-row">{% if business.announcement_title %}<span class="announcement-label">{{ business.announcement_title }}</span>{% endif %}<strong>{{ business.announcement_text }}</strong></div></aside>
   {% endif %}
   {% block body %}{% endblock %}
-  <footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>
-  <script src="/static/js/customer.js?v=build13_1" defer></script>
+  {% if request.url.path != "/menu" %}<footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>{% endif %}
+  <script src="/static/js/customer.js?v=build14" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -45,6 +45,7 @@
       <div><span>Adults · {{ order.adults }} × €{{ '%.2f'|format(pricing.adult_charge) }}</span><strong>€{{ '%.2f'|format(order.adults * pricing.adult_charge) }}</strong></div>
       <div><span>Kids · {{ order.kids }} × €{{ '%.2f'|format(pricing.kid_charge) }}</span><strong>€{{ '%.2f'|format(order.kids * pricing.kid_charge) }}</strong></div>
       <div><span>Delivery &amp; Service Charge</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div>
+      {% if pricing.customer_other_charge > 0 %}<div><span>Other Charges</span><strong>€{{ '%.2f'|format(pricing.customer_other_charge) }}</strong></div>{% endif %}
     </div>
     <div class="quote-total"><span>Total Quote</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div>
     {% if order.status == 'quoted' %}

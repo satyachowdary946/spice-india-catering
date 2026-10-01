@@ -46,6 +46,19 @@
   </form>
 </section>
 
+
+<section class="card" id="internal-prices" style="margin-top:16px">
+  <div class="eyebrow">Admin Only · Internal Food Cost</div>
+  <h2>Internal Dish Cost Prices</h2>
+  <p class="muted">These prices are private and are never shown to customers. In Build 14, <strong>Price means the internal cost per guest for that dish</strong>. The order Food Cost is calculated from the selected dishes × total guests.</p>
+  <div class="admin-action-row"><a class="btn secondary" href="/admin/internal-prices/download">Download Current Price Excel</a></div>
+  <form method="post" action="/admin/internal-prices/import" enctype="multipart/form-data" class="compact" style="margin-top:14px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="internal-price-workbook">Internal Price Excel (.xlsx)</label><input id="internal-price-workbook" name="workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><span class="help">Columns: Item Identifier · Item Name · Price. Item Identifier is the permanent menu Item ID.</span></div>
+    <button class="btn" type="submit">Import Internal Prices</button>
+  </form>
+</section>
+
 <section class="card" id="category-setup" style="margin-top:16px">
   <div class="eyebrow">Master Category Setup</div>
   <h2>Category / Subcategory Names & Order</h2>

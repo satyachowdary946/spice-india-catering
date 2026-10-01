@@ -58,7 +58,7 @@
         {% if sub_name and sub_name != 'Main Selection' %}<div class="help admin-menu-subheading">{{ sub_name }}</div>{% endif %}
         {% for item in items %}
         <div class="admin-order-menu-item dietary-list-item {{ item.dietary }}">
-          <div><strong>{{ item.item_name }}</strong><small>{{ sub_name }}</small></div>
+          <div><strong>{{ item.item_name }}</strong><small>{{ sub_name }}{% if item.internal_cost_per_guest is not none %} · Internal €{{ '%.2f'|format(item.internal_cost_per_guest) }}/guest{% else %} · Internal price not set{% endif %}</small></div>
           {% if order.status != 'voided' %}
           <details class="order-item-editor">
             <summary>Edit</summary>
@@ -93,6 +93,29 @@
 {% if order.customer_notes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Customer Comments / Notes</h2><p class="prewrap">{{ order.customer_notes }}</p></section>{% endif %}
 {% if order.requested_dishes %}<section class="card requested-admin-card" id="requested-dishes" style="margin-top:14px"><div class="admin-title"><div><h2 style="font-size:1.25rem">Requested Dishes</h2><p>Approve or reject each request.</p></div></div><div class="requested-admin-list">{% for dish in order.requested_dishes %}<form class="requested-admin-row" method="post" action="/admin/requested-dishes/{{ dish.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div><strong>{{ dish.name }}</strong><div class="help">Requested By Customer</div></div><div class="field compact"><label>Decision</label><select name="status"><option value="pending" {% if dish.status=='pending' %}selected{% endif %}>Pending</option><option value="approved" {% if dish.status=='approved' %}selected{% endif %}>Approved</option><option value="rejected" {% if dish.status=='rejected' %}selected{% endif %}>Rejected</option></select></div><div class="field compact"><label>Reply (Optional)</label><input name="admin_response" value="{{ dish.admin_response }}" maxlength="1000"></div><button class="btn small" type="submit">Save</button></form>{% endfor %}</div></section>{% endif %}
 
+<section class="card internal-finance-card" id="internal-finance" style="margin-top:14px">
+  <div class="admin-title"><div><div class="eyebrow">Admin Only · Internal Costing</div><h2 style="font-size:1.25rem">Food Cost, Expenses & Profit</h2><p class="muted">Customers never see these values. Internal dish prices are treated as cost per guest and the food cost is calculated from the selected menu × {{ order.adults + order.kids }} guests.</p></div><a class="btn secondary small" href="/admin/menu-import#internal-prices">Manage Dish Costs</a></div>
+  <div class="finance-summary-grid compact-finance-grid">
+    <div class="finance-stat expense"><span>Food Cost</span><strong>€{{ '%.2f'|format(finance.food_cost) }}</strong></div>
+    <div class="finance-stat"><span>Food Profit</span><strong>{{ '%.2f'|format(finance.food_profit_percent) }}% · €{{ '%.2f'|format(finance.food_profit_amount) }}</strong></div>
+    <div class="finance-stat positive"><span>Food Target Value</span><strong>€{{ '%.2f'|format(finance.food_target_value) }}</strong></div>
+    <div class="finance-stat expense"><span>Other Expenses</span><strong>€{{ '%.2f'|format(finance.operating_expenses) }}</strong></div>
+    <div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }}</strong></div>
+    <div class="finance-stat profit"><span>Net Margin</span><strong>{{ '%.2f'|format(finance.net_profit_percent) }}%</strong></div>
+  </div>
+  <form method="post" action="/admin/orders/{{ order.id }}/internal-finance" class="compact internal-cost-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label>Food Profit (%)</label><input name="food_profit_percent" type="number" min="0" max="1000" step="0.01" value="{{ order.food_profit_percent or 0 }}"><span class="help">Example: Food cost €1,000 + 10% = €1,100 food target value.</span></div>
+    <div class="internal-expense-grid">
+      {% set expense_fields = [('fuel','Fuel Charges'),('delivery','Delivery Charges'),('chef','Chef Labour'),('misc','Miscellaneous'),('other','Other Expenses')] %}
+      {% for key,label in expense_fields %}{% set e=finance.expense_breakdown[key] %}
+      <div class="internal-expense-row"><div class="field"><label>{{ label }} (€)</label><input name="{{ key }}_amount" type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ '%.2f'|format(e.amount) if e.amount > 0 else '' }}"></div><label class="paid-toggle"><input type="checkbox" name="{{ key }}_paid" {% if e.paid %}checked{% endif %}> <span>Paid</span></label></div>
+      {% endfor %}
+    </div>
+    <button class="btn" type="submit">Save Internal Costs</button>
+  </form>
+</section>
+
 <section class="card" id="quote-confirmation" style="margin-top:14px">
   <div class="admin-title"><div><div class="eyebrow">Pricing Workflow</div><h2 style="font-size:1.25rem">Quote & Confirmation</h2><p class="muted">Changing status to <strong>Quoted</strong> automatically emails the full quote to the customer. Confirmed / Completed / Cancelled status changes also send branded customer emails.</p></div></div>
   {% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Workflow Locked.</strong></div>{% else %}
@@ -102,9 +125,10 @@
     <div class="admin-form-grid two" style="margin-top:10px">
       <div class="field"><label>Adult Charge (€) · Per Head</label><input name="adult_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.adult_charge if order.adult_charge is not none else '' }}"></div>
       <div class="field"><label>Kid Charge (€) · Per Head</label><input name="kid_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.kid_charge if order.kid_charge is not none else '' }}"></div>
-      <div class="field full-span"><label>Delivery & Service Charge (€)</label><input name="delivery_service_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.delivery_service_charge if order.delivery_service_charge not in [none, 0] else '' }}"></div>
+      <div class="field"><label>Delivery & Service Charge (€)</label><input name="delivery_service_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.delivery_service_charge if order.delivery_service_charge not in [none, 0] else '' }}"></div>
+      <div class="field"><label>Other Customer Charges (€)</label><input name="customer_other_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.customer_other_charge if order.customer_other_charge not in [none, 0] else '' }}"><span class="help">Visible to customer only when greater than €0.</span></div>
     </div>
-    <div class="pricing-calculator" data-pricing-summary><div><span>Meal Base</span><strong>€{{ '%.2f'|format(pricing.meal_base) }}</strong></div><div><span>Delivery & Service</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div></div>
+    <div class="pricing-calculator" data-pricing-summary><div><span>Meal Base</span><strong>€{{ '%.2f'|format(pricing.meal_base) }}</strong></div><div><span>Delivery & Service</span><strong>€{{ '%.2f'|format(pricing.delivery_service_charge) }}</strong></div><div><span>Other Charges</span><strong>€{{ '%.2f'|format(pricing.customer_other_charge) }}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€{{ '%.2f'|format(pricing.total) }}</strong></div></div>
     <div class="field" style="margin-top:10px"><label>Customer Message</label><textarea name="customer_message">{{ order.customer_message }}</textarea></div>
     <div class="field" style="margin-top:10px"><label>Private Admin Notes</label><textarea name="admin_notes">{{ order.admin_notes }}</textarea></div>
     <button class="btn" type="submit" style="margin-top:10px">Save Order</button>
@@ -134,9 +158,9 @@
 
 <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Status Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong>{% if h.note %}<div class="help">{{ h.note }}</div>{% endif %}<small>{{ local_datetime(h.created_at).strftime('%d %b %Y %H:%M') if local_datetime(h.created_at) else '' }}</small></div></div>{% endfor %}</div></section>
 
-<section class="card finance-quick-card" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Order Finance</div><h2 style="font-size:1.25rem">Payments, Expenses & Profit</h2></div><div class="actions"><a class="btn secondary small" href="/admin/transactions/{{ order.id }}">Manage Transaction</a></div></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(finance.final_price) }}{% else %}—{% endif %}</strong></div><div class="finance-stat"><span>Collected</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat expense"><span>Expenses</span><strong>€{{ '%.2f'|format(finance.total_expenses) }}</strong></div><div class="finance-stat profit"><span>Expected Profit</span><strong>€{{ '%.2f'|format(finance.expected_profit) }}</strong></div></div></section>
+<section class="card finance-quick-card" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Order Finance</div><h2 style="font-size:1.25rem">Payments, Expenses & Profit</h2></div><div class="actions"><a class="btn secondary small" href="/admin/transactions/{{ order.id }}">Manage Transaction</a></div></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(finance.final_price) }}{% else %}—{% endif %}</strong></div><div class="finance-stat"><span>Collected</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat expense"><span>Total Cost</span><strong>€{{ '%.2f'|format(finance.total_cost) }}</strong></div><div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }} · {{ '%.2f'|format(finance.net_profit_percent) }}%</strong></div></div></section>
 
 <script>
-(()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),base=adults*adult+kids*kid,total=base+extra;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));calc();})();
+(()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));calc();})();
 </script>
 {% endblock %}

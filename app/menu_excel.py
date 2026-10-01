@@ -384,3 +384,73 @@ def update_workbook_category_setup(
     out = BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+def parse_internal_price_workbook(data: bytes) -> list[dict[str, Any]]:
+    """Parse the admin-only internal dish price workbook.
+
+    Expected columns: Item Identifier, Item Name, Price.
+    Price is treated as an internal cost per guest for catering costing.
+    """
+    try:
+        wb = load_workbook(BytesIO(data), data_only=True, read_only=False)
+    except Exception as exc:
+        raise ValueError("The uploaded file is not a readable .xlsx workbook.") from exc
+    ws = wb["Internal Item Prices"] if "Internal Item Prices" in wb.sheetnames else wb[wb.sheetnames[0]]
+    header_row, headers = _find_header(ws, "Item Identifier", max_rows=20)
+    required = ["Item Identifier", "Item Name", "Price"]
+    missing = [name for name in required if name not in headers]
+    if missing:
+        raise ValueError("Internal price workbook is missing columns: " + ", ".join(missing))
+    rows: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for row in range(header_row + 1, ws.max_row + 1):
+        raw_id = ws.cell(row, headers["Item Identifier"]).value
+        name = _text(ws.cell(row, headers["Item Name"]).value)
+        raw_price = ws.cell(row, headers["Price"]).value
+        if raw_id in (None, "") and not name and raw_price in (None, ""):
+            continue
+        item_id = _int(raw_id, -1)
+        if item_id <= 0:
+            raise ValueError(f"Internal price row {row}: Item Identifier must be a positive whole number.")
+        if item_id in seen:
+            raise ValueError(f"Internal price row {row}: duplicate Item Identifier {item_id}.")
+        seen.add(item_id)
+        if not name:
+            raise ValueError(f"Internal price row {row}: Item Name is required.")
+        try:
+            price = _decimal(raw_price)
+        except ValueError as exc:
+            raise ValueError(f"Internal price row {row}: {exc}") from exc
+        rows.append({"item_id": item_id, "name": name, "price": price})
+    if not rows:
+        raise ValueError("The internal price workbook does not contain any menu items.")
+    return rows
+
+
+def build_internal_price_workbook(items: list[dict[str, Any]]) -> bytes:
+    """Build a clean three-column admin-only internal price workbook."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Internal Item Prices"
+    ws.append(["Item Identifier", "Item Name", "Price"])
+    for item in items:
+        ws.append([item.get("item_id"), item.get("name", ""), item.get("price")])
+    fill = PatternFill("solid", fgColor="0B3B36")
+    for cell in ws[1]:
+        cell.fill = fill
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center")
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 34
+    ws.column_dimensions["C"].width = 14
+    for cell in ws["C"][1:]:
+        cell.number_format = '€0.00'
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()

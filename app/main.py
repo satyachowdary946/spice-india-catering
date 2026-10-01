@@ -49,6 +49,7 @@ from .notifications import (
     notify_admin_new_quote,
     notify_admin_new_quote_email,
     notify_admin_order_confirmed,
+    notify_admin_order_confirmed_email,
     notify_customer_request_received_email,
     notify_customer_quote_email,
     notify_customer_status_email,
@@ -56,7 +57,7 @@ from .notifications import (
     whatsapp_confirmation_configured,
 )
 from .seed import ensure_seed_data
-from .menu_excel import parse_menu_workbook, update_workbook_category_setup, update_workbook_image_references
+from .menu_excel import parse_menu_workbook, update_workbook_category_setup, update_workbook_image_references, parse_internal_price_workbook, build_internal_price_workbook
 from .storage import extension_for_content_type, get_bytes as storage_get_bytes, key_from_reference, put_bytes as storage_put_bytes, r2_configured
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -119,6 +120,8 @@ def ensure_schema_compatibility() -> None:
             "service_price": "NUMERIC(10,2)",
             "delivery_service_charge": "NUMERIC(10,2)",
             "web_order_charge": "NUMERIC(10,2)",
+            "customer_other_charge": "NUMERIC(10,2)",
+            "food_profit_percent": "NUMERIC(7,2) DEFAULT 0.00",
             "kitchen_comments": "TEXT DEFAULT ''",
         }
         for name, ddl in quote_additions.items():
@@ -146,12 +149,26 @@ def ensure_schema_compatibility() -> None:
             "import_item_id": "INTEGER",
             "image_reference": "VARCHAR(500) DEFAULT ''",
             "display_price": "NUMERIC(10,2)",
+            "internal_cost_per_guest": "NUMERIC(10,2)",
             "section_heading_color": "VARCHAR(20) DEFAULT '#94A3B8'",
         }
         for name, ddl in additions.items():
             if name not in columns:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE menu_items ADD COLUMN {name} {ddl}"))
+
+
+    if "quote_items" in tables:
+        columns = {c["name"] for c in inspector.get_columns("quote_items")}
+        if "internal_cost_per_guest" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_items ADD COLUMN internal_cost_per_guest NUMERIC(10,2)"))
+
+    if "expenses" in tables:
+        columns = {c["name"] for c in inspector.get_columns("expenses")}
+        if "paid" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN paid BOOLEAN DEFAULT FALSE"))
 
 
     if "subcategories" in tables:
@@ -451,17 +468,20 @@ def calculate_order_price(
     adult_charge: Decimal,
     kid_charge: Decimal,
     delivery_service_charge: Decimal,
+    customer_other_charge: Decimal = Decimal("0.00"),
 ) -> dict[str, Decimal]:
     adult_charge = money(adult_charge)
     kid_charge = money(kid_charge)
     delivery_service_charge = money(delivery_service_charge)
+    customer_other_charge = money(customer_other_charge)
     meal_base = money(money(order.adults) * adult_charge + money(order.kids) * kid_charge)
-    total = money(meal_base + delivery_service_charge)
+    total = money(meal_base + delivery_service_charge + customer_other_charge)
     return {
         "adult_charge": adult_charge,
         "kid_charge": kid_charge,
         "meal_base": meal_base,
         "delivery_service_charge": delivery_service_charge,
+        "customer_other_charge": customer_other_charge,
         "total": total,
     }
 
@@ -474,12 +494,14 @@ def pricing_breakdown(order: QuoteRequest) -> dict[str, Decimal]:
     if combined is None:
         combined = money(order.delivery_price) + money(order.service_price)
     combined = money(combined)
-    total = money(order.final_price) if order.final_price is not None else money(meal_base + combined)
+    other = money(getattr(order, "customer_other_charge", None))
+    total = money(order.final_price) if order.final_price is not None else money(meal_base + combined + other)
     return {
         "adult_charge": adult_charge,
         "kid_charge": kid_charge,
         "meal_base": meal_base,
         "delivery_service_charge": combined,
+        "customer_other_charge": other,
         "total": total,
     }
 
@@ -519,6 +541,7 @@ def build_customer_share_text(order: QuoteRequest, biz: BusinessSettings, public
             f"Adults: {order.adults} × €{p['adult_charge']:.2f} = €{money(order.adults) * p['adult_charge']:.2f}",
             f"Kids: {order.kids} × €{p['kid_charge']:.2f} = €{money(order.kids) * p['kid_charge']:.2f}",
             f"Delivery & Service: €{p['delivery_service_charge']:.2f}",
+            f"Other charges: €{p['customer_other_charge']:.2f}" if p["customer_other_charge"] > 0 else "",
             "────────────────────",
             f"*TOTAL QUOTE: €{p['total']:.2f}*",
             "",
@@ -527,7 +550,7 @@ def build_customer_share_text(order: QuoteRequest, biz: BusinessSettings, public
         "*CLICK THIS LINK TO REVIEW & CONFIRM YOUR ORDER*",
         public_url,
     ])
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line != "")
 
 
 def build_kitchen_share_text(order: QuoteRequest, pdf_url: str = "") -> str:
@@ -642,13 +665,49 @@ def money(value: Any) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.01"))
 
 
-def finance_summary(order: QuoteRequest) -> dict[str, Decimal | str]:
+INTERNAL_EXPENSE_NAMES = {
+    "fuel": "Fuel Charges",
+    "delivery": "Delivery Charges",
+    "chef": "Chef Labour",
+    "misc": "Miscellaneous",
+    "other": "Other Expenses",
+}
+
+
+def order_food_cost(order: QuoteRequest) -> Decimal:
+    """Internal ingredient/food cost. Internal item prices are treated as cost per guest."""
+    guests = max(0, int(order.adults or 0) + int(order.kids or 0))
+    unit_total = sum((money(getattr(item, "internal_cost_per_guest", None)) for item in getattr(order, "items", []) or []), Decimal("0.00"))
+    return money(unit_total * guests)
+
+
+def expense_breakdown(order: QuoteRequest) -> dict[str, dict[str, Any]]:
+    result = {key: {"name": label, "amount": Decimal("0.00"), "paid": False, "id": None} for key, label in INTERNAL_EXPENSE_NAMES.items()}
+    label_to_key = {label.casefold(): key for key, label in INTERNAL_EXPENSE_NAMES.items()}
+    extras = []
+    for expense in getattr(order, "expenses", []) or []:
+        key = label_to_key.get((expense.name or "").strip().casefold())
+        if key and result[key]["id"] is None:
+            result[key] = {"name": INTERNAL_EXPENSE_NAMES[key], "amount": money(expense.amount), "paid": bool(getattr(expense, "paid", False)), "id": expense.id}
+        else:
+            extras.append(expense)
+    result["extras"] = extras
+    return result
+
+
+def finance_summary(order: QuoteRequest) -> dict[str, Decimal | str | dict[str, Any]]:
     final_price = money(order.final_price)
     total_paid = sum((money(p.amount) for p in getattr(order, "payments", []) or []), Decimal("0.00"))
-    total_expenses = sum((money(e.amount) for e in getattr(order, "expenses", []) or []), Decimal("0.00"))
+    operating_expenses = sum((money(e.amount) for e in getattr(order, "expenses", []) or []), Decimal("0.00"))
+    food_cost = order_food_cost(order)
+    total_cost = money(food_cost + operating_expenses)
     balance_due = max(final_price - total_paid, Decimal("0.00"))
-    expected_profit = final_price - total_expenses
-    cash_profit = total_paid - total_expenses
+    food_profit_percent = money(getattr(order, "food_profit_percent", None))
+    food_profit_amount = money(food_cost * food_profit_percent / Decimal("100"))
+    food_target_value = money(food_cost + food_profit_amount)
+    net_profit = money(final_price - total_cost)
+    net_profit_percent = money((net_profit / final_price * Decimal("100")) if final_price > 0 else Decimal("0.00"))
+    cash_profit = money(total_paid - total_cost)
     if order.final_price is None:
         payment_status = "not_priced"
     elif total_paid <= 0:
@@ -660,11 +719,20 @@ def finance_summary(order: QuoteRequest) -> dict[str, Decimal | str]:
     return {
         "final_price": final_price,
         "total_paid": total_paid,
-        "total_expenses": total_expenses,
+        "food_cost": food_cost,
+        "food_profit_percent": food_profit_percent,
+        "food_profit_amount": food_profit_amount,
+        "food_target_value": food_target_value,
+        "operating_expenses": money(operating_expenses),
+        "total_expenses": total_cost,
+        "total_cost": total_cost,
         "balance_due": balance_due,
-        "expected_profit": expected_profit,
+        "expected_profit": net_profit,
+        "net_profit": net_profit,
+        "net_profit_percent": net_profit_percent,
         "cash_profit": cash_profit,
         "payment_status": payment_status,
+        "expense_breakdown": expense_breakdown(order),
     }
 
 
@@ -1084,6 +1152,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
             category_name=cat.name,
             subcategory_name=sub.name,
             dietary=item.dietary,
+            internal_cost_per_guest=item.internal_cost_per_guest,
             sort_order=sort_index,
         ))
     for dish_name in requested_dishes:
@@ -1296,7 +1365,7 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     item_by_id = {item.id: item for item in items}
     for sort_index, item_id in enumerate(unique_ids):
         item = item_by_id[item_id]; sub = item.subcategory; cat = sub.category; menu = cat.menu
-        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item.name, menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, sort_order=sort_index))
+        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item.name, menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, internal_cost_per_guest=item.internal_cost_per_guest, sort_order=sort_index))
     existing = {dish.name.casefold(): dish for dish in order.requested_dishes}
     for name in requested_names:
         if name.casefold() not in existing:
@@ -2003,6 +2072,72 @@ def admin_menu_import_download(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/admin/internal-prices/download")
+def admin_internal_prices_download(request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    items = [item for item in canonical_import_items(db) if item.active]
+    payload = build_internal_price_workbook([
+        {
+            "item_id": int(item.import_item_id),
+            "name": item.name,
+            "price": float(item.internal_cost_per_guest) if item.internal_cost_per_guest is not None else None,
+        }
+        for item in items if item.import_item_id is not None
+    ])
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="Spice_India_Internal_Item_Prices.xlsx"', "Cache-Control": "no-store"},
+    )
+
+
+@app.post("/admin/internal-prices/import")
+async def admin_internal_prices_import(
+    request: Request,
+    csrf_token: str = Form(...),
+    workbook: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
+        return RedirectResponse("/admin/menu-import?toast=Choose+an+.xlsx+internal+price+workbook&toast_type=error#internal-prices", status_code=303)
+    data = await workbook.read()
+    if len(data) > 4 * 1024 * 1024:
+        return RedirectResponse("/admin/menu-import?toast=Internal+price+workbook+must+be+smaller+than+4+MB&toast_type=error#internal-prices", status_code=303)
+    try:
+        rows = parse_internal_price_workbook(data)
+        updated = 0
+        missing: list[int] = []
+        for row in rows:
+            copies = list(db.scalars(select(MenuItem).where(MenuItem.import_item_id == row["item_id"])).all())
+            if not copies:
+                missing.append(row["item_id"]); continue
+            for item in copies:
+                item.internal_cost_per_guest = row["price"]
+                updated += 1
+                # Build 14 introduces internal costing for the first time, so populate existing order-item
+                # snapshots as well. Future order changes retain the copied snapshot.
+                quote_items = db.scalars(select(QuoteItem).where(QuoteItem.item_id == item.id)).all()
+                for qi in quote_items:
+                    if qi.internal_cost_per_guest is None:
+                        qi.internal_cost_per_guest = row["price"]
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/menu-import?toast={quote(str(exc))}&toast_type=error#internal-prices", status_code=303)
+    except Exception as exc:
+        db.rollback()
+        print(f"Internal price import failed: {exc!r}")
+        return RedirectResponse("/admin/menu-import?toast=Internal+price+import+failed&toast_type=error#internal-prices", status_code=303)
+    message = f"Internal prices saved. {len(rows)} rows processed"
+    if missing:
+        message += f"; {len(missing)} Item IDs were not found"
+    return RedirectResponse(f"/admin/menu-import?toast={quote(message)}&toast_type=success#internal-prices", status_code=303)
+
+
 @app.post("/admin/menu-import", response_class=HTMLResponse)
 async def admin_menu_import_apply(
     request: Request,
@@ -2314,6 +2449,7 @@ async def admin_order_update(
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
     delivery_service_charge: str = Form(""),
+    customer_other_charge: str = Form(""),
     admin_notes: str = Form(""),
     customer_message: str = Form(""),
     csrf_token: str = Form(...),
@@ -2340,20 +2476,23 @@ async def admin_order_update(
         money(order.adult_charge),
         money(order.kid_charge),
         money(order.delivery_service_charge),
+        money(order.customer_other_charge),
         money(order.final_price),
     )
-    any_pricing = bool(adult_charge.strip() or kid_charge.strip() or delivery_service_charge.strip())
+    any_pricing = bool(adult_charge.strip() or kid_charge.strip() or delivery_service_charge.strip() or customer_other_charge.strip())
     if any_pricing:
         try:
             adult = money(adult_charge)
             kid = money(kid_charge)
             combined = money(delivery_service_charge)
-            if min(adult, kid, combined) < 0:
+            other_charge = money(customer_other_charge)
+            if min(adult, kid, combined, other_charge) < 0:
                 raise ValueError
-            calc = calculate_order_price(order, adult, kid, combined)
+            calc = calculate_order_price(order, adult, kid, combined, other_charge)
             order.adult_charge = calc["adult_charge"]
             order.kid_charge = calc["kid_charge"]
             order.delivery_service_charge = calc["delivery_service_charge"]
+            order.customer_other_charge = calc["customer_other_charge"]
             order.delivery_price = Decimal("0.00")
             order.service_price = Decimal("0.00")
             order.web_order_charge = Decimal("0.00")
@@ -2365,6 +2504,7 @@ async def admin_order_update(
         money(order.adult_charge),
         money(order.kid_charge),
         money(order.delivery_service_charge),
+        money(order.customer_other_charge),
         money(order.final_price),
     )
 
@@ -2411,6 +2551,7 @@ async def admin_order_update(
                 f"{p['adult_charge']:.2f}",
                 f"{p['kid_charge']:.2f}",
                 f"{p['delivery_service_charge']:.2f}",
+                f"{p['customer_other_charge']:.2f}",
                 f"{p['total']:.2f}",
                 order_menu_item_names(order),
                 public_order_url(request, order.public_token),
@@ -2474,6 +2615,7 @@ def admin_order_item_add(
         category_name=cat.name,
         subcategory_name=sub.name,
         dietary=source.dietary,
+        internal_cost_per_guest=source.internal_cost_per_guest,
         sort_order=next_sort,
     ))
     reopened = invalidate_order_quote_after_menu_change(order, db, f'Admin added "{source.name}" to the selected menu.')
@@ -2544,6 +2686,68 @@ def admin_order_item_delete(
 
 
 
+@app.post("/admin/orders/{order_id}/internal-finance")
+def admin_order_internal_finance(
+    order_id: int,
+    request: Request,
+    food_profit_percent: str = Form("0"),
+    fuel_amount: str = Form(""),
+    fuel_paid: str | None = Form(None),
+    delivery_amount: str = Form(""),
+    delivery_paid: str | None = Form(None),
+    chef_amount: str = Form(""),
+    chef_paid: str | None = Form(None),
+    misc_amount: str = Form(""),
+    misc_paid: str | None = Form(None),
+    other_amount: str = Form(""),
+    other_paid: str | None = Form(None),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id).options(selectinload(QuoteRequest.expenses), selectinload(QuoteRequest.items)))
+    if not order: raise HTTPException(status_code=404)
+    try:
+        pct = money(food_profit_percent)
+        if pct < 0 or pct > 1000:
+            raise ValueError
+        order.food_profit_percent = pct
+        fields = {
+            "fuel": (fuel_amount, fuel_paid),
+            "delivery": (delivery_amount, delivery_paid),
+            "chef": (chef_amount, chef_paid),
+            "misc": (misc_amount, misc_paid),
+            "other": (other_amount, other_paid),
+        }
+        existing = {(e.name or "").strip().casefold(): e for e in order.expenses}
+        today = date.today()
+        for key, (raw_amount, raw_paid) in fields.items():
+            label = INTERNAL_EXPENSE_NAMES[key]
+            amount = money(raw_amount)
+            if amount < 0:
+                raise ValueError
+            expense = existing.get(label.casefold())
+            if amount == 0:
+                if expense:
+                    db.delete(expense)
+                continue
+            if not expense:
+                expense = Expense(order_id=order.id, name=label, amount=amount, expense_date=today)
+                db.add(expense)
+            expense.amount = amount
+            expense.paid = bool(raw_paid)
+            expense.note = "Build 14 fixed order cost"
+    except Exception:
+        db.rollback()
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Enter+valid+internal+costs+and+profit+percentage&toast_type=error#internal-finance", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/orders/{order_id}?toast=Internal+costs+and+profit+saved&toast_type=success#internal-finance", status_code=303)
+
+
+
+
 @app.post("/admin/orders/{order_id}/send-quote-email")
 async def admin_send_quote_email(
     order_id: int,
@@ -2586,6 +2790,7 @@ async def admin_send_quote_email(
         f"{p['adult_charge']:.2f}",
         f"{p['kid_charge']:.2f}",
         f"{p['delivery_service_charge']:.2f}",
+        f"{p['customer_other_charge']:.2f}",
         f"{p['total']:.2f}",
         [item.item_name for item in sorted(order.items, key=lambda x: x.sort_order)],
         public_order_url(request, order.public_token),
@@ -2712,6 +2917,13 @@ async def customer_confirm_order(token: str, request: Request, db: Session = Dep
             order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
             f"€{p['total']:.2f}",
             admin_order_url(request, order.id),
+        )
+        base = str(request.base_url).rstrip("/")
+        await notify_admin_order_confirmed_email(
+            order.order_number, order.customer.name, order.event_name,
+            order.event_date.strftime("%d %b %Y"), event_day(order), order.adults + order.kids,
+            f"{p['total']:.2f}", admin_order_url(request, order.id),
+            f"{base}/admin/orders/{order.id}/print", f"{base}/admin/orders/{order.id}#kitchen-actions",
         )
         await send_customer_status_email_for_order(order, request, db, "confirmed")
     return RedirectResponse(f"/orders/{token}?confirmed=1", status_code=303)
@@ -2973,10 +3185,14 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         [f"Adults · {order.adults} × €{p['adult_charge']:.2f}", f"€{money(order.adults) * p['adult_charge']:.2f}"],
         [f"Kids · {order.kids} × €{p['kid_charge']:.2f}", f"€{money(order.kids) * p['kid_charge']:.2f}"],
         ["Delivery & Service", f"€{p['delivery_service_charge']:.2f}"],
+    ]
+    if p.get("customer_other_charge", Decimal("0.00")) > 0:
+        amount_rows.append(["Other Charges", f"€{p['customer_other_charge']:.2f}"])
+    amount_rows.extend([
         ["Total catering price", f"€{finance['final_price']:.2f}" if order.final_price is not None else "Not priced"],
         ["Payments received", f"€{finance['total_paid']:.2f}"],
         ["Balance due", f"€{finance['balance_due']:.2f}"],
-    ]
+    ])
     amount_table = Table(amount_rows, colWidths=[360, 160])
     amount_table.setStyle(TableStyle([
         ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
@@ -3326,6 +3542,7 @@ def admin_transactions(
         .where(QuoteRequest.status != "voided")
         .options(
             selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.items),
             selectinload(QuoteRequest.payments),
             selectinload(QuoteRequest.expenses),
         )
@@ -3380,7 +3597,11 @@ def admin_transactions(
 
     total_final = sum((row["finance"]["final_price"] for row in rows), Decimal("0.00"))
     total_paid = sum((row["finance"]["total_paid"] for row in rows), Decimal("0.00"))
+    total_food_cost = sum((row["finance"]["food_cost"] for row in rows), Decimal("0.00"))
+    total_operating_expenses = sum((row["finance"]["operating_expenses"] for row in rows), Decimal("0.00"))
     total_expenses = sum((row["finance"]["total_expenses"] for row in rows), Decimal("0.00"))
+    total_net_profit = sum((row["finance"]["net_profit"] for row in rows), Decimal("0.00"))
+    total_net_profit_percent = money((total_net_profit / total_final * Decimal("100")) if total_final > 0 else Decimal("0.00"))
     total_outstanding = sum((row["finance"]["balance_due"] for row in rows), Decimal("0.00"))
     highest_paid = max(rows, key=lambda row: row["finance"]["total_paid"], default=None)
     if highest_paid and highest_paid["finance"]["total_paid"] <= 0:
@@ -3412,7 +3633,11 @@ def admin_transactions(
         selected_sort=sort,
         total_final=total_final,
         total_paid=total_paid,
+        total_food_cost=total_food_cost,
+        total_operating_expenses=total_operating_expenses,
         total_expenses=total_expenses,
+        total_net_profit=total_net_profit,
+        total_net_profit_percent=total_net_profit_percent,
         total_outstanding=total_outstanding,
         highest_paid=highest_paid,
     )
@@ -3428,6 +3653,7 @@ def admin_transaction_detail(order_id: int, request: Request, db: Session = Depe
         .where(QuoteRequest.id == order_id)
         .options(
             selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.items),
             selectinload(QuoteRequest.payments),
             selectinload(QuoteRequest.expenses),
         )
@@ -3457,6 +3683,7 @@ def admin_transaction_price(
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
     delivery_service_charge: str = Form(""),
+    customer_other_charge: str = Form(""),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -3471,12 +3698,14 @@ def admin_transaction_price(
         adult = money(adult_charge)
         kid = money(kid_charge)
         combined = money(delivery_service_charge)
-        if min(adult, kid, combined) < 0:
+        other_charge = money(customer_other_charge)
+        if min(adult, kid, combined, other_charge) < 0:
             raise ValueError
-        calc = calculate_order_price(order, adult, kid, combined)
+        calc = calculate_order_price(order, adult, kid, combined, other_charge)
         order.adult_charge = calc["adult_charge"]
         order.kid_charge = calc["kid_charge"]
         order.delivery_service_charge = calc["delivery_service_charge"]
+        order.customer_other_charge = calc["customer_other_charge"]
         order.delivery_price = Decimal("0.00")
         order.service_price = Decimal("0.00")
         order.web_order_charge = Decimal("0.00")
@@ -3553,6 +3782,7 @@ def admin_expense_add(
     amount: str = Form(...),
     expense_date: str = Form(...),
     note: str = Form(""),
+    paid: str | None = Form(None),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -3578,6 +3808,7 @@ def admin_expense_add(
         amount=amount_value,
         expense_date=spent_on,
         note=note.strip()[:1000],
+        paid=bool(paid),
     ))
     db.commit()
     return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#expenses", status_code=303)
@@ -3613,6 +3844,7 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         )
         .options(
             selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.items),
             selectinload(QuoteRequest.payments),
             selectinload(QuoteRequest.expenses),
         )
@@ -3629,7 +3861,11 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     booked_revenue = Decimal("0.00")
     collected = Decimal("0.00")
+    food_cost = Decimal("0.00")
+    operating_expenses = Decimal("0.00")
     expenses = Decimal("0.00")
+    net_profit = Decimal("0.00")
+    fixed_expense_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
     customers: set[int] = set()
     customer_revenue: dict[int, dict[str, Any]] = {}
 
@@ -3639,7 +3875,14 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         rows.append(row)
         booked_revenue += summary["final_price"]
         collected += summary["total_paid"]
+        food_cost += summary["food_cost"]
+        operating_expenses += summary["operating_expenses"]
         expenses += summary["total_expenses"]
+        net_profit += summary["net_profit"]
+        for key in INTERNAL_EXPENSE_NAMES:
+            fixed_expense_totals[key] += money(summary["expense_breakdown"][key]["amount"])
+        # Any ad-hoc expenses outside the five standard fields roll into Other Expenses in reports.
+        fixed_expense_totals["other"] += sum((money(e.amount) for e in summary["expense_breakdown"].get("extras", [])), Decimal("0.00"))
         customers.add(order.customer_id)
         customer_bucket = customer_revenue.setdefault(
             order.customer_id,
@@ -3649,7 +3892,8 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         customer_bucket["orders"] += 1
 
     outstanding = max(booked_revenue - collected, Decimal("0.00"))
-    expected_profit = booked_revenue - expenses
+    expected_profit = net_profit
+    net_profit_percent = money((net_profit / booked_revenue * Decimal("100")) if booked_revenue > 0 else Decimal("0.00"))
     cash_profit = collected - expenses
 
     highest_paid = max(rows, key=lambda row: row["finance"]["total_paid"], default=None)
@@ -3673,9 +3917,14 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         "customer_count": len(customers),
         "booked_revenue": booked_revenue,
         "collected": collected,
+        "food_cost": food_cost,
+        "operating_expenses": operating_expenses,
         "expenses": expenses,
         "outstanding": outstanding,
         "expected_profit": expected_profit,
+        "net_profit": net_profit,
+        "net_profit_percent": net_profit_percent,
+        "fixed_expense_totals": fixed_expense_totals,
         "cash_profit": cash_profit,
         "highest_paid": highest_paid,
         "most_profitable": most_profitable,
@@ -3755,9 +4004,13 @@ def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> byt
 
     summary_rows = [
         ["Orders", str(data["order_count"]), "Unique customers", str(data["customer_count"])],
-        ["Booked revenue", f"€{data['booked_revenue']:.2f}", "Collected", f"€{data['collected']:.2f}"],
-        ["Outstanding", f"€{data['outstanding']:.2f}", "Expenses", f"€{data['expenses']:.2f}"],
-        ["Expected profit", f"€{data['expected_profit']:.2f}", "Cash profit", f"€{data['cash_profit']:.2f}"],
+        ["Total sales", f"€{data['booked_revenue']:.2f}", "Collected", f"€{data['collected']:.2f}"],
+        ["Food cost", f"€{data['food_cost']:.2f}", "Other expenses", f"€{data['operating_expenses']:.2f}"],
+        ["Total cost", f"€{data['expenses']:.2f}", "Outstanding", f"€{data['outstanding']:.2f}"],
+        ["Net profit", f"€{data['net_profit']:.2f}", "Net profit %", f"{data['net_profit_percent']:.2f}%"],
+        ["Fuel", f"€{data['fixed_expense_totals']['fuel']:.2f}", "Delivery", f"€{data['fixed_expense_totals']['delivery']:.2f}"],
+        ["Chef labour", f"€{data['fixed_expense_totals']['chef']:.2f}", "Miscellaneous", f"€{data['fixed_expense_totals']['misc']:.2f}"],
+        ["Other expenses", f"€{data['fixed_expense_totals']['other']:.2f}", "", ""],
     ]
     summary = Table(summary_rows, colWidths=[92, 85, 92, 85], hAlign="LEFT")
     summary.setStyle(TableStyle([
@@ -3777,8 +4030,9 @@ def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> byt
     story.extend([summary, Paragraph("Order income and profitability", section)])
 
     order_table_data = [[
-        Paragraph("ORDER", small), Paragraph("CUSTOMER / EVENT", small), Paragraph("PRICE", small),
-        Paragraph("COLLECTED", small), Paragraph("EXPENSES", small), Paragraph("DUE", small), Paragraph("PROFIT", small),
+        Paragraph("ORDER", small), Paragraph("CUSTOMER / EVENT", small), Paragraph("SALE", small),
+        Paragraph("FOOD", small), Paragraph("OTHER", small), Paragraph("TOTAL COST", small),
+        Paragraph("NET", small), Paragraph("MARGIN", small),
     ]]
     for row in data["rows"]:
         order = row["order"]
@@ -3790,18 +4044,19 @@ def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> byt
                 small,
             ),
             f"€{finance['final_price']:.2f}",
-            f"€{finance['total_paid']:.2f}",
+            f"€{finance['food_cost']:.2f}",
+            f"€{finance['operating_expenses']:.2f}",
             f"€{finance['total_expenses']:.2f}",
-            f"€{finance['balance_due']:.2f}",
-            f"€{finance['expected_profit']:.2f}",
+            f"€{finance['net_profit']:.2f}",
+            f"{finance['net_profit_percent']:.2f}%",
         ])
     if len(order_table_data) == 1:
-        order_table_data.append(["No orders", "", "", "", "", "", ""])
+        order_table_data.append(["No orders", "", "", "", "", "", "", ""])
 
     order_table = Table(
         order_table_data,
         repeatRows=1,
-        colWidths=[76, 145, 60, 60, 60, 55, 60],
+        colWidths=[62, 130, 52, 52, 52, 58, 52, 48],
         hAlign="LEFT",
     )
     order_table.setStyle(TableStyle([
@@ -3809,13 +4064,13 @@ def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> byt
         ("TEXTCOLOR", (0,0), (-1,0), colors.white),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTNAME", (2,1), (-1,-1), "Helvetica-Bold"),
-        ("FONTSIZE", (0,0), (-1,-1), 7.2),
+        ("FONTSIZE", (0,0), (-1,-1), 6.7),
         ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#CBD3D0")),
         ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("TOPPADDING", (0,0), (-1,-1), 6),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-        ("LEFTPADDING", (0,0), (-1,-1), 5),
-        ("RIGHTPADDING", (0,0), (-1,-1), 5),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING", (0,0), (-1,-1), 4),
+        ("RIGHTPADDING", (0,0), (-1,-1), 4),
     ]))
     story.append(order_table)
 
@@ -3858,7 +4113,7 @@ def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> byt
     story.extend([
         Spacer(1, 14),
         Paragraph(
-            "Booked revenue uses the final agreed catering price. Collected is money actually received. Expected profit is booked revenue minus recorded expenses. Cash profit is money collected minus recorded expenses. Cancelled and voided orders are excluded.",
+            "Total sales use the final agreed catering price. Food cost uses the selected dish internal cost per guest multiplied by order guest count. Net profit is total sales minus food cost and operating expenses. Cancelled and voided orders are excluded.",
             small,
         ),
     ])

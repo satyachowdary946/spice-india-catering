@@ -96,6 +96,7 @@ class MenuItem(Base):
     import_item_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     image_reference: Mapped[str] = mapped_column(String(500), default="")
     display_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    internal_cost_per_guest: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     section_heading_color: Mapped[str] = mapped_column(String(20), default="#94A3B8")
     subcategory: Mapped[Subcategory] = relationship(back_populates="items")
 
@@ -149,6 +150,8 @@ class QuoteRequest(Base):
     service_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)  # legacy compatibility
     delivery_service_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     web_order_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    customer_other_charge: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    food_profit_percent: Mapped[Decimal] = mapped_column(Numeric(7, 2), default=Decimal("0.00"))
     kitchen_comments: Mapped[str] = mapped_column(Text, default="")
     admin_notes: Mapped[str] = mapped_column(Text, default="")
     customer_message: Mapped[str] = mapped_column(Text, default="")
@@ -177,6 +180,7 @@ class QuoteItem(Base):
     category_name: Mapped[str] = mapped_column(String(120))
     subcategory_name: Mapped[str] = mapped_column(String(120))
     dietary: Mapped[str] = mapped_column(String(20))
+    internal_cost_per_guest: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     order: Mapped[QuoteRequest] = relationship(back_populates="items")
 
@@ -214,6 +218,7 @@ class Expense(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     expense_date: Mapped[date] = mapped_column(Date, default=date.today)
     note: Mapped[str] = mapped_column(Text, default="")
+    paid: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     order: Mapped[QuoteRequest] = relationship(back_populates="expenses")
 

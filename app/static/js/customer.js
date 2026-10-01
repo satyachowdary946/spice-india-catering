@@ -220,7 +220,9 @@ function initMenu(){
       if(currentCategoryLabel)currentCategoryLabel.textContent=current?.name||'Browse Menu';
     };
 
-    categoryTabs.innerHTML=cats.map(c=>`<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}">${escapeHtml(c.name)}</button>`).join('');
+    const tabSelected=new Set(DraftStore.load().item_ids||[]);
+    const categorySelectedCount=c=>c.subs.reduce((total,sub)=>total+sub.items.filter(item=>tabSelected.has(Number(item.id))).length,0);
+    categoryTabs.innerHTML=cats.map(c=>{const count=categorySelectedCount(c);return `<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}">${escapeHtml(c.name)}${count?` <span class="category-selected-count">× ${count}</span>`:''}</button>`}).join('');
     syncCategoryUI();
 
     categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{
@@ -230,7 +232,7 @@ function initMenu(){
       categoryDialog?.close();
       const target=document.getElementById(activeCategory);
       if(target){
-        const y=target.getBoundingClientRect().top+window.scrollY-74;
+        const y=target.getBoundingClientRect().top+window.scrollY-154;
         window.scrollTo({top:Math.max(0,y),behavior:'smooth'});
         window.setTimeout(()=>{
           if(Date.now()>=categoryLockUntil)updateCategoryFromScroll();
@@ -301,7 +303,7 @@ function initReview(){
 async function renderReviewItems(ids,box,submit,requestedCount=0){
   if(!ids.length){box.innerHTML='<div class="empty">No standard menu items selected. <a href="/menu"><strong>Choose Menu Items</strong></a></div>';if(submit)submit.disabled=requestedCount===0;return;}
   try{const res=await fetch('/api/menu-items?ids='+encodeURIComponent(ids.join(','))),items=await res.json(),groups={};items.forEach(i=>{(((groups[i.menu]??={})[i.category]??={})[i.subcategory]??=[]).push(i)});
-    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;return `<div class="review-category review-category-highlight">${escapeHtml(c)}</div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list review-basket-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item review-basket-item ${escapeHtml(i.dietary)}">${i.image_url?`<img class="review-basket-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="review-basket-image review-basket-placeholder" aria-hidden="true">SI</div>`}<span class="review-basket-copy"><strong>${escapeHtml(i.name)}</strong>${i.description?`<small>${escapeHtml(i.description)}</small>`:''}${i.price!=null?`<strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
+    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;const catCount=Object.values(subs).reduce((n,arr)=>n+arr.length,0);return `<div class="review-category review-category-highlight">${escapeHtml(c)} <span>× ${catCount}</span></div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list review-basket-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item review-basket-item ${escapeHtml(i.dietary)}">${i.image_url?`<img class="review-basket-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="review-basket-image review-basket-placeholder" aria-hidden="true">SI</div>`}<span class="review-basket-copy"><strong>${escapeHtml(i.name)}</strong>${i.description?`<small>${escapeHtml(i.description)}</small>`:''}${i.price!=null?`<strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
     box.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>DraftStore.removeItem(Number(b.dataset.remove))));if(submit)submit.disabled=false;
   }catch{box.innerHTML='<div class="notice error">Could not load your selected items. Return to the menu and try again.</div>';if(submit)submit.disabled=true;}
 }

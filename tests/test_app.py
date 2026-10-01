@@ -177,6 +177,13 @@ def test_build8_mobile_workflow():
         assert "Payment Status" in transactions.text
         assert "Expenses" in transactions.text
         assert "Sort By" in transactions.text
+        assert "Food Cost" in transactions.text
+        assert "Net Profit" in transactions.text
+        reports = client.get("/admin/reports")
+        assert reports.status_code == 200
+        assert "Food Cost" in reports.text and "Chef Labour" in reports.text and "Net Profit %" in reports.text
+        reports_pdf = client.get("/admin/reports/pdf")
+        assert reports_pdf.status_code == 200 and reports_pdf.content.startswith(b"%PDF")
 
         # Kitchen actions are locked while Quoted.
         detail = client.get("/admin/orders/1")
@@ -225,6 +232,8 @@ def test_build8_mobile_workflow():
         assert "Menu Images" in menu_import.text
         assert "Database backup active" in menu_import.text or "Cloudflare R2 backup connected" in menu_import.text
         assert "Master Category Setup" in menu_import.text
+        assert "Internal Dish Cost Prices" in menu_import.text
+        assert "/admin/internal-prices/download" in menu_import.text
         master_download = client.get("/admin/menu-import/download")
         assert master_download.status_code == 200
         assert master_download.content[:2] == b"PK"
@@ -271,7 +280,7 @@ def test_excel_menu_import_and_combination_rules():
     from sqlalchemy import select
     from app.db import SessionLocal
     from app.main import apply_menu_workbook
-    from app.menu_excel import parse_menu_workbook
+    from app.menu_excel import parse_menu_workbook, build_internal_price_workbook, parse_internal_price_workbook
     from app.models import MenuCombination, MenuItem
 
     wb = Workbook()
@@ -305,6 +314,10 @@ def test_excel_menu_import_and_combination_rules():
 
     parsed = parse_menu_workbook(bio.getvalue())
     assert len(parsed["items"]) == 2
+    internal_bytes = build_internal_price_workbook([{"item_id": 501, "name": "Test Appam", "price": 2.75}])
+    internal_rows = parse_internal_price_workbook(internal_bytes)
+    assert internal_rows[0]["item_id"] == 501
+    assert float(internal_rows[0]["price"]) == 2.75
     assert len(parsed["combinations"] or []) == 1
     with SessionLocal() as db:
         result = apply_menu_workbook(db, parsed)
@@ -323,12 +336,15 @@ def test_excel_menu_import_and_combination_rules():
     with TestClient(app) as client:
         menu_page = client.get("/menu")
         assert menu_page.status_code == 200
-        assert "floating-category-trigger" in menu_page.text
-        assert "category-picker-dialog" in menu_page.text
+        assert "menu-sticky-category-rail" in menu_page.text
+        assert "Request New Dish" in menu_page.text
+        assert "floating-category-trigger" not in menu_page.text
+        assert '<header class="site-header' not in menu_page.text
         assert "https://example.com/appam.jpg" in menu_page.text
         assert '"price": 4.5' in menu_page.text or '"price":4.5' in menu_page.text
         js = client.get("/static/js/customer.js")
         assert "review-basket-image" in js.text
+        assert "category-selected-count" in js.text
         response = client.get("/api/menu-combinations", params={"item_id": appam_id})
         assert response.status_code == 200
         assert response.json()["items"][0]["name"] == "Test Curry"

@@ -259,6 +259,7 @@ async def notify_customer_quote_email(
     adult_charge: str,
     kid_charge: str,
     delivery_service_charge: str,
+    other_charge: str,
     total_price: str,
     menu_items: list[str],
     confirm_url: str,
@@ -281,6 +282,7 @@ async def notify_customer_quote_email(
           <tr><td style="padding:6px 0">Adult charge · {adults} guests</td><td align="right" style="font-weight:800">€{safe(adult_charge)} / head</td></tr>
           <tr><td style="padding:6px 0">Kid charge · {kids} guests</td><td align="right" style="font-weight:800">€{safe(kid_charge)} / head</td></tr>
           <tr><td style="padding:6px 0">Delivery &amp; service</td><td align="right" style="font-weight:800">€{safe(delivery_service_charge)}</td></tr>
+          {f'<tr><td style="padding:6px 0">Other charges</td><td align="right" style="font-weight:800">€{safe(other_charge)}</td></tr>' if str(other_charge or '').strip() not in {'', '0', '0.00'} else ''}
           <tr><td colspan="2" style="border-top:2px solid #18a995;padding-top:14px"></td></tr>
           <tr><td style="font-size:20px;font-weight:900">Total quote</td><td align="right" style="font-size:22px;font-weight:900;color:#0f766e">€{safe(total_price)}</td></tr>
         </table>
@@ -363,6 +365,41 @@ async def notify_customer_status_email(
     """
     email_html = _email_shell(cfg["title"], cfg["subtitle"], body)
     return await _send_email(to_email, cfg["subject"], email_html)
+
+
+# =========================================================
+# CONFIRMED ORDER ADMIN EMAIL
+# =========================================================
+
+async def notify_admin_order_confirmed_email(
+    order_number: str,
+    customer_name: str,
+    event_name: str,
+    event_date: str,
+    event_day: str,
+    total_people: int,
+    total_price: str,
+    admin_url: str,
+    print_url: str,
+    kitchen_url: str,
+) -> tuple[bool, str]:
+    if not resend_email_configured():
+        return False, "Admin email notification is not configured."
+    body = f"""
+      <p style="font-size:16px;line-height:1.7;margin-top:0"><strong>{html.escape(customer_name)}</strong> has confirmed {html.escape(order_number)}.</p>
+      <table role="presentation" width="100%" style="border-collapse:collapse;margin:18px 0">
+        <tr><td style="padding:7px 0;font-weight:700">Event</td><td>{html.escape(event_name)}</td></tr>
+        <tr><td style="padding:7px 0;font-weight:700">Date</td><td>{html.escape(event_date)} · {html.escape(event_day)}</td></tr>
+        <tr><td style="padding:7px 0;font-weight:700">Guests</td><td>{total_people}</td></tr>
+        <tr><td style="padding:7px 0;font-weight:700">Confirmed total</td><td><strong>€{html.escape(total_price)}</strong></td></tr>
+      </table>
+      <a href="{html.escape(admin_url, quote=True)}" style="display:inline-block;margin:4px 8px 4px 0;padding:12px 18px;background:#0f766e;color:#fff;text-decoration:none;border-radius:10px;font-weight:800">Open Order</a>
+      <a href="{html.escape(print_url, quote=True)}" style="display:inline-block;margin:4px 8px 4px 0;padding:12px 18px;background:#20312d;color:#fff;text-decoration:none;border-radius:10px;font-weight:800">Print Order</a>
+      <a href="{html.escape(kitchen_url, quote=True)}" style="display:inline-block;margin:4px 0;padding:12px 18px;background:#20312d;color:#fff;text-decoration:none;border-radius:10px;font-weight:800">Kitchen / WhatsApp</a>
+      <p style="margin-top:20px;color:#5f6c68">Kitchen sending remains protected in the admin portal and is available only after confirmation.</p>
+    """
+    email_html = _email_shell("Order confirmed ✅", f"{order_number} · ready for kitchen preparation", body)
+    return await _send_email(os.environ["ADMIN_NOTIFICATION_EMAIL"], f"✅ Catering Order Confirmed — {order_number}", email_html)
 
 
 # =========================================================
