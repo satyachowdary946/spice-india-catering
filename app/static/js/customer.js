@@ -78,20 +78,37 @@ function initMenu(){
   window.__menuItemMap=itemMap;
 
   const updateRequestCount=()=>{const n=DraftStore.load().requested_dishes.length;if(requestCount)requestCount.textContent=n?`(${n})`:'';};
-  const requestRowHtml=(value='',index=0)=>`<div class="requested-dish-row" data-request-row><div class="requested-dish-number">${index+1}</div><input type="text" maxlength="180" value="${escapeHtml(value)}" placeholder="Dish name" aria-label="Requested dish ${index+1}"><button type="button" class="request-remove-dish" data-remove-request-row aria-label="Remove requested dish ${index+1}">−</button></div>`;
+  const requestRowHtml=(value='',index=0)=>`<div class="requested-dish-row" data-request-row><div class="requested-dish-number">${index+1}</div><input type="text" maxlength="180" value="${escapeHtml(value)}" placeholder="Dish name" aria-label="Requested dish ${index+1}"><div class="requested-dish-actions"><button type="button" class="request-add-dish" data-add-request-after aria-label="Add another requested dish after ${index+1}">＋</button><button type="button" class="request-remove-dish" data-remove-request-row aria-label="Remove requested dish ${index+1}">−</button></div></div>`;
+  const renumberRequestRows=()=>{
+    [...(requestRows?.querySelectorAll('[data-request-row]')||[])].forEach((r,i)=>{
+      const n=r.querySelector('.requested-dish-number'),input=r.querySelector('input'),add=r.querySelector('[data-add-request-after]'),remove=r.querySelector('[data-remove-request-row]');
+      if(n)n.textContent=String(i+1);
+      if(input)input.setAttribute('aria-label',`Requested dish ${i+1}`);
+      if(add)add.setAttribute('aria-label',`Add another requested dish after ${i+1}`);
+      if(remove)remove.setAttribute('aria-label',`Remove requested dish ${i+1}`);
+    });
+  };
+  const bindRequestRow=(row)=>{
+    if(!row)return;
+    row.querySelector('[data-add-request-after]')?.addEventListener('click',()=>{
+      const rows=[...requestRows.querySelectorAll('[data-request-row]')];
+      if(rows.length>=20){alert('Please request no more than 20 dishes.');return;}
+      row.insertAdjacentHTML('afterend',requestRowHtml('',rows.indexOf(row)+1));
+      const added=row.nextElementSibling;bindRequestRow(added);renumberRequestRows();added?.querySelector('input')?.focus();
+    });
+    row.querySelector('[data-remove-request-row]')?.addEventListener('click',()=>{
+      const rows=[...requestRows.querySelectorAll('[data-request-row]')];
+      if(rows.length===1){const input=row.querySelector('input');if(input)input.value='';return;}
+      row.remove();renumberRequestRows();
+    });
+  };
   const renderRequestRows=(values)=>{
     if(!requestRows)return;
     const dishes=(Array.isArray(values)?values:[]).slice(0,20);
     if(!dishes.length)dishes.push('');
     requestRows.innerHTML=dishes.map((value,index)=>requestRowHtml(value,index)).join('');
-    requestRows.querySelectorAll('[data-remove-request-row]').forEach(btn=>btn.addEventListener('click',()=>{
-      const row=btn.closest('[data-request-row]');
-      if(!row)return;
-      const rows=[...requestRows.querySelectorAll('[data-request-row]')];
-      if(rows.length===1){const input=row.querySelector('input');if(input)input.value='';return;}
-      row.remove();
-      [...requestRows.querySelectorAll('[data-request-row]')].forEach((r,i)=>{const n=r.querySelector('.requested-dish-number');const input=r.querySelector('input');const remove=r.querySelector('button');if(n)n.textContent=String(i+1);if(input)input.setAttribute('aria-label',`Requested dish ${i+1}`);if(remove)remove.setAttribute('aria-label',`Remove requested dish ${i+1}`);});
-    }));
+    requestRows.querySelectorAll('[data-request-row]').forEach(bindRequestRow);
+    renumberRequestRows();
   };
   document.querySelector('[data-open-request-dialog]')?.addEventListener('click',()=>{renderRequestRows(DraftStore.load().requested_dishes);requestDialog?.showModal();window.setTimeout(()=>requestRows?.querySelector('input')?.focus(),60);});
   document.querySelector('[data-add-request-row]')?.addEventListener('click',()=>{
@@ -99,9 +116,7 @@ function initMenu(){
     const rows=[...requestRows.querySelectorAll('[data-request-row]')];
     if(rows.length>=20){alert('Please request no more than 20 dishes.');return;}
     requestRows.insertAdjacentHTML('beforeend',requestRowHtml('',rows.length));
-    const row=requestRows.lastElementChild;
-    row?.querySelector('[data-remove-request-row]')?.addEventListener('click',()=>{row.remove();renderRequestRows([...requestRows.querySelectorAll('input')].map(x=>x.value));});
-    row?.querySelector('input')?.focus();
+    const row=requestRows.lastElementChild;bindRequestRow(row);renumberRequestRows();row?.querySelector('input')?.focus();
   });
   document.querySelector('[data-save-requests]')?.addEventListener('click',()=>{
     const lines=[...(requestRows?.querySelectorAll('input')||[])].map(input=>String(input.value||'').replace(/\s+/g,' ').trim()).filter(Boolean), unique=[], seen=new Set();

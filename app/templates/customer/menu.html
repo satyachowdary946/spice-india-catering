@@ -2,8 +2,9 @@
 {% block title %}Catering Menu · {{ business.company_name or 'Catering' }}{% endblock %}
 {% block body %}
 <main class="menu-shell" data-menu-root>
-  <div class="menu-only-backbar no-print"><button type="button" onclick="history.back()" aria-label="Go back">←</button><strong>Choose Your Menu</strong></div>
-  <div class="filter-block customer-menu-toolbar">
+  <div class="menu-top-stack">
+    <div class="menu-only-backbar no-print"><button type="button" onclick="history.back()" aria-label="Go back">←</button><strong>Choose Your Menu</strong></div>
+    <div class="filter-block customer-menu-toolbar">
     <div class="container">
       <div class="menu-primary-row" data-browse-controls>
         <div class="segment dietary-primary" role="group" aria-label="Dietary menu">
@@ -22,6 +23,7 @@
       <div class="menu-sticky-category-rail" aria-label="Pinned menu categories">
         <div class="category-tabs" data-category-tabs aria-label="Menu categories"></div>
       </div>
+    </div>
     </div>
   </div>
 

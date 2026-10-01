@@ -2436,7 +2436,7 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         finance=finance_summary(order), pricing=pricing_breakdown(order),
         can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
         catalog_items=catalog_items,
-        can_share_quote=(order.status == "quoted" and order.final_price is not None),
+        can_share_quote=(order.status != "new" and order.final_price is not None),
         can_send_kitchen=(order.status == "confirmed"),
     )
 
@@ -2766,9 +2766,9 @@ async def admin_send_quote_email(
     )
     if not order:
         raise HTTPException(status_code=404)
-    if order.status != "quoted":
+    if order.status == "new":
         return RedirectResponse(
-            f"/admin/orders/{order_id}?toast=Change+the+order+status+to+Quoted+before+sending+the+customer+quote&toast_type=error",
+            f"/admin/orders/{order_id}?toast=Save+the+order+as+Quoted+before+sending+the+customer+quote&toast_type=error",
             status_code=303,
         )
     if order.final_price is None:

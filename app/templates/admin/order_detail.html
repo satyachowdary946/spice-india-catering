@@ -136,13 +136,13 @@
 </section>
 
 <section class="card no-print" id="customer-sharing" style="margin-top:14px">
-  <div class="admin-title"><div><div class="eyebrow">Customer Quote</div><h2 style="font-size:1.25rem">Send / Resend Customer Quote</h2><p class="muted">Email, WhatsApp and confirmation-link sharing unlock only when the order status is <strong>Quoted</strong>.</p></div></div>
+  <div class="admin-title"><div><div class="eyebrow">Customer Quote</div><h2 style="font-size:1.25rem">Send / Resend Customer Quote</h2><p class="muted">Email, WhatsApp and confirmation-link sharing are disabled only while the order is <strong>New</strong>. Once quoted, they remain available for resend on later statuses.</p></div></div>
   <div class="actions">
     <form method="post" action="/admin/orders/{{ order.id }}/send-quote-email"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit" {% if not can_share_quote or not order.customer.email %}disabled{% endif %}>Email Quote To Customer</button></form>
     {% if can_share_quote and customer_whatsapp_url %}<a class="btn secondary" href="{{ customer_whatsapp_url }}" target="_blank" rel="noopener" onclick="adminToast('WhatsApp opened for {{ order.customer.whatsapp }}. Press Send in WhatsApp.','success')">Send Quote On WhatsApp</a>{% else %}<button class="btn secondary" type="button" disabled>Send Quote On WhatsApp</button>{% endif %}
     <button class="btn secondary" type="button" {% if not can_share_quote %}disabled{% endif %} onclick="copyAdminConfirmLink('{{ public_url }}')">Copy Confirm Link</button>
   </div>
-  {% if order.status != 'quoted' %}<div class="help" style="margin-top:8px">Set the status to Quoted first. When you do, the first quote email is sent automatically.</div>{% elif not order.customer.email %}<div class="help" style="margin-top:8px">Customer email is missing. Add it in Customers before emailing the quote.</div>{% endif %}
+  {% if order.status == 'new' %}<div class="help" style="margin-top:8px">Set the status to Quoted first. After that, quote sharing remains available on later statuses.</div>{% elif not order.customer.email %}<div class="help" style="margin-top:8px">Customer email is missing. Add it in Customers before emailing the quote.</div>{% endif %}
 </section>
 
 <section class="card" id="kitchen-actions" style="margin-top:14px">

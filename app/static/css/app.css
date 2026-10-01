@@ -1590,3 +1590,19 @@ html,body{max-width:100%;overflow-x:hidden}
   .internal-expense-grid{grid-template-columns:1fr}
   .internal-finance-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+
+/* Build 14.1 quick hotfix · reliable pinned menu + requested-dish +/- controls */
+body.menu-page{overflow-x:clip}
+.menu-page .menu-shell{overflow:visible!important}
+.menu-top-stack{position:-webkit-sticky;position:sticky;top:0;z-index:40;background:#30383b;box-shadow:0 8px 22px rgba(0,0,0,.26)}
+.menu-top-stack .menu-only-backbar{position:relative!important;top:auto!important;z-index:2;box-shadow:none}
+.menu-top-stack .customer-menu-toolbar{position:relative!important;top:auto!important;z-index:1!important;box-shadow:none!important}
+.menu-top-stack .menu-search-row{position:relative!important;top:auto!important}
+.requested-dish-row{grid-template-columns:32px minmax(0,1fr) auto!important}
+.requested-dish-actions{display:flex;align-items:center;gap:7px}
+.request-add-dish,.request-remove-dish{width:44px;height:44px;border-radius:12px;font-size:1.55rem;font-weight:950;line-height:1}
+.request-add-dish{border:1px solid #2fcbb3;background:#0d2d28;color:#8cf2e1}
+.request-remove-dish{border:1px solid #8b5550;background:#271514;color:#ff9a91}
+.request-add-dish:active,.request-remove-dish:active{transform:translateY(1px)}
+@media(max-width:520px){.requested-dish-row{grid-template-columns:28px minmax(0,1fr) auto!important}.requested-dish-actions{gap:5px}.request-add-dish,.request-remove-dish{width:40px;height:42px}}
