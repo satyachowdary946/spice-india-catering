@@ -65,6 +65,8 @@ def test_build8_mobile_workflow():
         assert 'data-exit-search' in menu_page.text
         assert 'data-request-rows' in menu_page.text
         assert 'data-add-request-row' in menu_page.text
+        assert 'data-cart-count' in menu_page.text
+        assert 'Review Basket' not in menu_page.text
         # The page is already the menu, so the primary header does not repeat a Menu link.
         header_html = menu_page.text.split('</header>', 1)[0]
         assert 'href="/menu">Menu</a>' not in header_html
@@ -161,11 +163,11 @@ def test_build8_mobile_workflow():
         assert "Invoice Available" not in customer.text
         assert "Cancel Order" not in customer.text
         assert "Wednesday" not in customer.text or "Day" in customer.text  # day is derived, date-dependent
-        assert "+ Add More Dishes" not in customer.text
-        assert "Please contact the Spice India Catering team" in customer.text
+        assert "Edit Menu" in customer.text
+        assert "Saving changes will cancel this quote price" in customer.text
         assert "CONFIRM ORDER" in customer.text
-        locked_edit = client.get("/orders/" + b1["token"] + "/add-dishes", follow_redirects=False)
-        assert locked_edit.status_code == 303
+        quoted_edit = client.get("/orders/" + b1["token"] + "/add-dishes", follow_redirects=False)
+        assert quoted_edit.status_code == 200
 
         transaction = client.get("/admin/transactions/1")
         assert transaction.status_code == 200
@@ -209,6 +211,11 @@ def test_build8_mobile_workflow():
         }, follow_redirects=False)
         assert confirm_admin.status_code == 303
         detail = client.get("/admin/orders/1")
+        assert "Deposit Received" in detail.text and "Send To Kitchen" in detail.text
+        dep = client.post("/admin/orders/1/deposit", data={"csrf_token": csrf_from(detail.text), "deposit_received": "yes"}, follow_redirects=False)
+        assert dep.status_code == 303
+        detail = client.get("/admin/orders/1")
+        assert "✓ PAID" in detail.text
         kitchen = client.post("/admin/orders/1/kitchen-share", data={
             "csrf_token": csrf_from(detail.text),
             "kitchen_comments": "NO ONION IN 2 PORTIONS",

@@ -30,6 +30,7 @@
   <div class="menu-floating-actions no-print">
     <button class="menu-floating-action filter" type="button" data-open-menu-filter><span aria-hidden="true">☰</span><strong>South / North</strong></button>
     <button class="menu-floating-action request" type="button" data-open-request-dialog><span aria-hidden="true">＋</span><strong>Request New Dish</strong><small data-request-count></small></button>
+    <a class="menu-floating-cart" href="/review" aria-label="Open selected menu cart"><span class="cart-glyph" aria-hidden="true">🛒</span><span class="cart-count-badge" data-cart-count>0</span></a>
   </div>
 
   <div class="container">
@@ -82,7 +83,6 @@
     </div>
   </dialog>
 
-  <div class="basket-bar"><div class="basket-inner"><div><div class="basket-count" data-basket-count>0 items selected</div><div class="basket-sub">Saved automatically on this device</div></div><a class="btn" href="/review">Review Basket</a></div></div>
   <script id="menu-data" type="application/json">{{ menu_data | tojson }}</script>
 </main>
 {% endblock %}

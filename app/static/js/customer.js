@@ -38,8 +38,15 @@ function initDetailsForm(){
   if(phone&&wa&&phone.value&&phone.value===wa.value) same.checked=true;
   same?.addEventListener('change',()=>{if(same.checked) wa.value=phone.value;});
   const fail=(message,field)=>{if(errorBox){errorBox.textContent=message;errorBox.hidden=false;}else alert(message); form.elements[field]?.focus();};
+  const clearFieldError=el=>{const field=el?.closest('.field');if(!field)return;field.classList.remove('field-invalid');field.querySelector('[data-field-error]')?.remove();};
+  const showFieldError=el=>{const field=el?.closest('.field');if(!field)return;field.classList.add('field-invalid');let msg=field.querySelector('[data-field-error]');if(!msg){msg=document.createElement('div');msg.dataset.fieldError='';msg.className='field-error-message';field.appendChild(msg);}msg.textContent=el.validationMessage||'This field is required.';};
+  [...form.querySelectorAll('input[required],textarea[required],select[required]')].forEach(el=>{el.addEventListener('input',()=>clearFieldError(el));el.addEventListener('change',()=>clearFieldError(el));});
   form.addEventListener('submit',e=>{
-    e.preventDefault(); if(errorBox) errorBox.hidden=true; if(!form.reportValidity()) return;
+    e.preventDefault(); if(errorBox) errorBox.hidden=true;
+    const required=[...form.querySelectorAll('input[required],textarea[required],select[required]')];
+    required.forEach(clearFieldError);
+    const invalid=required.filter(el=>!el.checkValidity());
+    if(invalid.length){invalid.forEach(showFieldError);invalid[0].closest('.field')?.scrollIntoView({behavior:'smooth',block:'center'});invalid[0].focus({preventScroll:true});return;}
     const fd=new FormData(form), details={};
     ['name','phone','whatsapp','email','event_date','event_day','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
     if(!/^[0-9]{7,10}$/.test(details.phone)){fail('Phone number must contain digits only and be no more than 10 digits.','phone');return;}
@@ -237,7 +244,7 @@ function initMenu(){
 
     const tabSelected=new Set(DraftStore.load().item_ids||[]);
     const categorySelectedCount=c=>c.subs.reduce((total,sub)=>total+sub.items.filter(item=>tabSelected.has(Number(item.id))).length,0);
-    categoryTabs.innerHTML=cats.map(c=>{const count=categorySelectedCount(c);return `<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}">${escapeHtml(c.name)}${count?` <span class="category-selected-count">× ${count}</span>`:''}</button>`}).join('');
+    categoryTabs.innerHTML=cats.map(c=>{const count=categorySelectedCount(c);return `<button type="button" data-cat="${c.id}" class="${c.id===activeCategory?'active':''}" aria-pressed="${c.id===activeCategory?'true':'false'}"><span>${escapeHtml(c.name)}</span>${count?`<span class="category-selected-count" aria-label="${count} selected">${count}</span>`:''}</button>`}).join('');
     syncCategoryUI();
 
     categoryTabs.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>{
@@ -296,7 +303,7 @@ function initMenu(){
   updateRequestCount();render();
 }
 
-function updateBasketBar(){const el=document.querySelector('[data-basket-count]');if(el)el.textContent=formatCount(DraftStore.load().item_ids.length);}
+function updateBasketBar(){const n=DraftStore.load().item_ids.length;const badge=document.querySelector('[data-cart-count]');if(badge){badge.textContent=String(n);badge.classList.toggle('empty',n===0);}const legacy=document.querySelector('[data-basket-count]');if(legacy)legacy.textContent=formatCount(n);}
 
 function initReview(){
   const root=document.querySelector('[data-review-root]');if(!root)return;

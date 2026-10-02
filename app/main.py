@@ -123,6 +123,11 @@ def ensure_schema_compatibility() -> None:
             "customer_other_charge": "NUMERIC(10,2)",
             "food_profit_percent": "NUMERIC(7,2) DEFAULT 0.00",
             "kitchen_comments": "TEXT DEFAULT ''",
+            "quote_email_sent_at": "TIMESTAMP",
+            "quote_whatsapp_sent_at": "TIMESTAMP",
+            "deposit_received": "BOOLEAN",
+            "deposit_updated_at": "TIMESTAMP",
+            "kitchen_shared_at": "TIMESTAMP",
         }
         for name, ddl in quote_additions.items():
             if name not in columns:
@@ -1157,7 +1162,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         ))
     for dish_name in requested_dishes:
         db.add(RequestedDish(order_id=order.id, name=dish_name, status="pending"))
-    db.add(StatusHistory(order_id=order.id, status="new", note=""))
+    db.add(StatusHistory(order_id=order.id, status="new", note="Customer changed the selected menu. Previous quote invalidated; revised quote required."))
     try:
         db.commit()
     except IntegrityError as exc:
@@ -1300,8 +1305,8 @@ def customer_add_dishes(token: str, request: Request, db: Session = Depends(get_
     )
     if not order:
         raise HTTPException(status_code=404)
-    if order.status != "new":
-        return RedirectResponse(f"/orders/{token}?error=Menu+changes+are+locked+after+the+order+is+quoted.+Please+contact+the+catering+team", status_code=303)
+    if order.status not in {"new", "quoted"}:
+        return RedirectResponse(f"/orders/{token}?error=Menu+changes+are+available+before+confirmation.+Please+contact+the+catering+team+for+confirmed+orders", status_code=303)
     draft = {
         "details": {
             "name": order.customer.name,
@@ -1335,8 +1340,8 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     )
     if not order:
         return JSONResponse({"ok": False, "error": "Order not found."}, status_code=404)
-    if order.status != "new":
-        return JSONResponse({"ok": False, "error": "Menu changes are locked after the order is quoted. Please contact the catering team."}, status_code=409)
+    if order.status not in {"new", "quoted"}:
+        return JSONResponse({"ok": False, "error": "Menu changes are available before confirmation only. Please contact the catering team for confirmed orders."}, status_code=409)
     try:
         payload = await request.json()
     except Exception:
@@ -2562,6 +2567,9 @@ async def admin_order_update(
             sent, message = await send_customer_status_email_for_order(order, request, db, status)
 
         if sent:
+            if status == "quoted":
+                order.quote_email_sent_at = datetime.utcnow()
+                db.commit()
             label = "Quote email sent successfully" if status == "quoted" else f"{status.title()} email sent successfully"
             return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(label)}&toast_type=success", status_code=303)
         return RedirectResponse(
@@ -2748,6 +2756,95 @@ def admin_order_internal_finance(
 
 
 
+@app.get("/admin/orders/{order_id}/whatsapp-share")
+def admin_quote_whatsapp_share(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    order = db.scalar(
+        select(QuoteRequest).where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.customer))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status == "new" or order.final_price is None:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Quote+sharing+is+not+available+while+the+order+is+New&toast_type=error", status_code=303)
+    customer_number = normalise_whatsapp_number(order.customer.whatsapp)
+    if not customer_number:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Customer+WhatsApp+number+is+missing&toast_type=error", status_code=303)
+    purl = public_order_url(request, order.public_token)
+    share_text = build_customer_share_text(order, business(db), purl)
+    return RedirectResponse(f"https://wa.me/{customer_number}?text={quote(share_text)}", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/whatsapp-mark-sent")
+def admin_quote_whatsapp_mark_sent(
+    order_id: int,
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status == "new" or order.final_price is None:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Quote+sharing+is+not+available+while+the+order+is+New&toast_type=error", status_code=303)
+    order.quote_whatsapp_sent_at = datetime.utcnow()
+    db.add(StatusHistory(order_id=order.id, status=order.status, note="Admin marked the customer quote as sent on WhatsApp."))
+    db.commit()
+    return RedirectResponse(f"/admin/orders/{order_id}?toast=WhatsApp+quote+marked+as+sent&toast_type=success#customer-sharing", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/deposit")
+def admin_order_deposit_update(
+    order_id: int,
+    request: Request,
+    deposit_received: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    order = db.get(QuoteRequest, order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    value = deposit_received.strip().lower()
+    if value not in {"yes", "no"}:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Choose+Paid+or+Not+Paid&toast_type=error", status_code=303)
+    order.deposit_received = value == "yes"
+    order.deposit_updated_at = datetime.utcnow()
+    note = "Deposit marked Paid by admin." if order.deposit_received else "Deposit marked Not Paid by admin."
+    db.add(StatusHistory(order_id=order.id, status=order.status, note=note))
+    db.commit()
+    label = "Deposit+marked+Paid" if order.deposit_received else "Deposit+marked+Not+Paid"
+    return RedirectResponse(f"/admin/orders/{order_id}?toast={label}&toast_type=success#order-operations", status_code=303)
+
+
+@app.get("/admin/orders/{order_id}/kitchen-quick-share")
+def admin_order_kitchen_quick_share(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id))
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status != "confirmed":
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Send+to+Kitchen+is+available+only+for+Confirmed+orders&toast_type=error", status_code=303)
+    biz = business(db)
+    if not biz.kitchen_whatsapp_group_url:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Add+the+Kitchen+WhatsApp+group+link+in+Business+Settings&toast_type=error", status_code=303)
+    order.kitchen_shared_at = datetime.utcnow()
+    db.add(StatusHistory(order_id=order.id, status=order.status, note="Kitchen WhatsApp group opened from the confirmed-order quick action."))
+    db.commit()
+    return RedirectResponse(biz.kitchen_whatsapp_group_url, status_code=303)
+
+
 @app.post("/admin/orders/{order_id}/send-quote-email")
 async def admin_send_quote_email(
     order_id: int,
@@ -2799,6 +2896,8 @@ async def admin_send_quote_email(
     )
     if not sent:
         return RedirectResponse(f"/admin/orders/{order_id}?toast={quote('Quote email was not sent: ' + message)}&toast_type=error", status_code=303)
+    order.quote_email_sent_at = datetime.utcnow()
+    db.commit()
     return RedirectResponse(f"/admin/orders/{order_id}?toast=Quote+emailed+to+customer+successfully&toast_type=success", status_code=303)
 
 
@@ -2830,6 +2929,7 @@ def admin_order_kitchen_share(
     if not comments:
         return RedirectResponse(f"/admin/orders/{order_id}?error=Kitchen+comments+are+required+before+sending", status_code=303)
     order.kitchen_comments = comments[:3000]
+    order.kitchen_shared_at = datetime.utcnow()
     db.commit()
     pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
     message = build_kitchen_share_text(order, pdf_url)
