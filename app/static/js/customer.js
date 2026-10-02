@@ -192,17 +192,28 @@ function initMenu(){
   const enterSearchMode=()=>{
     if(searchMode)return;
     searchMode=true;
+    // Add a same-page history entry so the phone/browser Back button exits
+    // search mode first instead of navigating away from /menu.
+    if(!history.state?.menuSearch){
+      history.pushState({...history.state,menuSearch:true},'',location.href);
+    }
     menuRoot?.classList.add('menu-search-mode');
     window.requestAnimationFrame(()=>{if(toolbar){const y=toolbar.getBoundingClientRect().top+window.scrollY;window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}});
     render();
   };
-  const exitSearchMode=()=>{
+  const exitSearchMode=(fromHistory=false)=>{
     searchMode=false;searchTerm='';
     if(searchInput)searchInput.value='';
     menuRoot?.classList.remove('menu-search-mode');
     searchInput?.blur();
     render();
+    // The visible back button should consume the temporary search history
+    // entry too, keeping /menu as the current page.
+    if(!fromHistory&&history.state?.menuSearch){history.back();}
   };
+  window.addEventListener('popstate',()=>{
+    if(searchMode&&!history.state?.menuSearch){exitSearchMode(true);}
+  });
   const buildSearchItems=()=>{
     const results=new Map();
     visibleMenus().forEach(menu=>menu.categories.forEach(category=>category.subcategories.forEach(sub=>sub.items.forEach(item=>{
