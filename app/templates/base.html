@@ -10,7 +10,7 @@
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#0d0f12">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/app.css?v=build14_3_3">
+  <link rel="stylesheet" href="/static/css/app.css?v=build14_4">
   {% block head %}{% endblock %}
 </head>
 <body class="{% if request.url.path == '/' %}home-page{% endif %}{% if request.url.path == '/menu' %} menu-page{% endif %}">
@@ -36,7 +36,7 @@
   {% endif %}
   {% block body %}{% endblock %}
   {% if request.url.path != "/menu" %}<footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>{% endif %}
-  <script src="/static/js/customer.js?v=build14_3_3" defer></script>
+  <script src="/static/js/customer.js?v=build14_4" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

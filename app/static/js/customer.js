@@ -84,7 +84,7 @@ function initMenu(){
   data.forEach(m=>m.categories.forEach(c=>c.subcategories.forEach(sub=>sub.items.forEach(i=>{if(!itemMap.has(i.id))itemMap.set(i.id,{...i,menu:m.name,category:c.name,subcategory:sub.name});}))));
   window.__menuItemMap=itemMap;
 
-  const updateRequestCount=()=>{const n=DraftStore.load().requested_dishes.length;if(requestCount)requestCount.textContent=n?`(${n})`:'';};
+  const updateRequestCount=()=>{const n=DraftStore.load().requested_dishes.length;if(requestCount){requestCount.textContent=n?String(n):'';requestCount.hidden=n===0;}};
   const requestRowHtml=(value='',index=0)=>`<div class="requested-dish-row" data-request-row><div class="requested-dish-number">${index+1}</div><input type="text" maxlength="180" value="${escapeHtml(value)}" placeholder="Dish name" aria-label="Requested dish ${index+1}"><div class="requested-dish-actions"><button type="button" class="request-add-dish" data-add-request-after aria-label="Add another requested dish after ${index+1}">＋</button><button type="button" class="request-remove-dish" data-remove-request-row aria-label="Remove requested dish ${index+1}">−</button></div></div>`;
   const renumberRequestRows=()=>{
     [...(requestRows?.querySelectorAll('[data-request-row]')||[])].forEach((r,i)=>{
@@ -303,7 +303,7 @@ function initMenu(){
   updateRequestCount();render();
 }
 
-function updateBasketBar(){const n=DraftStore.load().item_ids.length;const badge=document.querySelector('[data-cart-count]');if(badge){badge.textContent=String(n);badge.classList.toggle('empty',n===0);}const legacy=document.querySelector('[data-basket-count]');if(legacy)legacy.textContent=formatCount(n);}
+function updateBasketBar(){const n=DraftStore.load().item_ids.length;document.querySelectorAll('[data-cart-count]').forEach(badge=>{badge.textContent=String(n);badge.classList.toggle('empty',n===0);});const basket=document.querySelector('[data-menu-basket]');if(basket){basket.hidden=n===0;}document.body.classList.toggle('menu-has-basket',n>0);const legacy=document.querySelector('[data-basket-count]');if(legacy)legacy.textContent=formatCount(n);}
 
 function initReview(){
   const root=document.querySelector('[data-review-root]');if(!root)return;

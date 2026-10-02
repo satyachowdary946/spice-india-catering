@@ -19,6 +19,10 @@
           <input id="menu-search" data-menu-search type="search" placeholder="Search dishes" autocomplete="off" enterkeyhint="search">
           <span aria-hidden="true">⌕</span>
         </div>
+        <div class="menu-search-tools no-print" data-menu-search-tools>
+          <button class="menu-search-tool filter" type="button" data-open-menu-filter aria-label="South or North Indian filter" title="South / North filter"><span aria-hidden="true">☰</span></button>
+          <button class="menu-search-tool request" type="button" data-open-request-dialog aria-label="Request a dish not listed" title="Request new dish"><span aria-hidden="true">＋</span><small data-request-count></small></button>
+        </div>
       </div>
       <div class="menu-sticky-category-rail" aria-label="Pinned menu categories">
         <div class="category-tabs" data-category-tabs aria-label="Menu categories"></div>
@@ -27,10 +31,12 @@
     </div>
   </div>
 
-  <div class="menu-floating-actions no-print">
-    <button class="menu-floating-action filter" type="button" data-open-menu-filter><span aria-hidden="true">☰</span><strong>South / North</strong></button>
-    <button class="menu-floating-action request" type="button" data-open-request-dialog><span aria-hidden="true">＋</span><strong>Request New Dish</strong><small data-request-count></small></button>
-    <a class="menu-floating-cart" href="/review" aria-label="Open selected menu cart"><span class="cart-glyph" aria-hidden="true">🛒</span><span class="cart-count-badge" data-cart-count>0</span></a>
+  <div class="menu-basket-dock no-print" data-menu-basket hidden>
+    <a class="menu-basket-bar" href="/review" aria-label="Review selected menu">
+      <span class="menu-basket-icon" aria-hidden="true">🛒<span class="menu-basket-count" data-cart-count>0</span></span>
+      <strong>Review Basket</strong>
+      <span class="menu-basket-chevron" aria-hidden="true">›</span>
+    </a>
   </div>
 
   <div class="container">

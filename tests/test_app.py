@@ -66,7 +66,8 @@ def test_build8_mobile_workflow():
         assert 'data-request-rows' in menu_page.text
         assert 'data-add-request-row' in menu_page.text
         assert 'data-cart-count' in menu_page.text
-        assert 'Review Basket' not in menu_page.text
+        assert 'data-menu-basket hidden' in menu_page.text
+        assert 'Review Basket' in menu_page.text
         # The page is already the menu, so the primary header does not repeat a Menu link.
         header_html = menu_page.text.split('</header>', 1)[0]
         assert 'href="/menu">Menu</a>' not in header_html
@@ -344,7 +345,8 @@ def test_excel_menu_import_and_combination_rules():
         menu_page = client.get("/menu")
         assert menu_page.status_code == 200
         assert "menu-sticky-category-rail" in menu_page.text
-        assert "Request New Dish" in menu_page.text
+        assert "data-open-request-dialog" in menu_page.text
+        assert "Request a dish not listed" in menu_page.text
         assert "floating-category-trigger" not in menu_page.text
         assert '<header class="site-header' not in menu_page.text
         assert "https://example.com/appam.jpg" in menu_page.text

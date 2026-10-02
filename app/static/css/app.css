@@ -1645,3 +1645,60 @@ body.menu-page{overflow-x:clip}
 .payment-shortcuts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.payment-shortcut{display:flex;align-items:center;justify-content:center;text-align:center;padding:10px 8px;border-radius:12px;text-decoration:none;font-weight:900;border:1px solid #55605d;background:#17201e;color:#d4dcda}.payment-shortcut.unpaid{border-color:#864843}.payment-shortcut.part-paid{border-color:#8b6d20}.payment-shortcut.paid{border-color:#28795d}.payment-shortcut.unpaid.active{background:#351817;color:#ff9b93;border-color:#a9534c}.payment-shortcut.part-paid.active{background:#3a2d0d;color:#ffd976;border-color:#a77b1d}.payment-shortcut.paid.active{background:#0c3327;color:#79e7bb;border-color:#2e9d73}
 .deposit-choice-grid.three-choice{grid-template-columns:repeat(3,1fr)}.deposit-choice.part{border:1px solid #a77b1d;background:#3a2d0d;color:#ffd976}
 @media(max-width:620px){.finance-quick-actions{grid-template-columns:1fr}.payment-shortcuts{grid-template-columns:1fr 1fr 1fr}.deposit-choice-grid.three-choice{grid-template-columns:1fr}.order-row-main{padding:14px}.dashboard-action-row{padding:0 14px 12px}.quote-action-row form,.quote-action-row .quote-action{width:100%}.quote-action-row .quote-action{justify-content:center}}
+
+
+/* =========================================================
+   BUILD 14.4 HOTFIX — compact app-style menu controls
+   ========================================================= */
+/* Keep the menu hierarchy compact and use the Spice India palette while
+   following the familiar food-app interaction pattern: search + tiny tools,
+   pinned category rail, and a bottom basket CTA only when something is selected. */
+.menu-page .menu-shell{padding-bottom:26px}
+.menu-page.menu-has-basket .menu-shell{padding-bottom:108px}
+
+/* Smaller search row with compact filter/request controls on its right. */
+.menu-search-row{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;align-items:center!important;gap:8px!important;margin-top:7px!important;padding:0!important;max-width:none!important}
+.search-back-btn{grid-column:1 / -1}
+.menu-search-field input{min-height:40px!important;height:40px!important;border-radius:12px!important;padding:7px 38px 7px 13px!important;font-size:.92rem!important}
+.menu-search-field>span{right:12px!important;font-size:1.1rem!important}
+.menu-search-tools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.menu-search-tool{position:relative;display:grid;place-items:center;width:40px;height:40px;padding:0;border-radius:12px;border:1px solid #52605d;background:#1b2422;color:#eff7f4;font-size:1.05rem;font-weight:950;box-shadow:none;cursor:pointer}
+.menu-search-tool.filter{border-color:#42665f;color:#83e9d9}
+.menu-search-tool.request{border-color:#8a6a2d;color:#ffd875;background:#292113}
+.menu-search-tool small{position:absolute;right:-5px;top:-6px;display:grid;place-items:center;min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:#ffd35c;color:#201805;border:2px solid #30383b;font-size:.64rem;font-weight:950;line-height:1}
+.menu-search-tool small[hidden]{display:none!important}
+.menu-search-mode .menu-search-row{grid-template-columns:auto minmax(0,1fr)!important;gap:7px!important}
+.menu-search-mode .menu-search-tools{display:none!important}
+.menu-search-mode .search-back-btn{grid-column:auto!important;width:38px!important;height:40px!important;padding:0!important;justify-content:center!important}
+.menu-search-mode .search-back-btn span{display:none!important}
+
+/* Category count = small badge in the chip's top-right corner, not inline text. */
+.menu-sticky-category-rail .category-tabs{padding-top:5px!important;padding-right:8px!important}
+.menu-sticky-category-rail .category-tabs button{position:relative!important;overflow:visible!important;display:inline-flex!important;align-items:center!important;gap:0!important;padding:8px 13px!important;margin-right:2px!important}
+.category-selected-count{position:absolute!important;top:-7px!important;right:-6px!important;display:grid!important;place-items:center!important;min-width:20px!important;height:20px!important;padding:0 5px!important;border-radius:999px!important;background:#2bd0b9!important;color:#06120f!important;border:2px solid #30383b!important;font-size:.65rem!important;font-weight:950!important;line-height:1!important;box-shadow:0 2px 8px rgba(0,0,0,.28)!important}
+
+/* Retire Build 14.2 floating controls/cart completely. */
+.menu-floating-actions,.menu-floating-cart{display:none!important}
+
+/* Bottom basket CTA: hidden at zero items; full-width app-style bar when active. */
+.menu-basket-dock[hidden]{display:none!important}
+.menu-basket-dock{position:fixed;left:0;right:0;bottom:0;z-index:45;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(7,17,15,0),rgba(7,17,15,.96) 24%,#07110f 100%);pointer-events:none}
+.menu-basket-bar{pointer-events:auto;max-width:720px;margin:0 auto;min-height:58px;display:grid;grid-template-columns:48px 1fr 30px;align-items:center;gap:10px;padding:7px 12px;border-radius:18px;background:#25cbb6;color:#04110e;text-decoration:none;border:1px solid #67ead9;box-shadow:0 14px 34px rgba(0,0,0,.45);font-weight:950}
+.menu-basket-bar strong{text-align:center;font-size:1.02rem;letter-spacing:.01em}
+.menu-basket-icon{position:relative;display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#0a3b34;color:#fff;font-size:1.3rem}
+.menu-basket-count{position:absolute;right:-7px;top:-7px;display:grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#fff;color:#0b1a17;border:2px solid #25cbb6;font-size:.68rem;font-weight:950}
+.menu-basket-chevron{font-size:1.8rem;line-height:1;text-align:center}
+
+@media(max-width:620px){
+  .customer-menu-toolbar .container{width:min(100% - 16px,var(--max))!important}
+  .menu-search-row{gap:6px!important}
+  .menu-search-field input{min-height:38px!important;height:38px!important;font-size:16px!important}
+  .menu-search-tool{width:38px;height:38px;border-radius:11px}
+  .menu-search-mode .search-back-btn{width:36px!important;height:38px!important}
+  .menu-sticky-category-rail{margin-top:7px!important}
+  .menu-sticky-category-rail .category-tabs button{min-height:36px!important;padding:7px 12px!important;font-size:.74rem!important}
+  .category-selected-count{top:-6px!important;right:-5px!important;min-width:19px!important;height:19px!important;font-size:.62rem!important}
+  .menu-basket-dock{padding-left:10px;padding-right:10px}
+  .menu-basket-bar{min-height:56px;border-radius:17px;grid-template-columns:46px 1fr 28px;padding:6px 10px}
+  .menu-basket-bar strong{font-size:.98rem}
+}
