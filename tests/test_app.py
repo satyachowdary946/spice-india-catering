@@ -92,10 +92,10 @@ def test_build8_mobile_workflow():
         assert response.status_code == 422
         assert "exactly 7" in response.text
 
-        too_soon = quote_payload(days=2)
+        too_soon = quote_payload(days=0)
         response = client.post("/api/quotes", json=too_soon)
         assert response.status_code == 422
-        assert "two full days" in response.text
+        assert "Next-day catering requests are allowed" in response.text
 
         q1 = client.post("/api/quotes", json=quote_payload(event_name="Wedding"))
         assert q1.status_code == 200, q1.text
@@ -211,11 +211,11 @@ def test_build8_mobile_workflow():
         }, follow_redirects=False)
         assert confirm_admin.status_code == 303
         detail = client.get("/admin/orders/1")
-        assert "Deposit Received" in detail.text and "Send To Kitchen" in detail.text
-        dep = client.post("/admin/orders/1/deposit", data={"csrf_token": csrf_from(detail.text), "deposit_received": "yes"}, follow_redirects=False)
+        assert "Deposit Status" in detail.text and "Kitchen Sheet & Sharing" in detail.text
+        dep = client.post("/admin/orders/1/deposit", data={"csrf_token": csrf_from(detail.text), "deposit_status": "paid"}, follow_redirects=False)
         assert dep.status_code == 303
         detail = client.get("/admin/orders/1")
-        assert "✓ PAID" in detail.text
+        assert "✓ Paid" in detail.text
         kitchen = client.post("/admin/orders/1/kitchen-share", data={
             "csrf_token": csrf_from(detail.text),
             "kitchen_comments": "NO ONION IN 2 PORTIONS",

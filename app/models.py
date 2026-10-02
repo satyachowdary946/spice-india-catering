@@ -163,6 +163,7 @@ class QuoteRequest(Base):
     quote_email_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     quote_whatsapp_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     deposit_received: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    deposit_status: Mapped[str] = mapped_column(String(20), default="not_paid")
     deposit_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     kitchen_shared_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     void_reason: Mapped[str] = mapped_column(Text, default="")

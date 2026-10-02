@@ -140,42 +140,19 @@
 
 <section class="card no-print" id="customer-sharing" style="margin-top:14px">
   <div class="admin-title"><div><div class="eyebrow">Customer Quote</div><h2 style="font-size:1.25rem">Send / Resend Customer Quote</h2><p class="muted">Email, WhatsApp and confirmation-link sharing are disabled only while the order is <strong>New</strong>. Once quoted, they remain available for resend on later statuses.</p></div></div>
-  <div class="actions">
-    <form method="post" action="/admin/orders/{{ order.id }}/send-quote-email"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn" type="submit" {% if not can_share_quote or not order.customer.email %}disabled{% endif %}>Email Quote To Customer</button></form>
-    {% if can_share_quote and customer_whatsapp_url %}<a class="btn secondary" href="/admin/orders/{{ order.id }}/whatsapp-share" target="_blank" rel="noopener" onclick="adminToast('WhatsApp opened. After you press Send, mark it sent below.','success')">Send Quote On WhatsApp</a>{% else %}<button class="btn secondary" type="button" disabled>Send Quote On WhatsApp</button>{% endif %}
+  <div class="actions quote-action-row">
+    <form method="post" action="/admin/orders/{{ order.id }}/send-quote-email"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn quote-action {{ 'sent' if order.quote_email_sent_at else '' }}" type="submit" {% if not can_share_quote or not order.customer.email %}disabled{% endif %}>{% if order.quote_email_sent_at %}✓ Email Quote Sent{% else %}Email Quote To Customer{% endif %}</button></form>
+    {% if can_share_quote and customer_whatsapp_url %}<a class="btn secondary quote-action {{ 'sent' if order.quote_whatsapp_sent_at else '' }}" href="/admin/orders/{{ order.id }}/whatsapp-share" target="_blank" rel="noopener">{% if order.quote_whatsapp_sent_at %}✓ WhatsApp Quote Sent{% else %}Send Quote On WhatsApp{% endif %}</a>{% else %}<button class="btn secondary quote-action" type="button" disabled>Send Quote On WhatsApp</button>{% endif %}
     <button class="btn secondary" type="button" {% if not can_share_quote %}disabled{% endif %} onclick="copyAdminConfirmLink('{{ public_url }}')">Copy Confirm Link</button>
   </div>
   <div class="quote-delivery-status">
     <div class="delivery-state {{ 'done' if order.quote_email_sent_at else 'pending' }}"><strong>{{ '✓' if order.quote_email_sent_at else '○' }} Email</strong><span>{{ ('Sent ' ~ local_datetime(order.quote_email_sent_at).strftime('%d %b %H:%M')) if order.quote_email_sent_at else 'Not sent yet' }}</span></div>
-    <div class="delivery-state {{ 'done' if order.quote_whatsapp_sent_at else 'pending' }}"><strong>{{ '✓' if order.quote_whatsapp_sent_at else '○' }} WhatsApp</strong><span>{{ ('Marked sent ' ~ local_datetime(order.quote_whatsapp_sent_at).strftime('%d %b %H:%M')) if order.quote_whatsapp_sent_at else 'Not marked sent' }}</span></div>
-    {% if can_share_quote and customer_whatsapp_url and not order.quote_whatsapp_sent_at %}<form method="post" action="/admin/orders/{{ order.id }}/whatsapp-mark-sent"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn small" type="submit">✓ Mark WhatsApp Sent</button></form>{% endif %}
+    <div class="delivery-state {{ 'done' if order.quote_whatsapp_sent_at else 'pending' }}"><strong>{{ '✓' if order.quote_whatsapp_sent_at else '○' }} WhatsApp</strong><span>{{ ('Opened ' ~ local_datetime(order.quote_whatsapp_sent_at).strftime('%d %b %H:%M')) if order.quote_whatsapp_sent_at else 'Not sent yet' }}</span></div>
   </div>
   {% if order.status == 'new' %}<div class="help" style="margin-top:8px">Set the status to Quoted first. After that, quote sharing remains available on later statuses.</div>{% elif not order.customer.email %}<div class="help" style="margin-top:8px">Customer email is missing. Add it in Customers before emailing the quote.</div>{% endif %}
 </section>
 
-<section class="card order-operations-card" id="order-operations" style="margin-top:14px">
-  <div class="admin-title"><div><div class="eyebrow">Confirmed Order Controls</div><h2 style="font-size:1.25rem">Deposit & Kitchen</h2></div></div>
-  <div class="order-operation-grid">
-    <button class="operation-tile {{ 'paid' if order.deposit_received else 'unpaid' }}" type="button" data-open-deposit-dialog {% if order.status != 'confirmed' %}disabled{% endif %}>
-      <span>Deposit Received</span>
-      <strong>{% if order.deposit_received %}✓ PAID{% else %}✕ NOT PAID{% endif %}</strong>
-    </button>
-    {% if order.status == 'confirmed' and business.kitchen_whatsapp_group_url %}<a class="operation-tile kitchen {{ 'sent' if order.kitchen_shared_at else '' }}" href="/admin/orders/{{ order.id }}/kitchen-quick-share" target="_blank" rel="noopener"><span>Send To Kitchen</span><strong>{% if order.kitchen_shared_at %}✓ OPENED{% else %}WHATSAPP →{% endif %}</strong></a>{% else %}<button class="operation-tile kitchen" type="button" disabled><span>Send To Kitchen</span><strong>{{ 'CONFIRM ORDER FIRST' if order.status != 'confirmed' else 'ADD GROUP LINK' }}</strong></button>{% endif %}
-  </div>
-  {% if order.status == 'confirmed' %}<p class="help" style="margin-top:10px">Deposit status is stored on this order. Send To Kitchen opens the WhatsApp group configured in Business Settings. The detailed PDF/kitchen-comments workflow remains below.</p>{% endif %}
-</section>
-
-<dialog class="deposit-dialog" data-deposit-dialog aria-labelledby="deposit-dialog-title">
-  <div class="deposit-dialog-card">
-    <div class="admin-title"><div><div class="eyebrow">Payment Check</div><h2 id="deposit-dialog-title">Deposit Received?</h2></div><button class="icon-close" type="button" data-close-deposit>×</button></div>
-    <div class="deposit-choice-grid">
-      <form method="post" action="/admin/orders/{{ order.id }}/deposit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="deposit_received" value="yes"><button class="deposit-choice yes" type="submit">✓ YES · PAID</button></form>
-      <form method="post" action="/admin/orders/{{ order.id }}/deposit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="deposit_received" value="no"><button class="deposit-choice no" type="submit">✕ NO · NOT PAID</button></form>
-    </div>
-  </div>
-</dialog>
-
-<section class="card" id="kitchen-actions" style="margin-top:14px">
+<section class="card" id="kitchen-sharing" style="margin-top:14px">
   <div class="admin-title">
     <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Kitchen sending unlocks only after the customer/order status is <strong>Confirmed</strong>.</p></div>
     <div class="actions">{% if can_send_kitchen %}<a class="btn secondary small" href="/admin/orders/{{ order.id }}/pdf">Download PDF</a><a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Print Sheet</a>{% else %}<button class="btn secondary small" type="button" disabled>Download PDF</button><button class="btn secondary small" type="button" disabled>Print Sheet</button>{% endif %}</div>
@@ -188,7 +165,33 @@
 
 <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Status Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong>{% if h.note %}<div class="help">{{ h.note }}</div>{% endif %}<small>{{ local_datetime(h.created_at).strftime('%d %b %Y %H:%M') if local_datetime(h.created_at) else '' }}</small></div></div>{% endfor %}</div></section>
 
-<section class="card finance-quick-card" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Order Finance</div><h2 style="font-size:1.25rem">Payments, Expenses & Profit</h2></div><div class="actions"><a class="btn secondary small" href="/admin/transactions/{{ order.id }}">Manage Transaction</a></div></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(finance.final_price) }}{% else %}—{% endif %}</strong></div><div class="finance-stat"><span>Collected</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat expense"><span>Total Cost</span><strong>€{{ '%.2f'|format(finance.total_cost) }}</strong></div><div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }} · {{ '%.2f'|format(finance.net_profit_percent) }}%</strong></div></div></section>
+<section class="card finance-quick-card" id="order-finance" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Order Finance</div><h2 style="font-size:1.25rem">Payments, Expenses & Profit</h2></div><div class="actions"><a class="btn secondary small" href="/admin/transactions/{{ order.id }}">Manage Transaction</a></div></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Price</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(finance.final_price) }}{% else %}—{% endif %}</strong></div><div class="finance-stat"><span>Collected</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat expense"><span>Total Cost</span><strong>€{{ '%.2f'|format(finance.total_cost) }}</strong></div><div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }} · {{ '%.2f'|format(finance.net_profit_percent) }}%</strong></div></div>
+{% if order.status in ['confirmed','completed'] %}
+  {% set dep = order.deposit_status or ('paid' if order.deposit_received else 'not_paid') %}
+  <div class="finance-quick-actions">
+    <button class="deposit-status-button deposit-{{ dep }}" type="button" data-open-deposit-dialog>
+      <span>Deposit</span><strong>{% if dep == 'paid' %}✓ Paid{% elif dep == 'part_paid' %}◐ Part Paid{% else %}✕ Not Paid{% endif %}</strong>
+    </button>
+    <div class="payment-shortcuts" aria-label="Payment status shortcuts">
+      <a class="payment-shortcut unpaid {{ 'active' if finance.payment_status == 'unpaid' else '' }}" href="/admin/transactions/{{ order.id }}#payments">Not Paid</a>
+      <a class="payment-shortcut part-paid {{ 'active' if finance.payment_status == 'part_paid' else '' }}" href="/admin/transactions/{{ order.id }}#payments">Part Paid</a>
+      <a class="payment-shortcut paid {{ 'active' if finance.payment_status == 'paid' else '' }}" href="/admin/transactions/{{ order.id }}#payments">Paid</a>
+    </div>
+  </div>
+  <p class="help" style="margin-top:8px">Tap the deposit status to update it here. Tap a payment status to open this order's Transactions page.</p>
+{% endif %}
+</section>
+
+<dialog class="deposit-dialog" data-deposit-dialog aria-labelledby="deposit-dialog-title">
+  <div class="deposit-dialog-card">
+    <div class="admin-title"><div><div class="eyebrow">Deposit</div><h2 id="deposit-dialog-title">Deposit Status</h2></div><button class="icon-close" type="button" data-close-deposit>×</button></div>
+    <div class="deposit-choice-grid three-choice">
+      <form method="post" action="/admin/orders/{{ order.id }}/deposit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="deposit_status" value="paid"><button class="deposit-choice yes" type="submit">✓ PAID</button></form>
+      <form method="post" action="/admin/orders/{{ order.id }}/deposit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="deposit_status" value="part_paid"><button class="deposit-choice part" type="submit">◐ PART PAID</button></form>
+      <form method="post" action="/admin/orders/{{ order.id }}/deposit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="deposit_status" value="not_paid"><button class="deposit-choice no" type="submit">✕ NOT PAID</button></form>
+    </div>
+  </div>
+</dialog>
 
 <script>
 (()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));calc();})();

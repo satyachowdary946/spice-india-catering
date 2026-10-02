@@ -25,7 +25,7 @@ function initDetailsForm(){
   Object.entries(draft.details||{}).forEach(([k,v])=>{const el=form.elements[k]; if(el&&el.type!=='submit') el.value=v??'';});
   const same=document.getElementById('same-whatsapp'), phone=form.elements.phone, wa=form.elements.whatsapp;
   const dateInput=form.elements.event_date, dayInput=form.elements.event_day, eircode=form.elements.eircode, errorBox=document.querySelector('[data-details-error]');
-  const earliestEventDate=()=>{const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+3);return d;};
+  const earliestEventDate=()=>{const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+1);return d;};
   const toDateInput=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   if(dateInput) dateInput.min=toDateInput(earliestEventDate());
   const syncDay=()=>{if(dayInput)dayInput.value=dayFromDate(dateInput?.value||'');}; syncDay(); dateInput?.addEventListener('change',syncDay);
@@ -57,7 +57,7 @@ function initDetailsForm(){
     details.event_day=dayFromDate(details.event_date);
     if((Number(details.adults)||0)+(Number(details.kids)||0)<1){fail('Enter at least one guest in Adults or Kids.','adults');return;}
     const selectedDate=new Date(`${details.event_date}T12:00:00`);
-    if(!Number.isFinite(selectedDate.getTime())||selectedDate.getTime()<earliestEventDate().getTime()){fail('Please choose the earliest available date shown or a later date. We require two full days notice.','event_date');return;}
+    if(!Number.isFinite(selectedDate.getTime())||selectedDate.getTime()<earliestEventDate().getTime()){fail('Please choose the earliest available date shown or a later date. Next-day catering requests are allowed.','event_date');return;}
     DraftStore.setDetails(details); location.href=form.dataset.next||'/menu';
   });
 }

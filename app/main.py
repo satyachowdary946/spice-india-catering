@@ -126,6 +126,7 @@ def ensure_schema_compatibility() -> None:
             "quote_email_sent_at": "TIMESTAMP",
             "quote_whatsapp_sent_at": "TIMESTAMP",
             "deposit_received": "BOOLEAN",
+            "deposit_status": "VARCHAR(20) DEFAULT 'not_paid'",
             "deposit_updated_at": "TIMESTAMP",
             "kitchen_shared_at": "TIMESTAMP",
         }
@@ -133,6 +134,10 @@ def ensure_schema_compatibility() -> None:
             if name not in columns:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE quote_requests ADD COLUMN {name} {ddl}"))
+        # Build 14.3: keep the richer deposit state compatible with the older boolean field.
+        if "deposit_status" in {c["name"] for c in inspect(engine).get_columns("quote_requests")}:
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE quote_requests SET deposit_status = CASE WHEN deposit_received = TRUE THEN 'paid' WHEN deposit_status IS NULL OR deposit_status = '' THEN 'not_paid' ELSE deposit_status END"))
 
     if "customers" in tables:
         columns = {c["name"] for c in inspector.get_columns("customers")}
@@ -1071,9 +1076,9 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         errors["delivery_time"] = "Choose a valid delivery time."
     if "event_date" not in errors:
         ireland = ZoneInfo("Europe/Dublin")
-        earliest_date = datetime.now(ireland).date() + timedelta(days=3)
+        earliest_date = datetime.now(ireland).date() + timedelta(days=1)
         if event_date < earliest_date:
-            errors["event_date"] = f"Please choose {earliest_date.strftime('%d %b %Y')} or later. We require two full days notice before the event."
+            errors["event_date"] = f"Please choose {earliest_date.strftime('%d %b %Y')} or later. Next-day catering requests are allowed."
     try:
         adults = parse_int(details.get("adults", 0), "Adults", 0)
         kids = parse_int(details.get("kids", 0), "Kids", 0)
@@ -1488,13 +1493,15 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     upcoming = db.scalar(select(func.count(QuoteRequest.id)).where(QuoteRequest.event_date >= date.today(), QuoteRequest.status.not_in(["cancelled", "completed"]))) or 0
     recent = db.scalars(
         select(QuoteRequest)
-        .options(selectinload(QuoteRequest.customer))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses), selectinload(QuoteRequest.items))
         .order_by(QuoteRequest.created_at.desc())
         .limit(8)
     ).all()
+    finance_by_order = {order.id: finance_summary(order) for order in recent}
     return render(
         request, db, "admin/dashboard.html", admin=admin, status_counts=status_counts,
-        upcoming=upcoming, recent=recent, whatsapp_configured=whatsapp_cloud_configured()
+        upcoming=upcoming, recent=recent, finance_by_order=finance_by_order,
+        whatsapp_configured=whatsapp_cloud_configured()
     )
 
 
@@ -2384,7 +2391,7 @@ def admin_orders(
 ):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    stmt = select(QuoteRequest).options(selectinload(QuoteRequest.customer)).order_by(QuoteRequest.created_at.desc())
+    stmt = select(QuoteRequest).options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses), selectinload(QuoteRequest.items)).order_by(QuoteRequest.created_at.desc())
     if status in ALLOWED_STATUSES:
         stmt = stmt.where(QuoteRequest.status == status)
     date_error = ""
@@ -2406,10 +2413,12 @@ def admin_orders(
         like = f"%{q.strip()}%"
         stmt = stmt.join(Customer).where(or_(QuoteRequest.order_number.ilike(like), Customer.customer_number.ilike(like), Customer.name.ilike(like), Customer.phone.ilike(like), QuoteRequest.event_name.ilike(like)))
     orders = db.scalars(stmt).all()
+    finance_by_order = {order.id: finance_summary(order) for order in orders}
     return render(
         request, db, "admin/orders.html", admin=admin, orders=orders, q=q,
         selected_status=status, statuses=FILTER_STATUSES,
         request_from=request_from, request_to=request_to, date_error=date_error,
+        finance_by_order=finance_by_order,
     )
 
 
@@ -2774,6 +2783,9 @@ def admin_quote_whatsapp_share(order_id: int, request: Request, db: Session = De
         return RedirectResponse(f"/admin/orders/{order_id}?toast=Customer+WhatsApp+number+is+missing&toast_type=error", status_code=303)
     purl = public_order_url(request, order.public_token)
     share_text = build_customer_share_text(order, business(db), purl)
+    order.quote_whatsapp_sent_at = datetime.utcnow()
+    db.add(StatusHistory(order_id=order.id, status=order.status, note="Customer WhatsApp quote opened/prepared from admin."))
+    db.commit()
     return RedirectResponse(f"https://wa.me/{customer_number}?text={quote(share_text)}", status_code=303)
 
 
@@ -2803,7 +2815,9 @@ def admin_quote_whatsapp_mark_sent(
 def admin_order_deposit_update(
     order_id: int,
     request: Request,
-    deposit_received: str = Form(...),
+    deposit_status: str = Form(""),
+    deposit_received: str = Form(""),
+    return_to: str = Form("order"),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -2814,16 +2828,27 @@ def admin_order_deposit_update(
     order = db.get(QuoteRequest, order_id)
     if not order:
         raise HTTPException(status_code=404)
-    value = deposit_received.strip().lower()
-    if value not in {"yes", "no"}:
-        return RedirectResponse(f"/admin/orders/{order_id}?toast=Choose+Paid+or+Not+Paid&toast_type=error", status_code=303)
-    order.deposit_received = value == "yes"
+    if order.status not in {"confirmed", "completed"}:
+        target = "/admin" if return_to == "dashboard" else "/admin/orders" if return_to == "orders" else f"/admin/orders/{order_id}"
+        return RedirectResponse(f"{target}?toast=Deposit+status+is+available+after+confirmation&toast_type=error", status_code=303)
+
+    raw = (deposit_status or deposit_received or "").strip().lower()
+    aliases = {"yes": "paid", "no": "not_paid", "part": "part_paid", "partial": "part_paid"}
+    value = aliases.get(raw, raw)
+    if value not in {"paid", "part_paid", "not_paid"}:
+        target = "/admin" if return_to == "dashboard" else "/admin/orders" if return_to == "orders" else f"/admin/orders/{order_id}"
+        return RedirectResponse(f"{target}?toast=Choose+Paid,+Part+Paid+or+Not+Paid&toast_type=error", status_code=303)
+
+    order.deposit_status = value
+    order.deposit_received = value == "paid"
     order.deposit_updated_at = datetime.utcnow()
-    note = "Deposit marked Paid by admin." if order.deposit_received else "Deposit marked Not Paid by admin."
-    db.add(StatusHistory(order_id=order.id, status=order.status, note=note))
+    label_map = {"paid": "Paid", "part_paid": "Part Paid", "not_paid": "Not Paid"}
+    db.add(StatusHistory(order_id=order.id, status=order.status, note=f"Deposit marked {label_map[value]} by admin."))
     db.commit()
-    label = "Deposit+marked+Paid" if order.deposit_received else "Deposit+marked+Not+Paid"
-    return RedirectResponse(f"/admin/orders/{order_id}?toast={label}&toast_type=success#order-operations", status_code=303)
+
+    target = "/admin" if return_to == "dashboard" else "/admin/orders" if return_to == "orders" else f"/admin/orders/{order_id}"
+    anchor = "" if return_to in {"dashboard", "orders"} else "#order-finance"
+    return RedirectResponse(f"{target}?toast=Deposit+marked+{quote(label_map[value])}&toast_type=success{anchor}", status_code=303)
 
 
 @app.get("/admin/orders/{order_id}/kitchen-quick-share")
