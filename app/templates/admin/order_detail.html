@@ -12,12 +12,12 @@
 {% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}
 {% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Voided Order.</strong> Excluded from Transactions and Reports.{% if order.void_reason %}<br>Reason: {{ order.void_reason }}{% endif %}</div>{% endif %}
 
-<section class="card">
-  <div class="admin-title"><div><div class="eyebrow">Request</div><h2 style="font-size:1.25rem">Customer & Event Details</h2></div></div>
+<section class="card" id="customer-event-details">
+  <div class="admin-title"><div><div class="eyebrow">Request</div><h2 style="font-size:1.25rem">Customer & Event Details</h2><p class="muted">Admin can correct customer, event and guest details on the existing order.</p></div></div>
   <div class="order-meta two-column-meta">
     <div class="meta-row"><strong>Name</strong><span>{{ order.customer.name }}</span></div>
     <div class="meta-row"><strong>Phone</strong><span>{{ order.customer.phone }}</span></div>
-    <div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp }}</span></div>
+    <div class="meta-row"><strong>WhatsApp</strong><span>{{ order.customer.whatsapp or '—' }}</span></div>
     <div class="meta-row"><strong>Email</strong><span>{{ order.customer.email or '—' }}</span></div>
     <div class="meta-row"><strong>Event</strong><span>{{ order.event_name }}</span></div>
     <div class="meta-row"><strong>Request Sent</strong><span>{{ local_datetime(order.created_at).strftime('%d %b %Y · %H:%M') if local_datetime(order.created_at) else '—' }}</span></div>
@@ -26,8 +26,32 @@
     <div class="meta-row"><strong>Event Time</strong><span>{{ order.event_time.strftime('%H:%M') }}</span></div>
     <div class="meta-row"><strong>Delivery Time</strong><span>{{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '—' }}</span></div>
     <div class="meta-row"><strong>Guests</strong><span>{{ order.adults }} Adults + {{ order.kids }} Kids = <strong>{{ order.adults + order.kids }}</strong></span></div>
-    <div class="meta-row"><strong>Address</strong><span>{{ order.address }}, {{ order.eircode }}</span></div>
+    <div class="meta-row"><strong>Address</strong><span>{{ order.address }}{% if order.eircode %}, {{ order.eircode }}{% endif %}</span></div>
   </div>
+  {% if order.status != 'voided' %}
+  <details class="admin-add-dish-panel" style="margin-top:12px">
+    <summary>✎ Edit Customer & Event Details</summary>
+    <form method="post" action="/admin/orders/{{ order.id }}/details" class="compact" style="margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="admin-form-grid two">
+        <div class="field"><label>Customer Name</label><input name="customer_name" value="{{ order.customer.name }}" required maxlength="160"></div>
+        <div class="field"><label>Phone</label><input name="phone" value="{{ order.customer.phone }}" required inputmode="numeric" maxlength="10"></div>
+        <div class="field"><label>WhatsApp</label><input name="whatsapp" value="{{ order.customer.whatsapp }}" inputmode="numeric" maxlength="10"></div>
+        <div class="field"><label>Email</label><input name="email" type="email" value="{{ order.customer.email }}" maxlength="255"></div>
+        <div class="field"><label>Event Name</label><input name="event_name" value="{{ order.event_name }}" required maxlength="180"></div>
+        <div class="field"><label>Event Date</label><input name="event_date" type="date" value="{{ order.event_date.isoformat() }}" required></div>
+        <div class="field"><label>Event Time</label><input name="event_time" type="time" value="{{ order.event_time.strftime('%H:%M') }}" required></div>
+        <div class="field"><label>Delivery Time</label><input name="delivery_time" type="time" value="{{ order.delivery_time.strftime('%H:%M') if order.delivery_time else '' }}"></div>
+        <div class="field"><label>Adults</label><input name="adults" type="number" min="0" step="1" value="{{ order.adults }}" required></div>
+        <div class="field"><label>Kids</label><input name="kids" type="number" min="0" step="1" value="{{ order.kids }}" required></div>
+        <div class="field"><label>Event Address</label><input name="address" value="{{ order.address }}" required maxlength="500"></div>
+        <div class="field"><label>Eircode</label><input name="eircode" value="{{ order.eircode }}" maxlength="7"></div>
+      </div>
+      <p class="help" style="margin-top:8px">Changing event, guest or venue details on a Quoted/Confirmed order returns it to New for a revised quote. Changing guest counts also recalculates the existing quote total from its per-head charges.</p>
+      <button class="btn small" type="submit" style="margin-top:10px">Save Customer & Event Details</button>
+    </form>
+  </details>
+  {% endif %}
 </section>
 
 <section class="card final-menu admin-editable-menu" id="selected-menu" style="margin-top:14px">
@@ -97,34 +121,37 @@
 {% if order.requested_dishes %}<section class="card requested-admin-card" id="requested-dishes" style="margin-top:14px"><div class="admin-title"><div><h2 style="font-size:1.25rem">Requested Dishes</h2><p>Approve or reject each request.</p></div></div><div class="requested-admin-list">{% for dish in order.requested_dishes %}<form class="requested-admin-row" method="post" action="/admin/requested-dishes/{{ dish.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div><strong>{{ dish.name }}</strong><div class="help">Requested By Customer</div></div><div class="field compact"><label>Decision</label><select name="status"><option value="pending" {% if dish.status=='pending' %}selected{% endif %}>Pending</option><option value="approved" {% if dish.status=='approved' %}selected{% endif %}>Approved</option><option value="rejected" {% if dish.status=='rejected' %}selected{% endif %}>Rejected</option></select></div><div class="field compact"><label>Reply (Optional)</label><input name="admin_response" value="{{ dish.admin_response }}" maxlength="1000"></div><button class="btn small" type="submit">Save</button></form>{% endfor %}</div></section>{% endif %}
 
 <section class="card internal-finance-card" id="internal-finance" style="margin-top:14px">
-  <div class="admin-title"><div><div class="eyebrow">Admin Only · Internal Costing</div><h2 style="font-size:1.25rem">Food Cost, Expenses & Profit</h2><p class="muted">Customers never see these values. Internal dish prices are treated as cost per guest and the food cost is calculated from the selected menu × {{ order.adults + order.kids }} guests.</p></div><a class="btn secondary small" href="/admin/menu-import#internal-prices">Manage Dish Costs</a></div>
+  <div class="admin-title"><div><div class="eyebrow">Admin Only · Internal Costing</div><h2 style="font-size:1.25rem">Internal Cost, Target Profit & Recommended Head Price</h2><p class="muted">Customers never see these values. Food cost comes from the selected dishes × {{ order.adults + order.kids }} guests. Target profit is calculated on <strong>total internal cost</strong> including fuel, delivery, chef labour and other expenses.</p></div><a class="btn secondary small" href="/admin/menu-import#internal-prices">Manage Dish Costs</a></div>
   <div class="finance-summary-grid compact-finance-grid">
-    <div class="finance-stat expense"><span>Food Cost</span><strong>€{{ '%.2f'|format(finance.food_cost) }}</strong></div>
-    <div class="finance-stat"><span>Food Profit</span><strong>{{ '%.2f'|format(finance.food_profit_percent) }}% · €{{ '%.2f'|format(finance.food_profit_amount) }}</strong></div>
-    <div class="finance-stat positive"><span>Food Target Value</span><strong>€{{ '%.2f'|format(finance.food_target_value) }}</strong></div>
-    <div class="finance-stat expense"><span>Other Expenses</span><strong>€{{ '%.2f'|format(finance.operating_expenses) }}</strong></div>
-    <div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }}</strong></div>
-    <div class="finance-stat profit"><span>Net Margin</span><strong>{{ '%.2f'|format(finance.net_profit_percent) }}%</strong></div>
+    <div class="finance-stat expense"><span>Food Cost</span><strong>€{{ '%.2f'|format(finance.food_cost) }}</strong><small>€{{ '%.2f'|format(finance.food_cost_per_head) }} / head · {{ order.adults + order.kids }} guests</small></div>
+    <div class="finance-stat expense"><span>Internal Expenses</span><strong>€{{ '%.2f'|format(finance.operating_expenses) }}</strong><small>Fuel + delivery + chef + misc + other</small></div>
+    <div class="finance-stat expense"><span>Total Internal Cost</span><strong>€{{ '%.2f'|format(finance.total_cost) }}</strong><small>Food + all internal expenses</small></div>
+    <div class="finance-stat"><span>Target Profit</span><strong>{{ '%.2f'|format(finance.target_profit_percent) }}% · €{{ '%.2f'|format(finance.target_profit_amount) }}</strong></div>
+    <div class="finance-stat positive"><span>Target Selling Value</span><strong>€{{ '%.2f'|format(finance.target_sale) }}</strong></div>
+    <div class="finance-stat positive"><span>Recommended Adult</span><strong>€{{ '%.2f'|format(finance.recommended_adult_charge) }} / head</strong></div>
+    <div class="finance-stat positive"><span>Recommended Kid</span><strong>€{{ '%.2f'|format(finance.recommended_kid_charge) }} / head</strong><small>50% of adult recommendation</small></div>
+    <div class="finance-stat profit"><span>Actual Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }} · {{ '%.2f'|format(finance.net_profit_percent) }}%</strong><small>Based on saved customer quote</small></div>
   </div>
   <form method="post" action="/admin/orders/{{ order.id }}/internal-finance" class="compact internal-cost-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="field"><label>Food Profit (%)</label><input name="food_profit_percent" type="number" min="0" max="1000" step="0.01" value="{{ order.food_profit_percent or 0 }}"><span class="help">Example: Food cost €1,000 + 10% = €1,100 food target value.</span></div>
+    <div class="field"><label>Target Profit (%) · Total Internal Cost</label><input name="food_profit_percent" type="number" min="0" max="1000" step="0.01" value="{{ order.food_profit_percent or 0 }}"><span class="help">Example: total internal cost €1,000 + 20% target profit = €1,200 target selling value.</span></div>
     <div class="internal-expense-grid">
       {% set expense_fields = [('fuel','Fuel Charges'),('delivery','Delivery Charges'),('chef','Chef Labour'),('misc','Miscellaneous'),('other','Other Expenses')] %}
       {% for key,label in expense_fields %}{% set e=finance.expense_breakdown[key] %}
       <div class="internal-expense-row"><div class="field"><label>{{ label }} (€)</label><input name="{{ key }}_amount" type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ '%.2f'|format(e.amount) if e.amount > 0 else '' }}"></div><label class="paid-toggle"><input type="checkbox" name="{{ key }}_paid" {% if e.paid %}checked{% endif %}> <span>Paid</span></label></div>
       {% endfor %}
     </div>
-    <button class="btn" type="submit">Save Internal Costs</button>
+    <button class="btn" type="submit">Save Internal Costs & Target Profit</button>
   </form>
 </section>
 
 <section class="card" id="quote-confirmation" style="margin-top:14px">
   <div class="admin-title"><div><div class="eyebrow">Pricing Workflow</div><h2 style="font-size:1.25rem">Quote & Confirmation</h2><p class="muted">Changing status to <strong>Quoted</strong> automatically emails the full quote to the customer. Confirmed / Completed / Cancelled status changes also send branded customer emails.</p></div></div>
   {% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Workflow Locked.</strong></div>{% else %}
-  <form method="post" action="/admin/orders/{{ order.id }}" data-pricing-form data-adults="{{ order.adults }}" data-kids="{{ order.kids }}">
+  <form method="post" action="/admin/orders/{{ order.id }}" data-pricing-form data-adults="{{ order.adults }}" data-kids="{{ order.kids }}" data-recommended-adult="{{ '%.2f'|format(finance.recommended_adult_charge) }}" data-recommended-kid="{{ '%.2f'|format(finance.recommended_kid_charge) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="field"><label>Status</label><select name="status">{% if order.status not in statuses %}<option value="{{ order.status }}" selected>{{ order.status.replace('_',' ').title() }} (Historical)</option>{% endif %}{% for s in statuses %}<option value="{{ s }}" {% if order.status==s %}selected{% endif %}>{{ s.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+    <div class="notice" style="margin-top:10px"><strong>Recommended from internal costing:</strong> Adult €{{ '%.2f'|format(finance.recommended_adult_charge) }} / head · Kid €{{ '%.2f'|format(finance.recommended_kid_charge) }} / head. <button class="btn secondary small" type="button" data-apply-recommended-prices style="margin-left:8px">Use Recommended Prices</button><div class="help">Recommendation covers the current total internal cost and target profit. Admin can change the final quote manually.</div></div>
     <div class="admin-form-grid two" style="margin-top:10px">
       <div class="field"><label>Adult Charge (€) · Per Head</label><input name="adult_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.adult_charge if order.adult_charge is not none else '' }}"></div>
       <div class="field"><label>Kid Charge (€) · Per Head</label><input name="kid_charge" data-price-field type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ pricing.kid_charge if order.kid_charge is not none else '' }}"></div>
@@ -194,7 +221,7 @@
 </dialog>
 
 <script>
-(()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));calc();})();
+(()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));form.querySelector('[data-apply-recommended-prices]')?.addEventListener('click',()=>{form.elements.adult_charge.value=Number(form.dataset.recommendedAdult||0).toFixed(2);form.elements.kid_charge.value=Number(form.dataset.recommendedKid||0).toFixed(2);calc();});calc();})();
 (()=>{const d=document.querySelector('[data-deposit-dialog]');document.querySelector('[data-open-deposit-dialog]')?.addEventListener('click',()=>d?.showModal());document.querySelector('[data-close-deposit]')?.addEventListener('click',()=>d?.close());d?.addEventListener('click',e=>{if(e.target===d)d.close();});})();
 </script>
 {% endblock %}

@@ -711,10 +711,23 @@ def finance_summary(order: QuoteRequest) -> dict[str, Decimal | str | dict[str, 
     operating_expenses = sum((money(e.amount) for e in getattr(order, "expenses", []) or []), Decimal("0.00"))
     food_cost = order_food_cost(order)
     total_cost = money(food_cost + operating_expenses)
+    total_guests = max(0, int(order.adults or 0) + int(order.kids or 0))
+    food_cost_per_head = money(food_cost / Decimal(total_guests)) if total_guests else Decimal("0.00")
+
+    # Keep the existing database column for backwards compatibility, but the
+    # percentage now means target profit on TOTAL internal cost (food + all
+    # internal operating expenses), not profit on food alone.
+    target_profit_percent = money(getattr(order, "food_profit_percent", None))
+    target_profit_amount = money(total_cost * target_profit_percent / Decimal("100"))
+    target_sale = money(total_cost + target_profit_amount)
+
+    # Kids are priced at 50% of the adult recommendation. The recommendation
+    # is intentionally advisory: admins can still set the final quote manually.
+    adult_equivalent_guests = Decimal(int(order.adults or 0)) + (Decimal(int(order.kids or 0)) * Decimal("0.50"))
+    recommended_adult_charge = money(target_sale / adult_equivalent_guests) if adult_equivalent_guests > 0 else Decimal("0.00")
+    recommended_kid_charge = money(recommended_adult_charge * Decimal("0.50"))
+
     balance_due = max(final_price - total_paid, Decimal("0.00"))
-    food_profit_percent = money(getattr(order, "food_profit_percent", None))
-    food_profit_amount = money(food_cost * food_profit_percent / Decimal("100"))
-    food_target_value = money(food_cost + food_profit_amount)
     net_profit = money(final_price - total_cost)
     net_profit_percent = money((net_profit / final_price * Decimal("100")) if final_price > 0 else Decimal("0.00"))
     cash_profit = money(total_paid - total_cost)
@@ -730,9 +743,18 @@ def finance_summary(order: QuoteRequest) -> dict[str, Decimal | str | dict[str, 
         "final_price": final_price,
         "total_paid": total_paid,
         "food_cost": food_cost,
-        "food_profit_percent": food_profit_percent,
-        "food_profit_amount": food_profit_amount,
-        "food_target_value": food_target_value,
+        "food_cost_per_head": food_cost_per_head,
+        "total_guests": Decimal(total_guests),
+        "adult_equivalent_guests": money(adult_equivalent_guests),
+        "target_profit_percent": target_profit_percent,
+        "target_profit_amount": target_profit_amount,
+        "target_sale": target_sale,
+        "recommended_adult_charge": recommended_adult_charge,
+        "recommended_kid_charge": recommended_kid_charge,
+        # Legacy keys retained so older templates/report code remain compatible.
+        "food_profit_percent": target_profit_percent,
+        "food_profit_amount": target_profit_amount,
+        "food_target_value": target_sale,
         "operating_expenses": money(operating_expenses),
         "total_expenses": total_cost,
         "total_cost": total_cost,
@@ -808,6 +830,17 @@ def invalidate_order_quote_after_menu_change(order: QuoteRequest, db: Session, n
     order.status = "new"
     order.confirmed_at = None
     order.customer_message = "Your menu was updated by the catering team. A revised quote will be sent before confirmation."
+    db.add(StatusHistory(order_id=order.id, status="new", note=note[:500]))
+    return True
+
+
+def invalidate_order_quote_after_detail_change(order: QuoteRequest, db: Session, note: str) -> bool:
+    """Reopen an active quote after material customer/event details change."""
+    if order.status not in {"quoted", "confirmed"}:
+        return False
+    order.status = "new"
+    order.confirmed_at = None
+    order.customer_message = "Your event or guest details were updated by the catering team. A revised quote will be sent before confirmation."
     db.add(StatusHistory(order_id=order.id, status="new", note=note[:500]))
     return True
 
@@ -2452,6 +2485,130 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         catalog_items=catalog_items,
         can_share_quote=(order.status != "new" and order.final_price is not None),
         can_send_kitchen=(order.status == "confirmed"),
+    )
+
+
+@app.post("/admin/orders/{order_id}/details")
+def admin_order_details_update(
+    order_id: int,
+    request: Request,
+    customer_name: str = Form(""),
+    phone: str = Form(""),
+    whatsapp: str = Form(""),
+    email: str = Form(""),
+    event_name: str = Form(""),
+    event_date: str = Form(""),
+    event_time: str = Form(""),
+    delivery_time: str = Form(""),
+    adults: str = Form("0"),
+    kids: str = Form("0"),
+    address: str = Form(""),
+    eircode: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect: return redirect
+    check_csrf(request, csrf_token)
+    order = db.scalar(
+        select(QuoteRequest).where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Voided+orders+cannot+be+edited&toast_type=error", status_code=303)
+
+    try:
+        clean_name = re.sub(r"\s+", " ", customer_name or "").strip()
+        clean_event = re.sub(r"\s+", " ", event_name or "").strip()
+        clean_address = re.sub(r"\s+", " ", address or "").strip()
+        phone_raw = re.sub(r"\s+", "", phone or "")
+        whatsapp_raw = re.sub(r"\s+", "", whatsapp or "")
+        clean_email = (email or "").strip().lower()
+        clean_code = clean_eircode(eircode)
+
+        if len(clean_name) < 2:
+            raise ValueError("Enter the customer name")
+        if not valid_phone(phone_raw):
+            raise ValueError("Phone number must contain 7 to 10 digits")
+        if whatsapp_raw and not valid_phone(whatsapp_raw):
+            raise ValueError("WhatsApp number must contain 7 to 10 digits")
+        if clean_email and not valid_email(clean_email):
+            raise ValueError("Enter a valid email address")
+        if not clean_event:
+            raise ValueError("Enter the event name")
+        if not clean_address:
+            raise ValueError("Enter the event address")
+        if clean_code and not valid_eircode(clean_code):
+            raise ValueError("Eircode must be exactly 7 letters and numbers")
+
+        parsed_date = date.fromisoformat(event_date)
+        parsed_event_time = time.fromisoformat(event_time)
+        parsed_delivery_time = time.fromisoformat(delivery_time) if delivery_time.strip() else None
+        adult_count = parse_int(adults, "Adults", 0)
+        kid_count = parse_int(kids, "Kids", 0)
+        if adult_count + kid_count < 1:
+            raise ValueError("Enter at least one guest")
+    except ValueError as exc:
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast={quote(str(exc))}&toast_type=error#customer-event-details",
+            status_code=303,
+        )
+    except Exception:
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?toast=Enter+valid+customer+and+event+details&toast_type=error#customer-event-details",
+            status_code=303,
+        )
+
+    old_material = (
+        order.event_name, order.event_date, order.event_time, order.delivery_time,
+        int(order.adults or 0), int(order.kids or 0), order.address, order.eircode,
+    )
+    old_guest_counts = (int(order.adults or 0), int(order.kids or 0))
+
+    order.customer.name = clean_name
+    order.customer.phone = clean_phone(phone_raw)
+    order.customer.whatsapp = clean_phone(whatsapp_raw) if whatsapp_raw else ""
+    order.customer.email = clean_email
+    order.customer.address = clean_address
+    order.customer.eircode = clean_code
+
+    order.event_name = clean_event
+    order.event_date = parsed_date
+    order.event_time = parsed_event_time
+    order.delivery_time = parsed_delivery_time
+    order.adults = adult_count
+    order.kids = kid_count
+    order.address = clean_address
+    order.eircode = clean_code
+
+    material_changed = old_material != (
+        order.event_name, order.event_date, order.event_time, order.delivery_time,
+        order.adults, order.kids, order.address, order.eircode,
+    )
+    guest_counts_changed = old_guest_counts != (order.adults, order.kids)
+
+    # If guest counts change, keep any existing per-head quote internally
+    # consistent, but require a revised customer quote before confirmation.
+    if guest_counts_changed and (order.adult_charge is not None or order.kid_charge is not None or order.final_price is not None):
+        calc = calculate_order_price(
+            order, money(order.adult_charge), money(order.kid_charge),
+            money(order.delivery_service_charge), money(order.customer_other_charge),
+        )
+        order.final_price = calc["total"]
+
+    reopened = False
+    if material_changed:
+        reopened = invalidate_order_quote_after_detail_change(
+            order, db, "Admin updated customer/event details that affect the quote.",
+        )
+
+    db.commit()
+    message = "Details updated. Order returned to New for a revised quote" if reopened else "Customer and event details updated"
+    return RedirectResponse(
+        f"/admin/orders/{order_id}?toast={quote(message)}&toast_type=success#customer-event-details",
+        status_code=303,
     )
 
 

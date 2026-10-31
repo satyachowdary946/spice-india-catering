@@ -1,5 +1,6 @@
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import unquote
@@ -11,7 +12,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["SESSION_SECRET"] = "test-secret-only-for-tests"
 
 from fastapi.testclient import TestClient
-from app.main import app, format_order_number, parse_order_sequence
+from app.main import app, finance_summary, format_order_number, parse_order_sequence
 from app.db import SessionLocal
 from app.models import BusinessSettings
 
@@ -138,12 +139,35 @@ def test_build8_mobile_workflow():
         detail = client.get("/admin/orders/1")
         assert detail.status_code == 200
         assert "Day" in detail.text
+        assert "Edit Customer & Event Details" in detail.text
+        assert "Target Profit (%) · Total Internal Cost" in detail.text
+        assert "Recommended Adult" in detail.text and "Recommended Kid" in detail.text
+        assert "data-apply-recommended-prices" in detail.text
         assert detail.text.index("Selected Menu") < detail.text.index("Quote & Confirmation")
         assert detail.text.index("Quote & Confirmation") < detail.text.index("Kitchen Sheet & Sharing")
         assert detail.text.index("Kitchen Sheet & Sharing") < detail.text.index("Order Finance")
         assert "Web Order Charge" not in detail.text
         assert 'Set the status to Quoted first' in detail.text
         assert 'Change the order status to Confirmed' in detail.text
+        csrf = csrf_from(detail.text)
+        details_update = client.post("/admin/orders/1/details", data={
+            "csrf_token": csrf,
+            "customer_name": "Edited Customer",
+            "phone": "0891234567",
+            "whatsapp": "0891234567",
+            "email": "edited@example.com",
+            "event_name": "Wedding Updated",
+            "event_date": str(datetime.now(ZoneInfo("Europe/Dublin")).date() + timedelta(days=10)),
+            "event_time": "18:30",
+            "delivery_time": "17:45",
+            "adults": "20",
+            "kids": "4",
+            "address": "Updated event address",
+            "eircode": "N37K5P3",
+        }, follow_redirects=False)
+        assert details_update.status_code == 303
+        detail = client.get("/admin/orders/1")
+        assert "Edited Customer" in detail.text and "Wedding Updated" in detail.text and "Updated event address" in detail.text
         csrf = csrf_from(detail.text)
         upd = client.post("/admin/orders/1", data={
             "csrf_token": csrf,
@@ -273,6 +297,46 @@ def test_build8_mobile_workflow():
         q3 = client.post("/api/quotes", json=quote_payload(event_name="After Reset", days=15))
         assert q3.status_code == 200, q3.text
         assert q3.json()["order_number"] == "CAT0001"
+
+
+def test_total_internal_cost_recommendations():
+    from app.models import Expense, QuoteItem, QuoteRequest
+
+    order = QuoteRequest(
+        order_number="TEST-FINANCE",
+        public_token="finance-token",
+        customer_id=1,
+        event_name="Finance Test",
+        event_date=date.today(),
+        event_time=time(18, 0),
+        adults=30,
+        kids=20,
+        address="Test",
+        eircode="",
+        status="new",
+        food_profit_percent=Decimal("10.00"),
+    )
+    order.items = [
+        QuoteItem(
+            item_id=1, item_name="Menu Cost", menu_name="Test", category_name="Test",
+            subcategory_name="Test", dietary="both", internal_cost_per_guest=Decimal("4.16"), sort_order=1,
+        )
+    ]
+    order.expenses = [
+        Expense(name="Fuel Charges", amount=Decimal("50.00"), expense_date=date.today()),
+        Expense(name="Delivery Charges", amount=Decimal("50.00"), expense_date=date.today()),
+        Expense(name="Chef Labour", amount=Decimal("60.00"), expense_date=date.today()),
+        Expense(name="Miscellaneous", amount=Decimal("50.00"), expense_date=date.today()),
+    ]
+
+    f = finance_summary(order)
+    assert f["food_cost"] == Decimal("208.00")
+    assert f["food_cost_per_head"] == Decimal("4.16")
+    assert f["total_cost"] == Decimal("418.00")
+    assert f["target_profit_amount"] == Decimal("41.80")
+    assert f["target_sale"] == Decimal("459.80")
+    assert f["recommended_adult_charge"] == Decimal("11.50")
+    assert f["recommended_kid_charge"] == Decimal("5.75")
 
 
 def teardown_module():
