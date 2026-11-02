@@ -3169,14 +3169,18 @@ def admin_order_kitchen_share(
     message = build_kitchen_share_text(order)
     biz = business(db)
 
-    # Build 14.14: kitchen sharing is now a WhatsApp-ready text sheet rather
-    # than a PDF attachment. Mobile Web Share can hand this formatted message
-    # directly to WhatsApp; the saved group invite remains the fallback target.
+    # Build 14.15: the kitchen action shares the real PDF file.
+    # Browsers can hand the generated PDF to the native share sheet; WhatsApp
+    # still controls which chat/group receives the attachment. The configured
+    # kitchen group invite remains the direct fallback target.
     if "application/json" in (request.headers.get("accept") or ""):
+        pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
         return JSONResponse({
             "ok": True,
             "share_title": f"Kitchen {order.order_number}",
             "share_text": message,
+            "pdf_url": pdf_url,
+            "pdf_filename": f"Kitchen-{order.order_number}.pdf",
             "group_url": biz.kitchen_whatsapp_group_url or "",
         })
 

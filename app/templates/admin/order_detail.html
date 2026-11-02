@@ -181,10 +181,10 @@
 
 <section class="card" id="kitchen-sharing" style="margin-top:14px">
   <div class="admin-title">
-    <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Share the confirmed kitchen sheet directly as a clean WhatsApp message.</p></div>
+    <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Generate the confirmed kitchen PDF and share the actual PDF file to WhatsApp.</p></div>
     <div class="actions">{% if can_send_kitchen %}<a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Open / Print Sheet</a>{% else %}<button class="btn secondary small" type="button" disabled>Open / Print Sheet</button>{% endif %}</div>
   </div>
-  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" data-kitchen-share-form><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Included clearly at the end of the WhatsApp kitchen sheet.</span></div><button class="btn" type="submit" data-kitchen-share-btn style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Share Kitchen Sheet To WhatsApp</button><div class="help" data-kitchen-share-status style="margin-top:8px">Shares the full kitchen sheet as formatted WhatsApp text — no PDF attachment.</div></form>
+  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" data-kitchen-share-form><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Included clearly at the end of the kitchen PDF.</span></div><button class="btn" type="submit" data-kitchen-share-btn style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Share To Kitchen WhatsApp</button><div class="help" data-kitchen-share-status style="margin-top:8px">Generates the kitchen PDF and opens the phone share flow with the PDF attached.</div>{% if business.kitchen_whatsapp_group_url %}<a class="btn secondary small" href="{{ business.kitchen_whatsapp_group_url }}" target="_blank" rel="noopener" style="margin-top:10px">Open Kitchen WhatsApp Group</a>{% endif %}</form>
   {% if not can_send_kitchen %}<div class="help" style="margin-top:8px">Change the order status to Confirmed before sending anything to the kitchen.</div>{% endif %}
 </section>
 
@@ -228,34 +228,43 @@
     if(!kitchenForm.reportValidity())return;
     const btn=kitchenForm.querySelector('[data-kitchen-share-btn]');
     const status=kitchenForm.querySelector('[data-kitchen-share-status]');
-    const original=btn?.textContent||'Share Kitchen Sheet To WhatsApp';
-    if(btn){btn.disabled=true;btn.textContent='Preparing Kitchen Sheet…';}
-    if(status)status.textContent='Preparing the WhatsApp kitchen sheet…';
+    const original=btn?.textContent||'Generate PDF & Share To Kitchen WhatsApp';
+    if(btn){btn.disabled=true;btn.textContent='Generating PDF…';}
+    if(status)status.textContent='Generating the kitchen PDF…';
+    let objectUrl='';
     try{
       const response=await fetch(kitchenForm.action,{method:'POST',body:new FormData(kitchenForm),headers:{'Accept':'application/json'},credentials:'same-origin'});
-      if(!response.ok)throw new Error((await response.text())||'Kitchen share could not be prepared.');
+      if(!response.ok)throw new Error((await response.text())||'Kitchen PDF could not be prepared.');
       const data=await response.json();
-      const text=data.share_text||'';
-      if(!text)throw new Error('Kitchen sheet message is empty.');
+      if(!data.pdf_url)throw new Error('Kitchen PDF URL is missing.');
 
-      if(navigator.share){
-        if(status)status.textContent='Kitchen sheet ready — choose WhatsApp and your kitchen group.';
-        await navigator.share({title:data.share_title||'Kitchen Order',text});
-        if(status)status.textContent='Kitchen sheet shared.';
+      const pdfResponse=await fetch(data.pdf_url,{credentials:'same-origin',cache:'no-store'});
+      if(!pdfResponse.ok)throw new Error('Kitchen PDF could not be generated.');
+      const blob=await pdfResponse.blob();
+      const filename=data.pdf_filename||'Kitchen-Order.pdf';
+      const file=new File([blob],filename,{type:'application/pdf'});
+      const canFileShare=!!(navigator.share && navigator.canShare && navigator.canShare({files:[file]}));
+
+      if(canFileShare){
+        if(status)status.textContent='PDF ready — choose WhatsApp, then select the kitchen group.';
+        await navigator.share({title:data.share_title||'Kitchen Order',text:'Spice India kitchen sheet',files:[file]});
+        if(status)status.textContent='Kitchen PDF shared.';
       }else{
-        try{await navigator.clipboard.writeText(text);}catch(_err){}
+        objectUrl=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href=objectUrl;a.download=filename;document.body.appendChild(a);a.click();a.remove();
         if(data.group_url){
-          window.open(data.group_url,'_blank','noopener');
-          if(status)status.textContent='Kitchen sheet copied. WhatsApp group opened — paste the message.';
+          if(status)status.textContent='PDF downloaded. Opening your saved kitchen WhatsApp group — attach the downloaded PDF and press Send.';
+          setTimeout(()=>{window.location.href=data.group_url;},450);
         }else{
-          window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
-          if(status)status.textContent='WhatsApp opened with the kitchen sheet message.';
+          if(status)status.textContent='PDF downloaded. Add a Kitchen WhatsApp Group Link in Business Settings for the direct group shortcut.';
         }
       }
     }catch(err){
       if(err?.name==='AbortError'){if(status)status.textContent='Sharing cancelled.';}
-      else {if(status)status.textContent=err?.message||'Kitchen sheet sharing failed.';}
+      else {if(status)status.textContent=err?.message||'Kitchen PDF sharing failed.';}
     }finally{
+      if(objectUrl)setTimeout(()=>URL.revokeObjectURL(objectUrl),4000);
       if(btn){btn.disabled=false;btn.textContent=original;}
     }
   });

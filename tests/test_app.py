@@ -321,7 +321,8 @@ def test_build8_mobile_workflow():
         share_json = kitchen_share_json.json()
         assert "SPICE INDIA — KITCHEN SHEET" in share_json["share_text"]
         assert "CONFIRMED MENU" in share_json["share_text"]
-        assert "pdf_url" not in share_json and "filename" not in share_json
+        assert share_json["pdf_url"].endswith("/kitchen/" + b1["token"] + ".pdf")
+        assert share_json["pdf_filename"] == "Kitchen-CAT0001.pdf"
         kitchen_pdf = client.get(f"/kitchen/{b1['token']}.pdf")
         assert kitchen_pdf.status_code == 200
         assert kitchen_pdf.content.startswith(b"%PDF")
