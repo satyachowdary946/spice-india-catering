@@ -1739,3 +1739,13 @@ body.menu-page{overflow-x:clip}
 .quote-send-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,.7fr) auto;gap:10px;align-items:end}.quote-send-primary{min-height:52px;font-size:1rem}.quote-status-field{margin:0}
 @media(max-width:760px){.quote-send-row{grid-template-columns:1fr}.quote-send-row .btn{width:100%}}
 .admin-filter-details summary{font-size:1rem;font-weight:900;cursor:pointer;color:#dce8e5}
+
+
+/* =========================================================
+   BUILD 14.8 HOTFIX — website 15-minute AM/PM time picker
+   ========================================================= */
+.quarter-time-trigger{width:100%;min-height:48px;display:grid;grid-template-columns:28px minmax(0,1fr) 24px;align-items:center;gap:8px;text-align:left;border:1px solid #53635f;background:#0f1816;color:#aab8b4;border-radius:12px;padding:10px 12px;font:inherit;cursor:pointer}
+.quarter-time-trigger:hover,.quarter-time-trigger:focus{border-color:#2dd4bf;outline:3px solid rgba(45,212,191,.16)}
+.quarter-time-trigger.has-value{color:#fff}.quarter-time-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#15322d;color:#63e6d3;font-size:1rem}.quarter-time-chevron{text-align:right;color:#63e6d3;font-size:1.2rem;font-weight:900}
+.quarter-time-dialog{width:min(94vw,620px);padding:0;border:1px solid #50605c;border-radius:18px;background:#0f1715;color:#fff}.quarter-time-dialog::backdrop{background:rgba(0,0,0,.72)}.quarter-time-dialog-card{padding:18px}.quarter-time-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.quarter-time-dialog-head h2{margin:2px 0 0}.quarter-time-close{width:42px;height:42px;border-radius:12px;border:1px solid #52615d;background:#18211f;color:#fff;font-size:1.55rem;line-height:1;cursor:pointer}.quarter-time-periods{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-height:min(62vh,520px);overflow:auto;padding:4px 4px 8px}.quarter-time-option{min-height:44px;border-radius:10px;border:1px solid #3e504b;background:#15201e;color:#edf7f4;font-weight:850;cursor:pointer}.quarter-time-option:hover,.quarter-time-option:focus{border-color:#2dd4bf;background:#19312d}.quarter-time-option.selected{background:#24cbb5;color:#04110e;border-color:#71efdf}
+@media(max-width:620px){.quarter-time-dialog{width:min(96vw,520px)}.quarter-time-dialog-card{padding:14px}.quarter-time-periods{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:68vh}.quarter-time-option{min-height:46px;font-size:.95rem}}

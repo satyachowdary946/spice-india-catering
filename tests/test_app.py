@@ -70,6 +70,12 @@ def test_build8_mobile_workflow():
         assert 'data-menu-basket hidden' in menu_page.text
         assert 'Review Basket' in menu_page.text
         assert 'data-item-details-dialog' in menu_page.text
+        details_page = client.get('/order?next=/submit')
+        assert details_page.status_code == 200
+        assert 'data-quarter-time-dialog' in details_page.text
+        assert 'data-time-target="event_time"' in details_page.text
+        assert 'data-time-target="delivery_time"' in details_page.text
+        assert 'type="time"' not in details_page.text
         # The page is already the menu, so the primary header does not repeat a Menu link.
         header_html = menu_page.text.split('</header>', 1)[0]
         assert 'href="/menu">Menu</a>' not in header_html

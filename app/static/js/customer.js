@@ -19,6 +19,76 @@ function safeHeadingColor(v){const s=String(v||'').trim();return /^#[0-9a-f]{6}$
 function formatMenuPrice(v){const n=Number(v);return Number.isFinite(n)?`€${n.toFixed(2)}`:'';}
 function dayFromDate(value){if(!value)return '';const d=new Date(value+'T12:00:00');return Number.isFinite(d.getTime())?d.toLocaleDateString('en-IE',{weekday:'long'}):'';}
 
+function quarterHourLabel(value){
+  const m=/^(\d{1,2}):(\d{2})$/.exec(String(value||''));
+  if(!m)return '';
+  const hour24=Number(m[1]), minute=Number(m[2]);
+  if(hour24<0||hour24>23||minute<0||minute>59)return '';
+  const suffix=hour24>=12?'PM':'AM';
+  const hour12=hour24%12||12;
+  return `${hour12}:${String(minute).padStart(2,'0')} ${suffix}`;
+}
+function snapToQuarterHour(value){
+  const m=/^(\d{1,2}):(\d{2})/.exec(String(value||''));
+  if(!m)return '';
+  let total=Number(m[1])*60+Number(m[2]);
+  if(!Number.isFinite(total))return '';
+  total=(Math.round(total/15)*15)%(24*60);
+  const h=Math.floor(total/60),min=total%60;
+  return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+}
+function initQuarterHourTimePickers(form){
+  const dialog=document.querySelector('[data-quarter-time-dialog]');
+  const optionRoot=dialog?.querySelector('[data-quarter-time-options]');
+  const title=dialog?.querySelector('[data-quarter-time-title]');
+  if(!dialog||!optionRoot)return {sync:()=>{}};
+  let activeInput=null,activeTrigger=null;
+  const options=[];
+  for(let minutes=0;minutes<24*60;minutes+=15){
+    const h=Math.floor(minutes/60),m=minutes%60;
+    const value=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    options.push(`<button type="button" class="quarter-time-option" data-time-option="${value}">${quarterHourLabel(value)}</button>`);
+  }
+  optionRoot.innerHTML=options.join('');
+  const sync=()=>{
+    form.querySelectorAll('[data-time-trigger]').forEach(trigger=>{
+      const input=form.elements[trigger.dataset.timeTarget];
+      if(!input)return;
+      if(input.value)input.value=snapToQuarterHour(input.value);
+      const label=trigger.querySelector('[data-time-label]');
+      const text=quarterHourLabel(input.value);
+      if(label)label.textContent=text||trigger.dataset.timeTitle||'Choose Time';
+      trigger.classList.toggle('has-value',Boolean(text));
+    });
+  };
+  form.querySelectorAll('[data-time-trigger]').forEach(trigger=>trigger.addEventListener('click',()=>{
+    activeTrigger=trigger;
+    activeInput=form.elements[trigger.dataset.timeTarget];
+    if(title)title.textContent=trigger.dataset.timeTitle||'Choose Time';
+    optionRoot.querySelectorAll('[data-time-option]').forEach(btn=>btn.classList.toggle('selected',btn.dataset.timeOption===activeInput?.value));
+    if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');
+    requestAnimationFrame(()=>{
+      const selected=optionRoot.querySelector('.quarter-time-option.selected');
+      (selected||optionRoot.querySelector('[data-time-option="12:00"]')||optionRoot.firstElementChild)?.scrollIntoView({block:'center'});
+    });
+  }));
+  optionRoot.addEventListener('click',e=>{
+    const btn=e.target.closest('[data-time-option]');
+    if(!btn||!activeInput)return;
+    activeInput.value=btn.dataset.timeOption;
+    activeInput.dispatchEvent(new Event('input',{bubbles:true}));
+    activeInput.dispatchEvent(new Event('change',{bubbles:true}));
+    const label=activeTrigger?.querySelector('[data-time-label]');
+    if(label)label.textContent=quarterHourLabel(activeInput.value);
+    activeTrigger?.classList.add('has-value');
+    if(dialog.open)dialog.close();else dialog.removeAttribute('open');
+    activeTrigger?.focus();
+  });
+  dialog.querySelector('[data-quarter-time-close]')?.addEventListener('click',()=>dialog.close());
+  dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
+  return {sync};
+}
+
 
 async function submitCurrentDraft(button,errorBox){
   const current=DraftStore.load();
@@ -35,8 +105,10 @@ async function submitCurrentDraft(button,errorBox){
 
 function initDetailsForm(){
   const form=document.querySelector('[data-details-form]'); if(!form) return;
+  const timePickers=initQuarterHourTimePickers(form);
   const draft=DraftStore.load();
   Object.entries(draft.details||{}).forEach(([k,v])=>{const el=form.elements[k]; if(el&&el.type!=='submit') el.value=v??'';});
+  timePickers.sync();
   const same=document.getElementById('same-whatsapp'), phone=form.elements.phone, wa=form.elements.whatsapp;
   const dateInput=form.elements.event_date, dayInput=form.elements.event_day, eircode=form.elements.eircode, errorBox=document.querySelector('[data-details-error]');
   const earliestEventDate=()=>{const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+1);return d;};
@@ -51,7 +123,7 @@ function initDetailsForm(){
   digitsOnly(phone);digitsOnly(wa);if(eircode)eircode.value=String(eircode.value||'').replace(/[^a-z0-9]/gi,'').toUpperCase().slice(0,7);
   if(phone&&wa&&phone.value&&phone.value===wa.value) same.checked=true;
   same?.addEventListener('change',()=>{if(same.checked) wa.value=phone.value;});
-  const fail=(message,field)=>{if(errorBox){errorBox.textContent=message;errorBox.hidden=false;}else alert(message); form.elements[field]?.focus();};
+  const fail=(message,field)=>{if(errorBox){errorBox.textContent=message;errorBox.hidden=false;}else alert(message); const target=form.elements[field];if(target?.type==='hidden'){form.querySelector(`[data-time-target="${field}"]`)?.focus();}else target?.focus();};
   const clearFieldError=el=>{const field=el?.closest('.field');if(!field)return;field.classList.remove('field-invalid');field.querySelector('[data-field-error]')?.remove();};
   const showFieldError=el=>{const field=el?.closest('.field');if(!field)return;field.classList.add('field-invalid');let msg=field.querySelector('[data-field-error]');if(!msg){msg=document.createElement('div');msg.dataset.fieldError='';msg.className='field-error-message';field.appendChild(msg);}msg.textContent=el.validationMessage||'This field is required.';};
   [...form.querySelectorAll('input[required],textarea[required],select[required]')].forEach(el=>{el.addEventListener('input',()=>clearFieldError(el));el.addEventListener('change',()=>clearFieldError(el));});
@@ -63,6 +135,8 @@ function initDetailsForm(){
     if(invalid.length){invalid.forEach(showFieldError);invalid[0].closest('.field')?.scrollIntoView({behavior:'smooth',block:'center'});invalid[0].focus({preventScroll:true});return;}
     const fd=new FormData(form), details={};
     ['name','phone','whatsapp','email','event_date','event_day','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
+    if(!details.event_time){fail('Choose the event time.','event_time');return;}
+    if(!details.delivery_time){fail('Choose the delivery time.','delivery_time');return;}
     if(!/^[0-9]{7,10}$/.test(details.phone)){fail('Phone number must contain digits only and be no more than 10 digits.','phone');return;}
     if(!/^[0-9]{7,10}$/.test(details.whatsapp)){fail('WhatsApp number must contain digits only and be no more than 10 digits.','whatsapp');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email)){fail('Enter a valid email address for your catering quote.','email');return;}
