@@ -3195,7 +3195,10 @@ def public_kitchen_pdf(token: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Kitchen sheet not found")
     if order.status != "confirmed":
         raise HTTPException(status_code=409, detail="Kitchen sheet is available only after order confirmation")
-    pdf = build_order_pdf(order, business(db))
+    try:
+        pdf = build_order_pdf(order, business(db))
+    except Exception:
+        pdf = build_order_pdf_fallback(order, business(db))
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="Kitchen-{order.order_number}.pdf"', "Cache-Control": "no-store"})
 
 
@@ -3329,6 +3332,14 @@ def admin_requested_dish_update(
     dish = db.get(RequestedDish, dish_id)
     if not dish:
         raise HTTPException(status_code=404)
+    order = db.get(QuoteRequest, dish.order_id)
+    if not order:
+        raise HTTPException(status_code=404)
+    if order.quote_email_sent_at:
+        return RedirectResponse(
+            f"/admin/orders/{dish.order_id}?toast=Requested+dish+decisions+are+locked+after+the+quote+is+sent&toast_type=error#requested-dishes",
+            status_code=303,
+        )
     if status not in REQUESTED_DISH_STATUSES:
         status = dish.status
     old_status = dish.status
@@ -3350,8 +3361,22 @@ def admin_order_print(order_id: int, request: Request, db: Session = Depends(get
     return render(request, db, "admin/order_print.html", admin=admin, order=order, groups=order_groups(order), approved_requests=approved_requests)
 
 
+def _pdf_text(value: Any, fallback: str = "—") -> str:
+    """Escape legacy/null values so one old order can never break PDF generation."""
+    if value is None:
+        return fallback
+    text_value = str(value).strip()
+    return html.escape(text_value) if text_value else fallback
+
+
+def _pdf_time(value: time | None) -> str:
+    if not value:
+        return "—"
+    return value.strftime("%I:%M %p").lstrip("0")
+
+
 def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
-    """Compact kitchen/event sheet optimised for A5 print and phone sharing."""
+    """Compact kitchen/event sheet. Defensive against old/null production data."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A5, rightMargin=14, leftMargin=14, topMargin=14, bottomMargin=14)
     styles = getSampleStyleSheet()
@@ -3363,52 +3388,84 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
     cat = ParagraphStyle("KitchenCat", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10, leading=12, textColor=colors.HexColor("#111111"), spaceBefore=5, spaceAfter=2)
     item = ParagraphStyle("KitchenItem", parent=small, fontName="Helvetica-Bold", leftIndent=7, spaceAfter=1.5)
 
-    company = biz.company_name.strip() or "Spice India Catering"
-    header = Table([[Paragraph(company, title), Paragraph(f"<b>{order.order_number}</b><br/>Kitchen / Catering Sheet", small)]], colWidths=[235, 135])
+    company = (getattr(biz, "company_name", "") or "Spice India Catering").strip()
+    header = Table([[Paragraph(_pdf_text(company), title), Paragraph(f"<b>{_pdf_text(order.order_number)}</b><br/>Kitchen / Catering Sheet", small)]], colWidths=[235, 135])
     header.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("ALIGN",(1,0),(1,0),"RIGHT"),("LINEBELOW",(0,0),(-1,-1),1.5,colors.black),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
 
+    event_date_text = order.event_date.strftime('%d/%m/%Y') if getattr(order, 'event_date', None) else '—'
     timing = Table([[
-        Paragraph(f"<b>DATE</b><br/>{order.event_date.strftime('%d/%m/%Y')}", small),
-        Paragraph(f"<b>DAY</b><br/>{event_day(order)}", small),
-        Paragraph(f"<b>EVENT TIME</b><br/>{order.event_time.strftime('%H:%M')}", small),
-        Paragraph(f"<b>DELIVERY TIME</b><br/>{order.delivery_time.strftime('%H:%M') if order.delivery_time else '—'}", small),
+        Paragraph(f"<b>DATE</b><br/>{event_date_text}", small),
+        Paragraph(f"<b>DAY</b><br/>{_pdf_text(event_day(order))}", small),
+        Paragraph(f"<b>EVENT TIME</b><br/>{_pdf_time(getattr(order, 'event_time', None))}", small),
+        Paragraph(f"<b>DELIVERY TIME</b><br/>{_pdf_time(getattr(order, 'delivery_time', None))}", small),
     ]], colWidths=[92.5]*4)
     timing.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor('#777777')),("INNERGRID",(0,0),(-1,-1),0.3,colors.HexColor('#BBBBBB')),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
 
+    customer = getattr(order, 'customer', None)
+    adults = int(getattr(order, 'adults', 0) or 0)
+    kids = int(getattr(order, 'kids', 0) or 0)
     details = Table([[
-        Paragraph(f"<b>CUSTOMER</b><br/>{html.escape(order.customer.name)}", tiny),
-        Paragraph(f"<b>PHONE</b><br/>{html.escape(order.customer.phone)}", tiny),
-        Paragraph(f"<b>EVENT</b><br/>{html.escape(order.event_name)}", tiny),
-        Paragraph(f"<b>GUESTS</b><br/>{order.adults} adults · {order.kids} kids · <b>{order.adults + order.kids} total</b>", tiny),
+        Paragraph(f"<b>CUSTOMER</b><br/>{_pdf_text(getattr(customer, 'name', ''))}", tiny),
+        Paragraph(f"<b>PHONE</b><br/>{_pdf_text(getattr(customer, 'phone', ''))}", tiny),
+        Paragraph(f"<b>EVENT</b><br/>{_pdf_text(getattr(order, 'event_name', ''))}", tiny),
+        Paragraph(f"<b>GUESTS</b><br/>{adults} adults · {kids} kids · <b>{adults + kids} total</b>", tiny),
     ],[
-        Paragraph(f"<b>ADDRESS</b><br/>{html.escape(order.address)}", tiny),
-        Paragraph(f"<b>EIRCODE</b><br/>{html.escape(order.eircode)}", tiny),
-        Paragraph(f"<b>WHATSAPP</b><br/>{html.escape(order.customer.whatsapp)}", tiny),
-        Paragraph(f"<b>CUSTOMER NO.</b><br/>{html.escape(order.customer.customer_number)}", tiny),
+        Paragraph(f"<b>ADDRESS</b><br/>{_pdf_text(getattr(order, 'address', ''))}", tiny),
+        Paragraph(f"<b>EIRCODE</b><br/>{_pdf_text(getattr(order, 'eircode', ''))}", tiny),
+        Paragraph(f"<b>WHATSAPP</b><br/>{_pdf_text(getattr(customer, 'whatsapp', ''))}", tiny),
+        Paragraph(f"<b>CUSTOMER NO.</b><br/>{_pdf_text(getattr(customer, 'customer_number', ''))}", tiny),
     ]], colWidths=[92.5]*4)
     details.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.5,colors.HexColor('#999999')),("INNERGRID",(0,0),(-1,-1),0.25,colors.HexColor('#CCCCCC')),("VALIGN",(0,0),(-1,-1),"TOP"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
 
     story = [header, Spacer(1,6), timing, Spacer(1,6), details, Spacer(1,7), Paragraph("CONFIRMED MENU", section)]
     for menu_name, categories in order_groups(order).items():
-        story.append(Paragraph(html.escape(menu_name), bold))
+        story.append(Paragraph(_pdf_text(menu_name, "Menu"), bold))
         for cat_name, subs in categories.items():
-            story.append(Paragraph(html.escape(cat_name).upper(), cat))
+            story.append(Paragraph(_pdf_text(cat_name, "Selection").upper(), cat))
             counter = 1
-            for sub_name, items in subs.items():
+            for sub_name, menu_items in subs.items():
                 if sub_name and sub_name != "Main Selection":
-                    story.append(Paragraph(html.escape(sub_name), tiny))
-                for menu_item in items:
-                    story.append(Paragraph(f"{counter}. {html.escape(menu_item.item_name)}", item))
+                    story.append(Paragraph(_pdf_text(sub_name), tiny))
+                for menu_item in menu_items:
+                    story.append(Paragraph(f"{counter}. {_pdf_text(getattr(menu_item, 'item_name', ''))}", item))
                     counter += 1
-    approved = [d for d in order.requested_dishes if d.status == "approved"]
+    approved = [d for d in (getattr(order, 'requested_dishes', None) or []) if d.status == "approved"]
     if approved:
         story.append(Paragraph("APPROVED REQUESTED DISHES", cat))
         for idx, dish in enumerate(approved, 1):
-            story.append(Paragraph(f"{idx}. {html.escape(dish.name)}", item))
-    if order.kitchen_comments.strip():
-        story.extend([Spacer(1,5), Paragraph("KITCHEN COMMENTS", section), Paragraph(f"<b>{html.escape(order.kitchen_comments)}</b>", bold)])
-    if order.customer_notes.strip():
-        story.extend([Spacer(1,4), Paragraph("CUSTOMER NOTES", section), Paragraph(html.escape(order.customer_notes), small)])
+            story.append(Paragraph(f"{idx}. {_pdf_text(getattr(dish, 'name', ''))}", item))
+    kitchen_comments = (getattr(order, 'kitchen_comments', '') or '').strip()
+    if kitchen_comments:
+        story.extend([Spacer(1,5), Paragraph("KITCHEN COMMENTS", section), Paragraph(f"<b>{_pdf_text(kitchen_comments)}</b>", bold)])
+    customer_notes = (getattr(order, 'customer_notes', '') or '').strip()
+    if customer_notes:
+        story.extend([Spacer(1,4), Paragraph("CUSTOMER NOTES", section), Paragraph(_pdf_text(customer_notes), small)])
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def build_order_pdf_fallback(order: QuoteRequest, biz: BusinessSettings) -> bytes:
+    """Last-resort PDF so Download PDF never becomes a 500 for a legacy order."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=28, leftMargin=28, topMargin=28, bottomMargin=28)
+    styles = getSampleStyleSheet()
+    body = styles["BodyText"]
+    heading = styles["Heading2"]
+    customer = getattr(order, 'customer', None)
+    story = [
+        Paragraph(_pdf_text(getattr(biz, 'company_name', '') or 'Spice India Catering'), styles['Title']),
+        Paragraph(f"Kitchen Sheet · {_pdf_text(getattr(order, 'order_number', ''))}", heading),
+        Paragraph(f"Customer: {_pdf_text(getattr(customer, 'name', ''))}", body),
+        Paragraph(f"Event: {_pdf_text(getattr(order, 'event_name', ''))}", body),
+        Paragraph(f"Event time: {_pdf_time(getattr(order, 'event_time', None))}", body),
+        Paragraph(f"Delivery time: {_pdf_time(getattr(order, 'delivery_time', None))}", body),
+        Spacer(1, 10), Paragraph("Menu", heading),
+    ]
+    for qi in sorted((getattr(order, 'items', None) or []), key=lambda x: (getattr(x, 'sort_order', 0) or 0, getattr(x, 'id', 0) or 0)):
+        story.append(Paragraph("• " + _pdf_text(getattr(qi, 'item_name', '')), body))
+    comments = (getattr(order, 'kitchen_comments', '') or '').strip()
+    if comments:
+        story.extend([Spacer(1,10), Paragraph("Kitchen Comments", heading), Paragraph(_pdf_text(comments), body)])
     doc.build(story)
     return buffer.getvalue()
 
@@ -3419,8 +3476,11 @@ def admin_order_pdf(order_id: int, request: Request, db: Session = Depends(get_d
     if redirect: return redirect
     order = db.scalar(select(QuoteRequest).where(QuoteRequest.id == order_id).options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes)))
     if not order: raise HTTPException(status_code=404)
-    pdf = build_order_pdf(order, business(db))
-    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{order.order_number}.pdf"'})
+    try:
+        pdf = build_order_pdf(order, business(db))
+    except Exception:
+        pdf = build_order_pdf_fallback(order, business(db))
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{order.order_number}.pdf"', "Cache-Control": "no-store"})
 
 
 def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
@@ -4216,6 +4276,56 @@ def admin_expense_add(
     return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#expenses", status_code=303)
 
 
+@app.get("/admin/orders/{order_id}/expense-payment-summary")
+def admin_expense_payment_summary_api(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return JSONResponse({"error": "login_required"}, status_code=401)
+    order = db.scalar(
+        select(QuoteRequest).where(QuoteRequest.id == order_id).options(
+            selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
+        )
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    rows = []
+    total = Decimal("0.00")
+    paid_total = Decimal("0.00")
+    for expense in order.expenses or []:
+        summary = expense_payment_summary(expense)
+        total += summary["amount"]
+        paid_total += summary["paid_amount"]
+        # Keep the popup simple: current corrected state, not old reversal noise.
+        history = []
+        if summary["paid"] and summary["last_paid_date"]:
+            history.append({
+                "amount": f"{summary['paid_amount']:.2f}",
+                "date": summary["last_paid_date"].isoformat(),
+                "date_label": summary["last_paid_date"].strftime("%d %b %Y"),
+            })
+        rows.append({
+            "id": expense.id,
+            "name": expense.name,
+            "amount": f"{summary['amount']:.2f}",
+            "paid_amount": f"{summary['paid_amount']:.2f}",
+            "balance": f"{summary['balance']:.2f}",
+            "paid": summary["paid"],
+            "history": history,
+        })
+    total = money(total)
+    paid_total = money(paid_total)
+    return JSONResponse({
+        "order_id": order.id,
+        "order_number": order.order_number,
+        "customer": order.customer.name if order.customer else "",
+        "total": f"{total:.2f}",
+        "paid": f"{paid_total:.2f}",
+        "left": f"{max(total - paid_total, Decimal('0.00')):.2f}",
+        "expenses": rows,
+    })
+
+
 @app.post("/admin/orders/{order_id}/expenses/{expense_id}/payment-status")
 def admin_expense_payment_status(
     order_id: int,
@@ -4240,23 +4350,30 @@ def admin_expense_payment_status(
         paid_on = date.fromisoformat(payment_date) if payment_date else date.today()
     except Exception:
         paid_on = date.today()
-    summary = expense_payment_summary(expense)
+
+    # Paid / Not Paid is a simple correction toggle. Remove stale reversal chains first.
+    for payment in list(expense.payments or []):
+        db.delete(payment)
+    amount_value = money(expense.amount)
     if action == "paid":
-        remaining = money(summary["balance"])
-        if remaining > 0:
-            db.add(ExpensePayment(expense_id=expense.id, amount=remaining, payment_date=paid_on, note="Marked paid by admin"))
+        if amount_value > 0:
+            db.add(ExpensePayment(expense_id=expense.id, amount=amount_value, payment_date=paid_on, note="Marked paid by admin"))
         expense.paid = True
         message = f"{expense.name} marked paid"
     elif action == "unpaid":
-        paid_amount = money(summary["paid_amount"])
-        if paid_amount > 0 and list(expense.payments or []):
-            db.add(ExpensePayment(expense_id=expense.id, amount=-paid_amount, payment_date=paid_on, note="Marked unpaid by admin"))
         expense.paid = False
-        message = f"{expense.name} marked unpaid"
+        message = f"{expense.name} marked not paid"
     else:
-        return RedirectResponse(f"/admin/orders/{order_id}?toast=Choose+Paid+or+Not+Paid&toast_type=error#expense-payments", status_code=303)
+        message = "Choose Paid or Not Paid"
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JSONResponse({"ok": False, "error": message}, status_code=422)
+        return RedirectResponse(f"/admin/transactions?toast={quote(message)}&toast_type=error", status_code=303)
     db.commit()
-    return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(message)}&toast_type=success#expense-payments", status_code=303)
+
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        db.expire_all()
+        return admin_expense_payment_summary_api(order_id, request, db)
+    return RedirectResponse(f"/admin/transactions?toast={quote(message)}&toast_type=success", status_code=303)
 
 
 @app.post("/admin/expenses/{expense_id}/delete")

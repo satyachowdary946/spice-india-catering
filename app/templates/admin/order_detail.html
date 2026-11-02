@@ -118,7 +118,7 @@
 </section>
 
 {% if order.customer_notes %}<section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Customer Comments / Notes</h2><p class="prewrap">{{ order.customer_notes }}</p></section>{% endif %}
-{% if order.requested_dishes %}<section class="card requested-admin-card" id="requested-dishes" style="margin-top:14px"><div class="admin-title"><div><h2 style="font-size:1.25rem">Requested Dishes</h2><p class="muted">Approve or reject each request. The decision and reply are included when the quote is sent.</p></div></div><div class="requested-admin-list">{% for dish in order.requested_dishes %}<form class="requested-admin-row requested-admin-row-dark" method="post" action="/admin/requested-dishes/{{ dish.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="requested-dish-name"><strong>{{ dish.name }}</strong><div class="help">Requested by customer · {{ dish.status.replace('_',' ').title() }}</div></div><div class="field compact requested-reply"><label>Reply (Optional)</label><input name="admin_response" value="{{ dish.admin_response }}" maxlength="1000" placeholder="Short message to customer"></div><div class="requested-decision-buttons"><button class="btn small approve-request" type="submit" name="status" value="approved">✓ Approve</button><button class="btn small reject-request" type="submit" name="status" value="rejected">✕ Reject</button></div></form>{% endfor %}</div></section>{% endif %}
+{% if order.requested_dishes %}<section class="card requested-admin-card" id="requested-dishes" style="margin-top:14px"><div class="admin-title"><div><h2 style="font-size:1.25rem">Requested Dishes</h2><p class="muted">Choose Approve or Reject before sending the quote.</p></div></div><div class="requested-admin-list">{% for dish in order.requested_dishes %}<form class="requested-admin-row requested-admin-row-dark" method="post" action="/admin/requested-dishes/{{ dish.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="requested-dish-name"><strong>{{ dish.name }}</strong><div class="help">{{ dish.status.replace('_',' ').title() }}{% if order.quote_email_sent_at %} · Locked after quote sent{% endif %}</div></div><div class="field compact requested-reply"><label>Reply (Optional)</label><input name="admin_response" value="{{ dish.admin_response }}" maxlength="1000" placeholder="Short message to customer" {% if order.quote_email_sent_at %}disabled{% endif %}></div><div class="requested-decision-buttons"><button class="btn small approve-request {{ 'is-selected' if dish.status == 'approved' else '' }}" type="submit" name="status" value="approved" {% if order.quote_email_sent_at %}disabled{% endif %}>✓ Approve</button><button class="btn small reject-request {{ 'is-selected' if dish.status == 'rejected' else '' }}" type="submit" name="status" value="rejected" {% if order.quote_email_sent_at %}disabled{% endif %}>✕ Reject</button></div></form>{% endfor %}</div></section>{% endif %}
 
 <section class="card internal-finance-card" id="internal-finance" style="margin-top:14px">
   <div class="admin-title"><div><div class="eyebrow">Admin Only · Internal Costing</div><h2 style="font-size:1.25rem">Internal Cost, Target Profit & Recommended Head Price</h2><p class="muted">Customers never see these values. Food cost comes from the selected dishes × {{ order.adults + order.kids }} guests. Target profit is calculated on <strong>total internal cost</strong> including fuel, delivery, chef labour and other expenses.</p></div><a class="btn secondary small" href="/admin/menu-import#internal-prices">Manage Dish Costs</a></div>
@@ -143,30 +143,6 @@
     </div>
     <button class="btn" type="submit">Save Internal Costs & Target Profit</button>
   </form>
-</section>
-
-<section class="card expense-payments-card" id="expense-payments" style="margin-top:14px">
-  <div class="admin-title"><div><div class="eyebrow">Business Expenses</div><h2 style="font-size:1.25rem">Expense Payments</h2><p class="muted">Mark fuel, delivery, chef and other business costs paid or not paid.</p></div></div>
-  <div class="expense-payment-list">
-    {% for expense in order.expenses %}{% set es = expense_payment_summary(expense) %}
-    <div class="expense-payment-row">
-      <div class="expense-payment-name"><strong>{{ expense.name }}</strong><span>Cost €{{ '%.2f'|format(es.amount) }}</span></div>
-      <div class="expense-payment-money"><span>Paid</span><strong>€{{ '%.2f'|format(es.paid_amount) }}</strong></div>
-      <div class="expense-payment-money"><span>Left</span><strong class="{{ 'money-positive' if es.balance <= 0 else 'money-warning' }}">€{{ '%.2f'|format(es.balance) }}</strong></div>
-      <div class="expense-payment-actions">
-        <form method="post" action="/admin/orders/{{ order.id }}/expenses/{{ expense.id }}/payment-status">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="paid"><input type="hidden" name="payment_date" value="{{ today.isoformat() }}">
-          <button class="btn small {{ 'secondary' if es.paid else '' }}" type="submit" {% if es.paid %}disabled{% endif %}>✓ Paid</button>
-        </form>
-        <form method="post" action="/admin/orders/{{ order.id }}/expenses/{{ expense.id }}/payment-status">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="unpaid"><input type="hidden" name="payment_date" value="{{ today.isoformat() }}">
-          <button class="btn secondary small" type="submit" {% if not es.paid_amount %}disabled{% endif %}>Not Paid</button>
-        </form>
-      </div>
-      {% if es.history %}<div class="expense-payment-history">{% for payment in es.history|reverse %}<span>{{ 'Reversed' if payment.amount < 0 else 'Paid' }} €{{ '%.2f'|format(payment.amount|abs) }} · {{ payment.payment_date.strftime('%d %b %Y') }}</span>{% endfor %}</div>{% elif es.paid and es.last_paid_date %}<div class="expense-payment-history"><span>Paid €{{ '%.2f'|format(es.paid_amount) }} · {{ es.last_paid_date.strftime('%d %b %Y') }}</span></div>{% endif %}
-    </div>
-    {% else %}<div class="empty">Add the expense amounts in Internal Costing first.</div>{% endfor %}
-  </div>
 </section>
 
 <section class="card" id="quote-confirmation" style="margin-top:14px">
@@ -208,7 +184,7 @@
     <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Kitchen sending unlocks only after the customer/order status is <strong>Confirmed</strong>.</p></div>
     <div class="actions">{% if can_send_kitchen %}<a class="btn secondary small" href="/admin/orders/{{ order.id }}/pdf">Download PDF</a><a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Print Sheet</a>{% else %}<button class="btn secondary small" type="button" disabled>Download PDF</button><button class="btn secondary small" type="button" disabled>Print Sheet</button>{% endif %}</div>
   </div>
-  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" target="_blank"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Printed in bold on the kitchen sheet.</span></div><button class="btn" type="submit" style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Open Kitchen WhatsApp</button></form>
+  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" target="_blank" data-kitchen-share-form data-pdf-url="/admin/orders/{{ order.id }}/pdf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Printed in bold on the kitchen sheet.</span></div><button class="btn" type="submit" style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Open Kitchen WhatsApp</button></form>
   {% if not can_send_kitchen %}<div class="help" style="margin-top:8px">Change the order status to Confirmed before sending anything to the kitchen.</div>{% endif %}
 </section>
 
@@ -222,7 +198,7 @@
 <script>
 (()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));form.querySelector('[data-apply-recommended-prices]')?.addEventListener('click',()=>{form.elements.adult_charge.value=Number(form.dataset.recommendedAdult||0).toFixed(2);form.elements.kid_charge.value=Number(form.dataset.recommendedKid||0).toFixed(2);calc();});calc();})();
 (()=>{
-  const folds=[];
+  const defaultOpen=new Set(['customer-event-details','selected-menu','requested-dishes','internal-finance','quote-confirmation']);
   document.querySelectorAll('.order-detail-page > section.card').forEach(section=>{
     let head=section.querySelector(':scope > .admin-title');
     let title=section.querySelector(':scope > h2');
@@ -234,16 +210,24 @@
     while(head.nextSibling)body.appendChild(head.nextSibling);
     section.appendChild(body);
     const btn=document.createElement('button');btn.type='button';btn.className='admin-fold-toggle';btn.setAttribute('aria-label','Open or close section');
-    const line=document.createElement('div');line.className='admin-fold-title-line';title.before(line);line.append(title,btn);
-    section.classList.add('admin-fold','is-collapsed');
+    head.appendChild(btn);
+    section.classList.add('admin-fold');
+    if(!defaultOpen.has(section.id))section.classList.add('is-collapsed');
     const sync=()=>{const closed=section.classList.contains('is-collapsed');btn.setAttribute('aria-expanded',String(!closed));btn.textContent=closed?'⌄':'⌃';};
     const toggle=()=>{section.classList.toggle('is-collapsed');sync();};
     btn.addEventListener('click',e=>{e.stopPropagation();toggle();});
-    line.addEventListener('click',e=>{if(e.target!==btn)toggle();});
-    section._syncAdminFold=sync;folds.push(section);sync();
+    head.addEventListener('click',e=>{if(e.target.closest('a,button,input,select,textarea,form'))return;toggle();});
+    section._syncAdminFold=sync;sync();
   });
   const openHash=()=>{const id=(location.hash||'').slice(1);if(!id)return;const section=document.getElementById(id);if(section?.classList.contains('admin-fold')){section.classList.remove('is-collapsed');section._syncAdminFold?.();setTimeout(()=>section.scrollIntoView({block:'start'}),20);}};
   openHash();window.addEventListener('hashchange',openHash);
+
+  const kitchenForm=document.querySelector('[data-kitchen-share-form]');
+  kitchenForm?.addEventListener('submit',()=>{
+    const url=kitchenForm.dataset.pdfUrl;
+    if(!url)return;
+    const a=document.createElement('a');a.href=url;a.download='';a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),1000);
+  });
 })();
 </script>
 {% endblock %}
