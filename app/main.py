@@ -565,37 +565,56 @@ def build_customer_share_text(order: QuoteRequest, biz: BusinessSettings, public
 
 
 def build_kitchen_share_text(order: QuoteRequest, pdf_url: str = "") -> str:
+    customer = getattr(order, "customer", None)
+    event_time = order.event_time.strftime("%I:%M %p").lstrip("0") if order.event_time else "—"
+    delivery_time = order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—"
+    address = ", ".join(x for x in [(order.address or "").strip(), (order.eircode or "").strip()] if x)
+
     lines = [
-        f"*KITCHEN ORDER — {order.order_number}*",
-        f"Event: {order.event_name}",
-        f"Date: {order.event_date.strftime('%d %b %Y')}",
-        f"Day: {event_day(order)}",
-        f"Event time: {order.event_time.strftime('%H:%M')}",
-        f"Delivery time: {order.delivery_time.strftime('%H:%M') if order.delivery_time else '—'}",
-        f"Guests: {order.adults} adults | {order.kids} kids | Total {order.adults + order.kids}",
+        "🍽️ *SPICE INDIA — KITCHEN SHEET*",
+        f"*Order:* {order.order_number}",
         "",
+        "*EVENT DETAILS*",
+        f"Date: {order.event_date.strftime('%d/%m/%Y')}",
+        f"Day: {event_day(order)}",
+        f"Event: {event_time}",
+        f"Delivery: {delivery_time}",
+        "",
+        "*CUSTOMER*",
+        f"Name: {getattr(customer, 'name', '') or '—'}",
+        f"Phone: {getattr(customer, 'phone', '') or '—'}",
+        f"Guests: {order.adults} adults + {order.kids} kids = {order.adults + order.kids}",
     ]
+    if order.event_name:
+        lines.append(f"Event: {order.event_name}")
+    if address:
+        lines.append(f"Address: {address}")
+    lines.extend(["", "*CONFIRMED MENU*"])
+
     for menu_name, categories in order_groups(order).items():
-        lines.append(f"*{menu_name.upper()}*")
+        if menu_name:
+            lines.extend(["", f"*{menu_name.upper()}*"])
         for cat_name, subs in categories.items():
-            lines.append(f"*{cat_name.upper()}*")
+            lines.append(f"_{cat_name.upper()}_")
             counter = 1
-            for _, items in subs.items():
+            for sub_name, items in subs.items():
+                if sub_name and sub_name != "Main Selection":
+                    lines.append(f"• {sub_name}")
                 for item in items:
                     lines.append(f"{counter}. {item.item_name}")
                     counter += 1
-            lines.append("")
-    approved = [dish for dish in order.requested_dishes if dish.status == "approved"]
+
+    approved = [dish for dish in (order.requested_dishes or []) if dish.status == "approved"]
     if approved:
-        lines.append("*APPROVED REQUESTED DISHES*")
+        lines.extend(["", "*APPROVED REQUESTED DISHES*"])
         for index, dish in enumerate(approved, 1):
             lines.append(f"{index}. {dish.name}")
-        lines.append("")
-    if order.kitchen_comments.strip():
-        lines.extend(["*KITCHEN COMMENTS*", f"*{order.kitchen_comments.strip().upper()}*", ""])
-    if pdf_url:
-        lines.extend(["*KITCHEN PDF*", pdf_url])
-    return "\n".join(lines)
+
+    comments = (order.kitchen_comments or "").strip()
+    if comments:
+        lines.extend(["", "⚠️ *KITCHEN COMMENTS*", f"*{comments.upper()}*"])
+
+    return "\n".join(lines).strip()
 
 
 def render(request: Request, db: Session, template: str, **context: Any):
@@ -3147,21 +3166,17 @@ def admin_order_kitchen_share(
     order.kitchen_comments = comments[:3000]
     order.kitchen_shared_at = datetime.utcnow()
     db.commit()
-    pdf_url = str(request.base_url).rstrip("/") + f"/kitchen/{order.public_token}.pdf"
-    message = build_kitchen_share_text(order, pdf_url)
+    message = build_kitchen_share_text(order)
     biz = business(db)
 
-    # Build 14.13: browsers cannot programmatically attach a PDF to a specific
-    # WhatsApp group deep-link. For the admin UI we therefore return share data
-    # so the browser can use the native Web Share API with the actual PDF file.
-    # This opens the phone share sheet with the PDF attached (WhatsApp can then
-    # be selected). The saved kitchen group link is retained as a direct fallback.
+    # Build 14.14: kitchen sharing is now a WhatsApp-ready text sheet rather
+    # than a PDF attachment. Mobile Web Share can hand this formatted message
+    # directly to WhatsApp; the saved group invite remains the fallback target.
     if "application/json" in (request.headers.get("accept") or ""):
         return JSONResponse({
             "ok": True,
-            "pdf_url": pdf_url,
-            "filename": f"Kitchen-{order.order_number}.pdf",
-            "share_text": f"Kitchen order {order.order_number}",
+            "share_title": f"Kitchen {order.order_number}",
+            "share_text": message,
             "group_url": biz.kitchen_whatsapp_group_url or "",
         })
 

@@ -1955,3 +1955,12 @@ body.menu-page{overflow-x:clip}
   .slip-comment-box{min-height:0!important;margin-top:2px!important;padding:4px!important;font-size:7.2pt!important;line-height:1.15!important}
   .kitchen-comments-print{padding:4px!important;margin-top:4px!important}
 }
+
+
+/* =========================================================
+   BUILD 14.14 — PUBLIC TYPOGRAPHY + WHATSAPP KITCHEN SHEET
+   ========================================================= */
+.public-site{font-family:"Plus Jakarta Sans",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.public-site h1,.public-site h2,.public-site h3,.public-site .brand,.public-site .btn,.public-site .category-tabs button,.public-site .dietary-primary button{font-family:"Plus Jakarta Sans",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:-.015em}
+.public-site h1,.public-site h2,.public-site h3{font-weight:800}
+.public-site .menu-item strong,.public-site .review-basket-copy strong{font-weight:800;letter-spacing:-.01em}

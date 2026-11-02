@@ -309,14 +309,19 @@ def test_build8_mobile_workflow():
         assert kitchen.status_code == 303
         assert kitchen.headers["location"].startswith("https://wa.me/")
         decoded = unquote(kitchen.headers["location"])
-        assert "/kitchen/" in decoded and ".pdf" in decoded
+        assert "SPICE INDIA — KITCHEN SHEET" in decoded
+        assert "CONFIRMED MENU" in decoded
+        assert "NO ONION IN 2 PORTIONS" in decoded
+        assert ".pdf" not in decoded
         kitchen_share_json = client.post("/admin/orders/1/kitchen-share", data={
             "csrf_token": csrf_from(client.get("/admin/orders/1").text),
             "kitchen_comments": "NO ONION IN 2 PORTIONS",
         }, headers={"Accept": "application/json"})
         assert kitchen_share_json.status_code == 200
-        assert kitchen_share_json.json()["filename"].endswith(".pdf")
-        assert "/kitchen/" in kitchen_share_json.json()["pdf_url"]
+        share_json = kitchen_share_json.json()
+        assert "SPICE INDIA — KITCHEN SHEET" in share_json["share_text"]
+        assert "CONFIRMED MENU" in share_json["share_text"]
+        assert "pdf_url" not in share_json and "filename" not in share_json
         kitchen_pdf = client.get(f"/kitchen/{b1['token']}.pdf")
         assert kitchen_pdf.status_code == 200
         assert kitchen_pdf.content.startswith(b"%PDF")
