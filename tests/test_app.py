@@ -69,6 +69,7 @@ def test_build8_mobile_workflow():
         assert 'data-cart-count' in menu_page.text
         assert 'data-menu-basket hidden' in menu_page.text
         assert 'Review Basket' in menu_page.text
+        assert 'data-item-details-dialog' in menu_page.text
         # The page is already the menu, so the primary header does not repeat a Menu link.
         header_html = menu_page.text.split('</header>', 1)[0]
         assert 'href="/menu">Menu</a>' not in header_html
@@ -132,9 +133,12 @@ def test_build8_mobile_workflow():
         assert "Contacted" not in orders.text
         assert "Negotiating" not in orders.text
         assert "Request From" in orders.text and "Request To" in orders.text
-        assert "Requested" in orders.text
+        assert "Search & Filters" in orders.text
+        assert "Payments" in orders.text
         dashboard = client.get("/admin")
-        assert "Requested" in dashboard.text
+        assert "Recent orders" in dashboard.text
+        assert 'data-payment-dialog' in dashboard.text
+        assert "Payment Received" in dashboard.text or "Unpaid" in dashboard.text or "Not Priced" in dashboard.text
 
         detail = client.get("/admin/orders/1")
         assert detail.status_code == 200
@@ -145,9 +149,11 @@ def test_build8_mobile_workflow():
         assert "data-apply-recommended-prices" in detail.text
         assert detail.text.index("Selected Menu") < detail.text.index("Quote & Confirmation")
         assert detail.text.index("Quote & Confirmation") < detail.text.index("Kitchen Sheet & Sharing")
-        assert detail.text.index("Kitchen Sheet & Sharing") < detail.text.index("Order Finance")
+        assert detail.text.index("Kitchen Sheet & Sharing") < detail.text.index(">Finance<")
         assert "Web Order Charge" not in detail.text
-        assert 'Set the status to Quoted first' in detail.text
+        assert 'Send Quote To Customer' in detail.text
+        assert '✓ Approve' in detail.text and '✕ Reject' in detail.text
+        assert 'data-finance-dialog' in detail.text and 'id="payments"' in detail.text
         assert 'Change the order status to Confirmed' in detail.text
         csrf = csrf_from(detail.text)
         details_update = client.post("/admin/orders/1/details", data={
@@ -236,11 +242,8 @@ def test_build8_mobile_workflow():
         }, follow_redirects=False)
         assert confirm_admin.status_code == 303
         detail = client.get("/admin/orders/1")
-        assert "Deposit Status" in detail.text and "Kitchen Sheet & Sharing" in detail.text
-        dep = client.post("/admin/orders/1/deposit", data={"csrf_token": csrf_from(detail.text), "deposit_status": "paid"}, follow_redirects=False)
-        assert dep.status_code == 303
-        detail = client.get("/admin/orders/1")
-        assert "✓ Paid" in detail.text
+        assert "Payments" in detail.text and "Kitchen Sheet & Sharing" in detail.text
+        assert "Deposit Status" not in detail.text
         kitchen = client.post("/admin/orders/1/kitchen-share", data={
             "csrf_token": csrf_from(detail.text),
             "kitchen_comments": "NO ONION IN 2 PORTIONS",

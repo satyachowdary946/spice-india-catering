@@ -1703,3 +1703,39 @@ body.menu-page{overflow-x:clip}
   .menu-basket-bar strong{font-size:.98rem}
 }
 \n\n/* =========================================================\n   BUILD 14.5 HOTFIX — search controls + browser back + orders payment shortcut\n   ========================================================= */\n.menu-search-row{grid-template-columns:minmax(0,1fr) 82px!important;column-gap:8px!important;align-items:center!important}\n.menu-search-field{min-width:0!important;align-self:center!important}\n.menu-search-tools{display:grid!important;grid-template-columns:38px 38px!important;grid-auto-rows:38px!important;gap:6px!important;align-items:center!important;justify-items:center!important;width:82px!important;height:38px!important;align-self:center!important}\n.menu-search-tool{box-sizing:border-box!important;width:38px!important;height:38px!important;min-width:38px!important;min-height:38px!important;max-width:38px!important;max-height:38px!important;margin:0!important;padding:0!important;border-radius:11px!important;line-height:1!important;align-self:center!important}\n.menu-search-tool>span{position:static!important;transform:none!important;display:block!important;line-height:1!important;font-size:1.05rem!important;color:inherit!important;pointer-events:none!important}\n.menu-search-tool.request>span{font-size:1.28rem!important;margin-top:-1px!important}\n.menu-search-mode .menu-search-row{grid-template-columns:38px minmax(0,1fr)!important}\n.menu-search-mode .menu-search-tools{display:none!important}\n.orders-payment-only{padding-top:7px!important}\n.orders-payment-only .payment-mini{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:34px!important;padding:7px 12px!important;border-radius:999px!important;text-decoration:none!important;font-weight:900!important}\n@media(max-width:620px){\n  .menu-search-row{grid-template-columns:minmax(0,1fr) 78px!important;column-gap:6px!important}\n  .menu-search-tools{grid-template-columns:36px 36px!important;grid-auto-rows:36px!important;width:78px!important;height:36px!important;gap:6px!important}\n  .menu-search-tool{width:36px!important;height:36px!important;min-width:36px!important;min-height:36px!important;max-width:36px!important;max-height:36px!important}\n  .menu-search-mode .menu-search-row{grid-template-columns:36px minmax(0,1fr)!important}\n}\n
+
+/* =========================================================
+   BUILD 14.7 — SIMPLE ADMIN + PUBLIC MENU DETAIL ACTIONS
+   ========================================================= */
+/* Public menu: centered toolbar controls and Details before + */
+.menu-search-tools{display:flex!important;align-items:center!important;justify-content:center!important;height:100%!important}
+.menu-search-tool{display:flex!important;align-items:center!important;justify-content:center!important}
+.menu-item-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;align-self:center}
+.item-details-btn{min-height:38px;padding:0 12px;border-radius:10px;border:1px solid #3b82f6;background:#0d2d55;color:#86baff;font-weight:900;font-size:.78rem;cursor:pointer}
+.item-details-btn:hover{background:#123d73;color:#fff;border-color:#60a5fa}
+.item-details-copy{font-size:1rem;line-height:1.65;color:#e4eeeb;white-space:pre-wrap}
+.dietary-card-neutral{border-left:3px solid #27cbb4}
+@media(min-width:700px){.menu-item.has-image{grid-template-columns:92px minmax(0,1fr) auto!important}.menu-item:not(.has-image){grid-template-columns:minmax(0,1fr) auto!important}}
+@media(max-width:699px){.menu-item.has-image{grid-template-columns:82px minmax(0,1fr) auto!important}.menu-item-actions{flex-direction:row;gap:6px}.item-details-btn{min-height:34px;padding:0 8px;font-size:.68rem}}
+
+/* Admin-only calmer visual system */
+.admin-body{--admin-accent:#2dd4bf;--admin-blue:#60a5fa;--admin-amber:#fbbf24;--admin-red:#f87171}
+.admin-body .card,.admin-body .list-card{border-color:#33433f;background:#101817}
+.admin-body .btn{border-radius:11px}.admin-body .btn:not(.secondary):not(.danger){background:#1fbba8;color:#061311;border-color:#4ce0cf}
+.admin-body .btn.secondary{background:#1b2523;border-color:#52615d;color:#eef5f3}.admin-body .btn.danger{background:#3a1a1a;border-color:#7e3434;color:#ffaaa5}
+.admin-body .metric{background:#15201e;border-color:#33433f}.admin-body .finance-stat{background:#15201e;border-color:#3b4b47}.admin-body .finance-stat.expense{background:#241817;border-color:#68413d}.admin-body .finance-stat.profit,.admin-body .finance-stat.positive{background:#0d2a24;border-color:#277764}
+
+/* Order sections fold to reduce visual overload */
+.admin-fold>.admin-title,.admin-fold>.admin-fold-head{margin-bottom:0}.admin-fold-toggle{margin-left:auto;flex:0 0 auto;width:40px;height:40px;border:1px solid #50605c;background:#17211f;color:#dce8e5;border-radius:10px;font-size:1.25rem;font-weight:900;cursor:pointer}.admin-fold-body{margin-top:14px}.admin-fold.is-collapsed .admin-fold-body{display:none}.admin-fold.is-collapsed{padding-bottom:16px}.admin-fold.is-collapsed>.admin-title,.admin-fold.is-collapsed>.admin-fold-head{margin-bottom:0}
+
+/* Requested dishes — no white panel */
+.requested-admin-card{background:#101817!important;color:#eef5f3!important}.requested-admin-row,.requested-admin-row-dark{background:#16201e!important;border:1px solid #3d4d49!important;color:#eef5f3!important;grid-template-columns:minmax(180px,1fr) minmax(220px,1.3fr) auto!important}.requested-admin-row strong,.requested-admin-row label{color:#eef5f3!important}.requested-admin-row .help{color:#aab8b4!important}.requested-decision-buttons{display:flex;gap:8px;align-items:end}.approve-request{background:#123d31!important;color:#7cf0c5!important;border-color:#2c8c6e!important}.reject-request{background:#3a1d1b!important;color:#ffaaa5!important;border-color:#8c4641!important}
+@media(max-width:800px){.requested-admin-row,.requested-admin-row-dark{grid-template-columns:1fr!important}.requested-decision-buttons{width:100%}.requested-decision-buttons .btn{flex:1}}
+
+/* Unified payment + finance dialogs */
+.admin-payment-dialog,.admin-finance-dialog{width:min(94vw,620px);padding:0;border:1px solid #50605c;border-radius:18px;background:#0f1715;color:#fff}.admin-payment-dialog::backdrop,.admin-finance-dialog::backdrop{background:rgba(0,0,0,.72)}.admin-payment-dialog-card,.admin-finance-dialog-card{padding:20px}.payment-dialog-summary,.payment-order-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.payment-dialog-summary>div,.payment-order-summary>div{padding:12px;border:1px solid #3d4d49;border-radius:12px;background:#15201e}.payment-dialog-summary span,.payment-order-summary span{display:block;color:#aab8b4;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.payment-dialog-summary strong,.payment-order-summary strong{display:block;margin-top:5px;font-size:1.15rem}.payment-dialog-summary .balance strong,.payment-order-summary>div:last-child strong{color:#fbbf24}.payment-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}.payment-badge-button{cursor:pointer}.payment-mini{cursor:pointer}.admin-finance-dialog-card{max-height:88vh;overflow:auto}
+@media(max-width:620px){.payment-dialog-summary,.payment-order-summary{grid-template-columns:1fr}.payment-dialog-actions{flex-direction:column}.payment-dialog-actions>*{width:100%}}
+
+.quote-send-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,.7fr) auto;gap:10px;align-items:end}.quote-send-primary{min-height:52px;font-size:1rem}.quote-status-field{margin:0}
+@media(max-width:760px){.quote-send-row{grid-template-columns:1fr}.quote-send-row .btn{width:100%}}
+.admin-filter-details summary{font-size:1rem;font-weight:900;cursor:pointer;color:#dce8e5}

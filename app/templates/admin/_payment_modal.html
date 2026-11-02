@@ -1,0 +1,23 @@
+<dialog class="admin-payment-dialog" data-payment-dialog aria-labelledby="payment-dialog-title">
+  <form method="post" class="admin-payment-dialog-card" data-payment-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="return_to" value="" data-payment-return>
+    <div class="admin-title payment-dialog-head">
+      <div><div class="eyebrow" data-payment-order-label>Payment</div><h2 id="payment-dialog-title">Record Payment Received</h2></div>
+      <button class="icon-close" type="button" data-close-payment aria-label="Close">×</button>
+    </div>
+    <div class="payment-dialog-summary">
+      <div><span>Total Sale</span><strong data-payment-total>€0.00</strong></div>
+      <div><span>Payment Received</span><strong data-payment-received>€0.00</strong></div>
+      <div class="balance"><span>Need To Pay</span><strong data-payment-balance>€0.00</strong></div>
+    </div>
+    <div class="admin-form-grid two payment-dialog-fields">
+      <div class="field"><label>Payment Date</label><input name="payment_date" type="date" value="{{ today.isoformat() }}" required></div>
+      <div class="field"><label>Enter Amount Paying Now (€)</label><input name="amount" data-payment-amount type="number" min="0.01" step="0.01" required placeholder="0.00"></div>
+      <div class="field"><label>Method (Optional)</label><select name="method"><option value="">Choose method</option><option>Cash</option><option>Card</option><option>Bank Transfer</option><option>Other</option></select></div>
+      <div class="field"><label>Reference (Optional)</label><input name="reference" maxlength="160"></div>
+    </div>
+    <input type="hidden" name="note" value="">
+    <div class="payment-dialog-actions"><button class="btn secondary" type="button" data-close-payment>Cancel</button><button class="btn" type="submit">Save Payment</button></div>
+  </form>
+</dialog>

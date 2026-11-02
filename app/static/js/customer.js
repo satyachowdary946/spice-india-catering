@@ -19,6 +19,20 @@ function safeHeadingColor(v){const s=String(v||'').trim();return /^#[0-9a-f]{6}$
 function formatMenuPrice(v){const n=Number(v);return Number.isFinite(n)?`€${n.toFixed(2)}`:'';}
 function dayFromDate(value){if(!value)return '';const d=new Date(value+'T12:00:00');return Number.isFinite(d.getTime())?d.toLocaleDateString('en-IE',{weekday:'long'}):'';}
 
+
+async function submitCurrentDraft(button,errorBox){
+  const current=DraftStore.load();
+  if(!current.item_ids.length&&!current.requested_dishes.length)throw new Error('Please choose at least one menu item or requested dish.');
+  const editToken=localStorage.getItem('cateringEditOrderToken');
+  const endpoint=editToken?'/api/orders/'+encodeURIComponent(editToken)+'/menu-update':'/api/quotes';
+  const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});
+  const raw=await res.text();let body={};
+  try{body=raw?JSON.parse(raw):{};}catch{body={ok:false,error:'We could not send your quote request. Please try again.'};}
+  if(!res.ok||!body.ok){const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];throw new Error(errors.length?errors.join(' '):(body.error||'Could not send quote.'));}
+  localStorage.setItem('lastCateringOrderToken',body.token);localStorage.removeItem('cateringEditOrderToken');DraftStore.clear();
+  location.href='/orders/'+body.token+(editToken?'?updated=1':'?submitted=1');
+}
+
 function initDetailsForm(){
   const form=document.querySelector('[data-details-form]'); if(!form) return;
   const draft=DraftStore.load();
@@ -58,7 +72,9 @@ function initDetailsForm(){
     if((Number(details.adults)||0)+(Number(details.kids)||0)<1){fail('Enter at least one guest in Adults or Kids.','adults');return;}
     const selectedDate=new Date(`${details.event_date}T12:00:00`);
     if(!Number.isFinite(selectedDate.getTime())||selectedDate.getTime()<earliestEventDate().getTime()){fail('Please choose the earliest available date shown or a later date. Next-day catering requests are allowed.','event_date');return;}
-    DraftStore.setDetails(details); location.href=form.dataset.next||'/menu';
+    DraftStore.setDetails(details);
+    if(form.dataset.finalSubmit==='true'){const submit=form.querySelector('button[type=submit]'),original=submit?.textContent;if(submit){submit.disabled=true;submit.textContent='Sending Quote…';}submitCurrentDraft(submit,errorBox).catch(err=>{if(errorBox){errorBox.textContent=err.message||'Could not send quote.';errorBox.hidden=false;errorBox.scrollIntoView({behavior:'smooth',block:'center'});}if(submit){submit.disabled=false;submit.textContent=original||'Send Quote Request';}});return;}
+    location.href=form.dataset.next||'/menu';
   });
 }
 
@@ -138,6 +154,8 @@ function initMenu(){
   document.querySelector('[data-close-category-panel]')?.addEventListener('click',()=>categoryDialog?.close());
   categoryDialog?.addEventListener('click',e=>{if(e.target===categoryDialog)categoryDialog.close();});
   document.querySelectorAll('[data-close-combo]').forEach(btn=>btn.addEventListener('click',()=>comboDialog?.close()));
+  document.querySelectorAll('[data-close-item-details]').forEach(btn=>btn.addEventListener('click',()=>document.querySelector('[data-item-details-dialog]')?.close()));
+  document.querySelector('[data-item-details-dialog]')?.addEventListener('click',e=>{if(e.target.matches('[data-item-details-dialog]'))e.target.close();});
   comboDialog?.addEventListener('click',e=>{if(e.target===comboDialog)comboDialog.close();});
 
   function visibleMenus(){return selectedMenu===null?data:data.filter(m=>m.id===selectedMenu);}
@@ -150,11 +168,12 @@ function initMenu(){
         let targetSub=cat.subs.get(sub.name);
         if(!targetSub){targetSub={id:sub.id,name:sub.name,items:new Map(),sort_order:sub.sort_order,heading_color:sub.heading_color||'#94A3B8'};cat.subs.set(sub.name,targetSub);}
         sub.items.forEach(item=>{
-          const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
+          const neutralCategory=['welcome drink','desserts','add ons'].includes(String(category.name||'').trim().toLowerCase());
+          const matchesDiet=neutralCategory||selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
           const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name).toLowerCase();
           const matchesSearch=!searchTerm||haystack.includes(searchTerm);
           if(!matchesDiet||!matchesSearch)return;
-          if(!targetSub.items.has(item.id)){targetSub.items.set(item.id,{...item,menu:menu.name});if(item.heading_color)targetSub.heading_color=item.heading_color;}
+          if(!targetSub.items.has(item.id)){targetSub.items.set(item.id,{...item,menu:menu.name,category:category.name,subcategory:sub.name});if(item.heading_color)targetSub.heading_color=item.heading_color;}
         });
       });
     }));
@@ -238,7 +257,7 @@ function initMenu(){
       content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
         const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
       }));
-      updateBasketBar();
+      bindItemDetails();updateBasketBar();
       return;
     }
     if(!activeCategory||!cats.some(c=>c.id===activeCategory))activeCategory=cats[0]?.id||null;
@@ -301,9 +320,15 @@ function initMenu(){
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
       const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
     }));
-    updateBasketBar();
+    bindItemDetails();updateBasketBar();
   }
-  function itemCard(i,selected){const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} dietary-card-${escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${i.description?`<div class="menu-item-desc">${escapeHtml(i.description)}</div>`:''}<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div></div><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></article>`;}
+  function itemCard(i,selected){
+    const neutral=['welcome drink','desserts','add ons'].includes(String(i.category||'').trim().toLowerCase());
+    const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';
+    const dietary=neutral?'':`<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div>`;
+    return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} ${neutral?'dietary-card-neutral':'dietary-card-'+escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${dietary}</div><div class="menu-item-actions"><button type="button" class="item-details-btn" data-item-details="${i.id}" aria-label="View details for ${escapeHtml(i.name)}">Details</button><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></div></article>`;
+  }
+  function bindItemDetails(){content.querySelectorAll('[data-item-details]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemDetails));if(!i)return;const d=document.querySelector('[data-item-details-dialog]');if(!d)return;d.querySelector('[data-item-details-title]').textContent=i.name;d.querySelector('[data-item-details-copy]').textContent=i.description||'Food description will be added soon.';d.showModal();}));}
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice;activeCategory=null;render();if(b.closest('[data-menu-filter-dialog]'))filterDialog?.close();}));
   searchInput?.addEventListener('focus',enterSearchMode);
@@ -318,21 +343,15 @@ function updateBasketBar(){const n=DraftStore.load().item_ids.length;document.qu
 
 function initReview(){
   const root=document.querySelector('[data-review-root]');if(!root)return;
-  const detailsBox=document.querySelector('[data-review-details]'),itemsBox=document.querySelector('[data-review-items]'),requestsBox=document.querySelector('[data-review-requests]'),submit=document.querySelector('[data-submit-quote]'),notesInput=document.querySelector('[data-customer-notes]');
-  const draft=DraftStore.load();if(!draft.details?.name){location.replace('/order?next=/review');return;}const d=draft.details;
-  detailsBox.innerHTML=`<div class="order-meta"><div class="meta-row"><strong>Name</strong><span>${escapeHtml(d.name)}</span></div><div class="meta-row"><strong>Phone</strong><span>${escapeHtml(d.phone)}</span></div><div class="meta-row"><strong>WhatsApp</strong><span>${escapeHtml(d.whatsapp)}</span></div><div class="meta-row"><strong>Email</strong><span>${escapeHtml(d.email)}</span></div><div class="meta-row"><strong>Event</strong><span>${escapeHtml(d.event_name)}</span></div><div class="meta-row"><strong>Date</strong><span>${escapeHtml(d.event_date)}</span></div><div class="meta-row"><strong>Day</strong><span>${escapeHtml(d.event_day||dayFromDate(d.event_date))}</span></div><div class="meta-row"><strong>Event Time</strong><span>${escapeHtml(d.event_time)}</span></div><div class="meta-row"><strong>Delivery Time</strong><span>${escapeHtml(d.delivery_time)}</span></div><div class="meta-row"><strong>Guests</strong><span>${escapeHtml(d.adults)} adults + ${escapeHtml(d.kids)} kids</span></div><div class="meta-row"><strong>Address</strong><span>${escapeHtml(d.address)}, ${escapeHtml(d.eircode)}</span></div></div>`;
+  const itemsBox=document.querySelector('[data-review-items]'),requestsBox=document.querySelector('[data-review-requests]'),notesInput=document.querySelector('[data-customer-notes]'),continueBtn=document.querySelector('[data-continue-details]');
+  const draft=DraftStore.load();
   if(notesInput){notesInput.value=draft.customer_notes||'';notesInput.addEventListener('input',()=>DraftStore.setCustomerNotes(notesInput.value));}
-  const renderRequests=state=>{const requests=state.requested_dishes||[];requestsBox.innerHTML=requests.length?`<div class="requested-dish-list">${requests.map(name=>`<div class="requested-dish-row"><strong>${escapeHtml(name)}</strong><span class="request-status pending">Needs Confirmation</span></div>`).join('')}</div>`:'<div class="empty">No dishes requested.</div>';};
-  const updateAvailability=state=>{if(submit)submit.disabled=!((state.item_ids||[]).length||(state.requested_dishes||[]).length);};
-  renderRequests(draft);updateAvailability(draft);renderReviewItems(draft.item_ids,itemsBox,submit,draft.requested_dishes.length);
-  window.addEventListener('draftchange',e=>{const state=e.detail||DraftStore.load();renderRequests(state);updateAvailability(state);renderReviewItems(state.item_ids||[],itemsBox,submit,(state.requested_dishes||[]).length);});
-  submit?.addEventListener('click',async()=>{
-    const current=DraftStore.load();if(!current.item_ids.length&&!current.requested_dishes.length)return;submit.disabled=true;const original=submit.textContent;submit.textContent='Sending Quote…';const errorBox=document.querySelector('[data-submit-error]');errorBox.hidden=true;
-    try{const editToken=localStorage.getItem('cateringEditOrderToken');const endpoint=editToken?'/api/orders/'+encodeURIComponent(editToken)+'/menu-update':'/api/quotes';const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});const raw=await res.text();let body={};try{body=raw?JSON.parse(raw):{};}catch{body={ok:false,error:res.ok?'Unexpected server response. Please try again.':'We could not send your quote request. Please try again. If the problem continues, contact Spice India Catering.'};}if(!res.ok||!body.ok){const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];throw new Error(errors.length?errors.join(' '):(body.error||'Could not send quote.'));}localStorage.setItem('lastCateringOrderToken',body.token);localStorage.removeItem('cateringEditOrderToken');DraftStore.clear();location.href='/orders/'+body.token+(editToken?'?updated=1':'?submitted=1');}
-    catch(err){errorBox.textContent=err.message||'Could not send quote. Try again.';errorBox.hidden=false;errorBox.insertAdjacentHTML('beforeend',' <a class="error-fix-link" href="/order?next=/review">Edit Event Details</a>');errorBox.scrollIntoView({behavior:'smooth',block:'center'});submit.disabled=false;submit.textContent=original;}
-  });
+  const renderRequests=state=>{const requests=state.requested_dishes||[];requestsBox.innerHTML=requests.length?`<div class="requested-dish-list">${requests.map(name=>`<div class="requested-dish-row"><strong>${escapeHtml(name)}</strong><span class="request-status pending">Needs Confirmation</span></div>`).join('')}</div>`:'<div class="empty">No extra dishes requested.</div>';};
+  const updateAvailability=state=>{if(continueBtn)continueBtn.disabled=!((state.item_ids||[]).length||(state.requested_dishes||[]).length);};
+  renderRequests(draft);updateAvailability(draft);renderReviewItems(draft.item_ids,itemsBox,null,draft.requested_dishes.length);
+  window.addEventListener('draftchange',e=>{const state=e.detail||DraftStore.load();renderRequests(state);updateAvailability(state);renderReviewItems(state.item_ids||[],itemsBox,null,(state.requested_dishes||[]).length);});
+  continueBtn?.addEventListener('click',()=>{const state=DraftStore.load();if(!(state.item_ids.length||state.requested_dishes.length))return;location.href='/order?next=/submit';});
 }
-
 async function renderReviewItems(ids,box,submit,requestedCount=0){
   if(!ids.length){box.innerHTML='<div class="empty">No standard menu items selected. <a href="/menu"><strong>Choose Menu Items</strong></a></div>';if(submit)submit.disabled=requestedCount===0;return;}
   try{const res=await fetch('/api/menu-items?ids='+encodeURIComponent(ids.join(','))),items=await res.json(),groups={};items.forEach(i=>{(((groups[i.menu]??={})[i.category]??={})[i.subcategory]??=[]).push(i)});

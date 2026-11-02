@@ -265,6 +265,8 @@ async def notify_customer_quote_email(
     confirm_url: str,
     business_phone: str = "",
     address: str = "",
+    requested_dishes: list[dict[str, str]] | None = None,
+    updated: bool = False,
 ) -> tuple[bool, str]:
     if not _customer_email_configured():
         return False, "Resend is not configured."
@@ -272,11 +274,21 @@ async def notify_customer_quote_email(
         return False, "Customer email is missing."
 
     safe = lambda value: html.escape(str(value or ""))
+    requested_html = ""
+    if requested_dishes:
+        rows = []
+        for dish in requested_dishes:
+            status = str(dish.get("status") or "pending").replace("_", " ").title()
+            reply = str(dish.get("reply") or "").strip()
+            rows.append(f'<li style="margin:7px 0"><strong>{safe(dish.get("name"))}</strong> — {safe(status)}{f" · {safe(reply)}" if reply else ""}</li>')
+        requested_html = '<div style="margin:20px 0"><strong>Your requested dishes</strong><ul style="padding-left:20px">' + ''.join(rows) + '</ul></div>'
+    intro = "Your Spice India Catering quote has been updated. Please review the updated event details, menu and pricing below before confirming again." if updated else "Great news ✨ — your Spice India Catering quote is ready. We would be delighted to be part of your event. Please review the details below and confirm when everything looks right."
     body = f"""
       <p style="font-size:16px;line-height:1.7;margin-top:0">Hi <strong>{safe(customer_name)}</strong>,</p>
-      <p style="font-size:16px;line-height:1.7">Great news ✨ — your Spice India Catering quote is ready. We would be delighted to be part of your event. Please review the details below and confirm when everything looks right.</p>
+      <p style="font-size:16px;line-height:1.7">{safe(intro)}</p>
       {_details_table(order_number, event_name, event_date, event_day, event_time, delivery_time, adults, kids, address=address)}
       <div style="margin:20px 0"><strong>Selected menu</strong>{_menu_html(menu_items)}</div>
+      {requested_html}
       <div style="background:#f2f7f5;border:1px solid #d8e4e0;border-radius:14px;padding:18px;margin:20px 0">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
           <tr><td style="padding:6px 0">Adult charge · {adults} guests</td><td align="right" style="font-weight:800">€{safe(adult_charge)} / head</td></tr>
@@ -292,8 +304,10 @@ async def notify_customer_quote_email(
       {f'<p style="color:#5f6c68">Questions? Contact our catering team on {safe(business_phone)}.</p>' if business_phone else ''}
       <p style="margin-top:22px">We look forward to making your event delicious.<br><strong>Spice India Catering Team</strong></p>
     """
-    email_html = _email_shell("Your catering quote is ready ✨", f"Review and confirm {order_number}", body)
-    return await _send_email(to_email, f"✨ Your Spice India Catering quote is ready — {order_number}", email_html)
+    title = "Your catering quote is updated ✨" if updated else "Your catering quote is ready ✨"
+    subject = f"✨ Your Spice India Catering quote is updated — {order_number}" if updated else f"✨ Your Spice India Catering quote is ready — {order_number}"
+    email_html = _email_shell(title, f"Review and confirm {order_number}", body)
+    return await _send_email(to_email, subject, email_html)
 
 
 async def notify_customer_status_email(

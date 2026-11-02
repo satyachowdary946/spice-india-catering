@@ -1534,7 +1534,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     return render(
         request, db, "admin/dashboard.html", admin=admin, status_counts=status_counts,
         upcoming=upcoming, recent=recent, finance_by_order=finance_by_order,
-        whatsapp_configured=whatsapp_cloud_configured()
+        whatsapp_configured=whatsapp_cloud_configured(), today=date.today()
     )
 
 
@@ -2451,7 +2451,7 @@ def admin_orders(
         request, db, "admin/orders.html", admin=admin, orders=orders, q=q,
         selected_status=status, statuses=FILTER_STATUSES,
         request_from=request_from, request_to=request_to, date_error=date_error,
-        finance_by_order=finance_by_order,
+        finance_by_order=finance_by_order, today=date.today(),
     )
 
 
@@ -2484,7 +2484,7 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
         catalog_items=catalog_items,
         can_share_quote=(order.status != "new" and order.final_price is not None),
-        can_send_kitchen=(order.status == "confirmed"),
+        can_send_kitchen=(order.status == "confirmed"), today=date.today(),
     )
 
 
@@ -2616,7 +2616,8 @@ def admin_order_details_update(
 async def admin_order_update(
     order_id: int,
     request: Request,
-    status: str = Form(...),
+    status: str = Form("new"),
+    action: str = Form("save_status"),
     adult_charge: str = Form(""),
     kid_charge: str = Form(""),
     delivery_service_charge: str = Form(""),
@@ -2632,9 +2633,11 @@ async def admin_order_update(
     order = db.scalar(
         select(QuoteRequest)
         .where(QuoteRequest.id == order_id)
-        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
     )
     if not order: raise HTTPException(status_code=404)
+    if action == "send_quote" and order.status != "voided":
+        status = "quoted"
     if order.status == "voided":
         status = "voided"
     elif status not in EDITABLE_STATUSES:
@@ -2703,7 +2706,7 @@ async def admin_order_update(
     db.commit()
 
     should_email = status in {"quoted", "confirmed", "completed", "cancelled"} and (
-        old_status != status or (status == "quoted" and pricing_changed)
+        action == "send_quote" or old_status != status or (status == "quoted" and pricing_changed)
     )
     if should_email:
         if status == "quoted":
@@ -2728,6 +2731,8 @@ async def admin_order_update(
                 public_order_url(request, order.public_token),
                 business(db).phone,
                 f"{order.address}, {order.eircode}".strip(", "),
+                requested_dishes=[{"name": d.name, "status": d.status, "reply": d.admin_response} for d in order.requested_dishes],
+                updated=bool(order.quote_email_sent_at),
             )
         else:
             sent, message = await send_customer_status_email_for_order(order, request, db, status)
@@ -3041,7 +3046,7 @@ async def admin_send_quote_email(
     order = db.scalar(
         select(QuoteRequest)
         .where(QuoteRequest.id == order_id)
-        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.requested_dishes))
     )
     if not order:
         raise HTTPException(status_code=404)
@@ -3075,6 +3080,8 @@ async def admin_send_quote_email(
         public_order_url(request, order.public_token),
         business(db).phone,
         f"{order.address}, {order.eircode}".strip(", "),
+        requested_dishes=[{"name": d.name, "status": d.status, "reply": d.admin_response} for d in order.requested_dishes],
+        updated=bool(order.quote_email_sent_at),
     )
     if not sent:
         return RedirectResponse(f"/admin/orders/{order_id}?toast={quote('Quote email was not sent: ' + message)}&toast_type=error", status_code=303)
@@ -3117,7 +3124,7 @@ def admin_order_kitchen_share(
     message = build_kitchen_share_text(order, pdf_url)
     biz = business(db)
     if biz.kitchen_whatsapp_group_url:
-        return RedirectResponse(f"/admin/orders/{order_id}/kitchen-share-ready", status_code=303)
+        return RedirectResponse(biz.kitchen_whatsapp_group_url, status_code=303)
     target = normalise_whatsapp_number(biz.kitchen_whatsapp)
     share_url = (f"https://wa.me/{target}?text=" if target else "https://wa.me/?text=") + quote(message)
     return RedirectResponse(share_url, status_code=303)
@@ -3205,7 +3212,7 @@ async def customer_confirm_order(token: str, request: Request, db: Session = Dep
             order.order_number, order.customer.name, order.event_name,
             order.event_date.strftime("%d %b %Y"), event_day(order), order.adults + order.kids,
             f"{p['total']:.2f}", admin_order_url(request, order.id),
-            f"{base}/admin/orders/{order.id}/print", f"{base}/admin/orders/{order.id}#kitchen-actions",
+            f"{base}/admin/orders/{order.id}/print", f"{base}/admin/orders/{order.id}/kitchen-quick-share",
         )
         await send_customer_status_email_for_order(order, request, db, "confirmed")
     return RedirectResponse(f"/orders/{token}?confirmed=1", status_code=303)
@@ -3922,6 +3929,7 @@ def admin_transactions(
         total_net_profit_percent=total_net_profit_percent,
         total_outstanding=total_outstanding,
         highest_paid=highest_paid,
+        today=date.today(),
     )
 
 
@@ -4007,6 +4015,7 @@ def admin_payment_add(
     method: str = Form(""),
     reference: str = Form(""),
     note: str = Form(""),
+    return_to: str = Form(""),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -4024,6 +4033,13 @@ def admin_payment_add(
         paid_on = date.fromisoformat(payment_date)
     except Exception:
         return RedirectResponse(f"/admin/transactions/{order_id}?error=Enter+a+valid+payment+amount+and+date", status_code=303)
+    current_finance = finance_summary(order)
+    if order.final_price is None:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Set+the+customer+price+before+recording+payment", status_code=303)
+    if current_finance["balance_due"] <= 0:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=This+order+is+already+fully+paid", status_code=303)
+    if amount_value > current_finance["balance_due"]:
+        return RedirectResponse(f"/admin/transactions/{order_id}?error=Payment+cannot+be+more+than+the+remaining+balance", status_code=303)
     db.add(Payment(
         order_id=order_id,
         amount=amount_value,
@@ -4033,7 +4049,11 @@ def admin_payment_add(
         note=note.strip()[:1000],
     ))
     db.commit()
-    return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#payments", status_code=303)
+    target = return_to.strip()
+    if not target.startswith("/admin") or "://" in target:
+        target = f"/admin/transactions/{order_id}"
+    separator = "&" if "?" in target else "?"
+    return RedirectResponse(f"{target}{separator}toast=Payment+received+saved&toast_type=success", status_code=303)
 
 
 @app.post("/admin/payments/{payment_id}/delete")
@@ -4286,7 +4306,7 @@ def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> byt
 
     summary_rows = [
         ["Orders", str(data["order_count"]), "Unique customers", str(data["customer_count"])],
-        ["Total sales", f"€{data['booked_revenue']:.2f}", "Collected", f"€{data['collected']:.2f}"],
+        ["Total sales", f"€{data['booked_revenue']:.2f}", "Payment Received", f"€{data['collected']:.2f}"],
         ["Food cost", f"€{data['food_cost']:.2f}", "Other expenses", f"€{data['operating_expenses']:.2f}"],
         ["Total cost", f"€{data['expenses']:.2f}", "Outstanding", f"€{data['outstanding']:.2f}"],
         ["Net profit", f"€{data['net_profit']:.2f}", "Net profit %", f"{data['net_profit_percent']:.2f}%"],

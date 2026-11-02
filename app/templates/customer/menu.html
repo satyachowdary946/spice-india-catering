@@ -89,6 +89,15 @@
     </div>
   </dialog>
 
+
+  <dialog class="request-dialog item-details-dialog" data-item-details-dialog aria-labelledby="item-details-title">
+    <div class="request-dialog-card">
+      <div class="admin-title"><div><div class="eyebrow">Food Details</div><h2 id="item-details-title" data-item-details-title>Dish Details</h2></div><button class="icon-close" type="button" data-close-item-details aria-label="Close">×</button></div>
+      <p class="item-details-copy" data-item-details-copy></p>
+      <div class="request-dialog-actions"><button class="btn secondary" type="button" data-close-item-details>Close</button></div>
+    </div>
+  </dialog>
+
   <script id="menu-data" type="application/json">{{ menu_data | tojson }}</script>
 </main>
 {% endblock %}
