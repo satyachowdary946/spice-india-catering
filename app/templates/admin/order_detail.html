@@ -184,7 +184,7 @@
     <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Kitchen sending unlocks only after the customer/order status is <strong>Confirmed</strong>.</p></div>
     <div class="actions">{% if can_send_kitchen %}<a class="btn secondary small" href="/admin/orders/{{ order.id }}/pdf">Download PDF</a><a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Print Sheet</a>{% else %}<button class="btn secondary small" type="button" disabled>Download PDF</button><button class="btn secondary small" type="button" disabled>Print Sheet</button>{% endif %}</div>
   </div>
-  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" target="_blank" data-kitchen-share-form data-pdf-url="/admin/orders/{{ order.id }}/pdf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Printed in bold on the kitchen sheet.</span></div><button class="btn" type="submit" style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Open Kitchen WhatsApp</button></form>
+  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" data-kitchen-share-form data-pdf-url="/admin/orders/{{ order.id }}/pdf"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Printed in bold on the kitchen sheet.</span></div><button class="btn" type="submit" data-kitchen-share-btn style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Share To Kitchen WhatsApp</button><div class="help" data-kitchen-share-status style="margin-top:8px">On supported phones, the PDF is attached to the native share sheet so you can choose WhatsApp and the kitchen group.</div></form>
   {% if not can_send_kitchen %}<div class="help" style="margin-top:8px">Change the order status to Confirmed before sending anything to the kitchen.</div>{% endif %}
 </section>
 
@@ -223,10 +223,41 @@
   openHash();window.addEventListener('hashchange',openHash);
 
   const kitchenForm=document.querySelector('[data-kitchen-share-form]');
-  kitchenForm?.addEventListener('submit',()=>{
-    const url=kitchenForm.dataset.pdfUrl;
-    if(!url)return;
-    const a=document.createElement('a');a.href=url;a.download='';a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),1000);
+  kitchenForm?.addEventListener('submit',async e=>{
+    e.preventDefault();
+    if(!kitchenForm.reportValidity())return;
+    const btn=kitchenForm.querySelector('[data-kitchen-share-btn]');
+    const status=kitchenForm.querySelector('[data-kitchen-share-status]');
+    const original=btn?.textContent||'Generate PDF & Share To Kitchen WhatsApp';
+    if(btn){btn.disabled=true;btn.textContent='Preparing Kitchen PDF…';}
+    if(status)status.textContent='Generating the kitchen PDF…';
+    try{
+      const response=await fetch(kitchenForm.action,{method:'POST',body:new FormData(kitchenForm),headers:{'Accept':'application/json'},credentials:'same-origin'});
+      if(!response.ok)throw new Error((await response.text())||'Kitchen share could not be prepared.');
+      const data=await response.json();
+      const pdfResponse=await fetch(data.pdf_url,{credentials:'same-origin',cache:'no-store'});
+      if(!pdfResponse.ok)throw new Error('Kitchen PDF could not be generated.');
+      const blob=await pdfResponse.blob();
+      const file=new File([blob],data.filename||'Kitchen-Order.pdf',{type:'application/pdf'});
+      const sharePayload={files:[file],title:data.share_text||'Kitchen Order',text:data.share_text||'Kitchen Order'};
+
+      if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
+        if(status)status.textContent='PDF ready — choose WhatsApp and your kitchen group.';
+        await navigator.share(sharePayload);
+        if(status)status.textContent='Kitchen PDF shared.';
+      }else{
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);a.download=data.filename||'Kitchen-Order.pdf';a.style.display='none';
+        document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
+        if(data.group_url){window.open(data.group_url,'_blank','noopener');if(status)status.textContent='PDF downloaded. Kitchen WhatsApp group opened — attach the downloaded PDF.';}
+        else if(status)status.textContent='PDF downloaded. Share it to the kitchen WhatsApp group.';
+      }
+    }catch(err){
+      if(err?.name==='AbortError'){if(status)status.textContent='Sharing cancelled. The PDF was not sent.';}
+      else {if(status)status.textContent=err?.message||'Kitchen PDF sharing failed.';}
+    }finally{
+      if(btn){btn.disabled=false;btn.textContent=original;}
+    }
   });
 })();
 </script>

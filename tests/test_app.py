@@ -310,6 +310,13 @@ def test_build8_mobile_workflow():
         assert kitchen.headers["location"].startswith("https://wa.me/")
         decoded = unquote(kitchen.headers["location"])
         assert "/kitchen/" in decoded and ".pdf" in decoded
+        kitchen_share_json = client.post("/admin/orders/1/kitchen-share", data={
+            "csrf_token": csrf_from(client.get("/admin/orders/1").text),
+            "kitchen_comments": "NO ONION IN 2 PORTIONS",
+        }, headers={"Accept": "application/json"})
+        assert kitchen_share_json.status_code == 200
+        assert kitchen_share_json.json()["filename"].endswith(".pdf")
+        assert "/kitchen/" in kitchen_share_json.json()["pdf_url"]
         kitchen_pdf = client.get(f"/kitchen/{b1['token']}.pdf")
         assert kitchen_pdf.status_code == 200
         assert kitchen_pdf.content.startswith(b"%PDF")

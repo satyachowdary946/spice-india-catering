@@ -1702,8 +1702,6 @@ body.menu-page{overflow-x:clip}
   .menu-basket-bar{min-height:56px;border-radius:17px;grid-template-columns:46px 1fr 28px;padding:6px 10px}
   .menu-basket-bar strong{font-size:.98rem}
 }
-\n\n/* =========================================================\n   BUILD 14.5 HOTFIX — search controls + browser back + orders payment shortcut\n   ========================================================= */\n.menu-search-row{grid-template-columns:minmax(0,1fr) 82px!important;column-gap:8px!important;align-items:center!important}\n.menu-search-field{min-width:0!important;align-self:center!important}\n.menu-search-tools{display:grid!important;grid-template-columns:38px 38px!important;grid-auto-rows:38px!important;gap:6px!important;align-items:center!important;justify-items:center!important;width:82px!important;height:38px!important;align-self:center!important}\n.menu-search-tool{box-sizing:border-box!important;width:38px!important;height:38px!important;min-width:38px!important;min-height:38px!important;max-width:38px!important;max-height:38px!important;margin:0!important;padding:0!important;border-radius:11px!important;line-height:1!important;align-self:center!important}\n.menu-search-tool>span{position:static!important;transform:none!important;display:block!important;line-height:1!important;font-size:1.05rem!important;color:inherit!important;pointer-events:none!important}\n.menu-search-tool.request>span{font-size:1.28rem!important;margin-top:-1px!important}\n.menu-search-mode .menu-search-row{grid-template-columns:38px minmax(0,1fr)!important}\n.menu-search-mode .menu-search-tools{display:none!important}\n.orders-payment-only{padding-top:7px!important}\n.orders-payment-only .payment-mini{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:34px!important;padding:7px 12px!important;border-radius:999px!important;text-decoration:none!important;font-weight:900!important}\n@media(max-width:620px){\n  .menu-search-row{grid-template-columns:minmax(0,1fr) 78px!important;column-gap:6px!important}\n  .menu-search-tools{grid-template-columns:36px 36px!important;grid-auto-rows:36px!important;width:78px!important;height:36px!important;gap:6px!important}\n  .menu-search-tool{width:36px!important;height:36px!important;min-width:36px!important;min-height:36px!important;max-width:36px!important;max-height:36px!important}\n  .menu-search-mode .menu-search-row{grid-template-columns:36px minmax(0,1fr)!important}\n}\n
-
 /* =========================================================
    BUILD 14.7 — SIMPLE ADMIN + PUBLIC MENU DETAIL ACTIONS
    ========================================================= */
@@ -1836,3 +1834,124 @@ body.menu-page{overflow-x:clip}
 .requested-decision-buttons .btn.is-selected{box-shadow:0 0 0 2px currentColor inset!important;transform:none!important}.approve-request.is-selected{background:#1fc9a9!important;color:#06231d!important;border-color:#64efd6!important}.reject-request.is-selected{background:#df5a52!important;color:#fff!important;border-color:#ff928b!important}.requested-decision-buttons .btn:disabled{opacity:.72!important;cursor:not-allowed}.requested-decision-buttons .btn.is-selected:disabled{opacity:1!important}
 .expense-order-dialog{width:min(96vw,860px);max-height:92dvh;border:1px solid #3b504a;border-radius:20px;padding:0;background:#0c1714;color:#eef6f3}.expense-order-dialog::backdrop{background:rgba(0,0,0,.72)}.expense-order-card{max-height:92dvh;overflow:auto;padding:18px}.expense-order-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:12px 0}.expense-order-summary>div{display:grid;gap:4px;padding:12px;border:1px solid #344640;border-radius:12px;background:#13211d}.expense-order-summary span{font-size:.68rem;color:#91a19c;font-weight:850;text-transform:uppercase;letter-spacing:.05em}.expense-order-summary strong{font-size:1.1rem}.expense-payment-date{max-width:220px;margin:10px 0}.expense-order-list{display:grid;gap:8px}.expense-order-row{display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(180px,.8fr) auto;gap:10px;align-items:center;padding:12px;border:1px solid #30413c;border-radius:12px;background:#101c19}.expense-order-name{display:grid;gap:3px}.expense-order-name span,.expense-order-history span{font-size:.72rem;color:#91a19c}.expense-order-numbers{display:flex;gap:16px;flex-wrap:wrap}.expense-order-numbers span{display:grid;gap:2px;color:#91a19c;font-size:.68rem;font-weight:800;text-transform:uppercase}.expense-order-numbers strong{color:#fff;font-size:.9rem}.expense-order-actions{display:flex;gap:6px;justify-content:flex-end}.expense-order-history{grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #293a35}.expense-order-history span{background:#15231f;border:1px solid #2d3f39;border-radius:999px;padding:4px 8px}.expense-paid-btn.is-selected{background:#27c9b6!important;color:#071c18!important;border-color:#63eadb!important}.expense-unpaid-btn.is-selected{background:#3c2523!important;color:#ffaea8!important;border-color:#7e4641!important}.expense-order-button{white-space:nowrap}
 @media(max-width:800px){.admin-fold-head{padding-right:12px!important}.admin-fold-head>.admin-fold-toggle{margin-left:auto!important}.expense-order-card{padding:14px}.expense-order-summary>div{padding:9px 7px}.expense-order-summary span{font-size:.54rem}.expense-order-summary strong{font-size:.9rem}.expense-order-row{grid-template-columns:1fr 1fr}.expense-order-name,.expense-order-actions,.expense-order-history{grid-column:1/-1}.expense-order-actions{justify-content:stretch}.expense-order-actions .btn{flex:1}.finance-table td:nth-child(15){display:flex!important;align-items:center;justify-content:space-between;grid-column:1/-1}.finance-table td:nth-child(15)::before{content:'Expense Payments';display:block;color:#84958f;font-size:.62rem;font-weight:850;text-transform:uppercase}.finance-table td:nth-child(15) .btn{margin-left:auto}}
+
+
+/* =========================================================
+   BUILD 14.12 HOTFIX — FINAL menu search control alignment
+   Fixes old malformed Build 14.5 CSS and forces exact centering.
+   ========================================================= */
+.menu-search-row{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  align-items:center!important;
+  justify-items:stretch!important;
+  column-gap:8px!important;
+  min-height:44px!important;
+  margin-top:7px!important;
+  padding:0!important;
+}
+.menu-search-field{
+  display:flex!important;
+  align-items:center!important;
+  min-width:0!important;
+  height:44px!important;
+  margin:0!important;
+  padding:0!important;
+  align-self:center!important;
+}
+.menu-search-field input{
+  box-sizing:border-box!important;
+  width:100%!important;
+  height:44px!important;
+  min-height:44px!important;
+  margin:0!important;
+}
+.menu-search-tools{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  align-self:center!important;
+  gap:8px!important;
+  width:auto!important;
+  height:44px!important;
+  min-height:44px!important;
+  margin:0!important;
+  padding:0!important;
+}
+.menu-search-tool{
+  box-sizing:border-box!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  flex:0 0 44px!important;
+  width:44px!important;
+  height:44px!important;
+  min-width:44px!important;
+  min-height:44px!important;
+  max-width:44px!important;
+  max-height:44px!important;
+  margin:0!important;
+  padding:0!important;
+  line-height:1!important;
+  vertical-align:middle!important;
+  transform:none!important;
+}
+.menu-search-tool>span{
+  box-sizing:border-box!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  width:100%!important;
+  height:100%!important;
+  margin:0!important;
+  padding:0!important;
+  line-height:1!important;
+  position:static!important;
+  transform:none!important;
+  text-align:center!important;
+}
+.menu-search-tool.filter>span{font-size:1.45rem!important;transform:translateY(-1px)!important}
+.menu-search-tool.request>span{font-size:1.6rem!important;margin:0!important;transform:translateY(-1px)!important}
+.menu-search-mode .menu-search-row{
+  grid-template-columns:44px minmax(0,1fr)!important;
+}
+.menu-search-mode .menu-search-tools{display:none!important}
+@media(max-width:620px){
+  .menu-search-row{column-gap:7px!important;min-height:42px!important}
+  .menu-search-field{height:42px!important}
+  .menu-search-field input{height:42px!important;min-height:42px!important}
+  .menu-search-tools{height:42px!important;min-height:42px!important;gap:7px!important}
+  .menu-search-tool{
+    flex-basis:42px!important;
+    width:42px!important;height:42px!important;
+    min-width:42px!important;min-height:42px!important;
+    max-width:42px!important;max-height:42px!important;
+  }
+  .menu-search-mode .menu-search-row{grid-template-columns:42px minmax(0,1fr)!important}
+}
+
+/* =========================================================
+   BUILD 14.13 — compact kitchen print sheet
+   ========================================================= */
+@media print{
+  @page{size:A4 portrait;margin:8mm!important}
+  .compact-kitchen-slip{width:100%!important;max-width:none!important;font-size:8.4pt!important;color:#111!important}
+  .compact-kitchen-head{padding-bottom:4px!important;margin-bottom:4px!important;border-bottom-width:2px!important}
+  .compact-kitchen-head h1{font-size:14pt!important;line-height:1.05!important;margin:1px 0!important}
+  .compact-horizontal-summary{margin:3px 0!important;border-radius:0!important;break-inside:avoid!important}
+  .compact-horizontal-summary>div{padding:3px 4px!important}
+  .compact-horizontal-summary span{font-size:5.8pt!important}
+  .compact-horizontal-summary strong{font-size:7.5pt!important;margin-top:1px!important}
+  .compact-address{padding:2px 0 4px!important;font-size:7.2pt!important;break-inside:avoid!important}
+  .slip-menu-box.compact-menu{break-inside:auto!important;margin:3px 0 5px!important;padding:5px!important;border-width:1px!important;column-count:2;column-gap:7mm;column-rule:1px solid #d5d5d5}
+  .compact-menu h2{column-span:all;font-size:9pt!important;margin:0 0 4px!important}
+  .compact-menu .slip-menu-name{font-size:7pt!important;padding:3px 5px!important;margin:4px 0 3px!important;break-after:avoid!important;break-inside:avoid!important}
+  .compact-menu .slip-category{margin:3px 0!important;break-inside:avoid!important}
+  .compact-menu .slip-category>strong{font-size:7.2pt!important}
+  .compact-menu ol{margin:2px 0 4px!important;padding-left:16px!important}
+  .compact-menu li{font-size:7pt!important;line-height:1.15!important;padding:0!important}
+  .slip-comments{margin:4px 0!important;break-inside:avoid!important}
+  .slip-comments>strong{font-size:7pt!important}
+  .slip-comment-box{min-height:0!important;margin-top:2px!important;padding:4px!important;font-size:7.2pt!important;line-height:1.15!important}
+  .kitchen-comments-print{padding:4px!important;margin-top:4px!important}
+}
