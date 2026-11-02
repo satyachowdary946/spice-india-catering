@@ -35,6 +35,7 @@ from .models import (
     Category,
     Customer,
     Expense,
+    ExpensePayment,
     Menu,
     MenuItem,
     MenuCombination,
@@ -691,14 +692,40 @@ def order_food_cost(order: QuoteRequest) -> Decimal:
     return money(unit_total * guests)
 
 
+def expense_payment_summary(expense: Expense) -> dict[str, Any]:
+    amount = money(getattr(expense, "amount", None))
+    history = sorted(list(getattr(expense, "payments", []) or []), key=lambda p: (p.payment_date, p.id or 0))
+    if history:
+        paid_amount = sum((money(p.amount) for p in history), Decimal("0.00"))
+        paid_amount = min(max(paid_amount, Decimal("0.00")), amount)
+        last_paid_date = next((p.payment_date for p in reversed(history) if money(p.amount) > 0), None)
+    elif bool(getattr(expense, "paid", False)):
+        # Backwards compatibility for expenses marked paid before Build 14.10.
+        paid_amount = amount
+        last_paid_date = getattr(expense, "expense_date", None)
+    else:
+        paid_amount = Decimal("0.00")
+        last_paid_date = None
+    balance = max(amount - paid_amount, Decimal("0.00"))
+    return {
+        "amount": amount,
+        "paid_amount": money(paid_amount),
+        "balance": money(balance),
+        "paid": bool(amount > 0 and balance <= 0),
+        "last_paid_date": last_paid_date,
+        "history": history,
+    }
+
+
 def expense_breakdown(order: QuoteRequest) -> dict[str, dict[str, Any]]:
-    result = {key: {"name": label, "amount": Decimal("0.00"), "paid": False, "id": None} for key, label in INTERNAL_EXPENSE_NAMES.items()}
+    result = {key: {"name": label, "amount": Decimal("0.00"), "paid_amount": Decimal("0.00"), "balance": Decimal("0.00"), "paid": False, "id": None, "history": [], "last_paid_date": None} for key, label in INTERNAL_EXPENSE_NAMES.items()}
     label_to_key = {label.casefold(): key for key, label in INTERNAL_EXPENSE_NAMES.items()}
     extras = []
     for expense in getattr(order, "expenses", []) or []:
+        summary = expense_payment_summary(expense)
         key = label_to_key.get((expense.name or "").strip().casefold())
         if key and result[key]["id"] is None:
-            result[key] = {"name": INTERNAL_EXPENSE_NAMES[key], "amount": money(expense.amount), "paid": bool(getattr(expense, "paid", False)), "id": expense.id}
+            result[key] = {"name": INTERNAL_EXPENSE_NAMES[key], "id": expense.id, **summary}
         else:
             extras.append(expense)
     result["extras"] = extras
@@ -1310,7 +1337,7 @@ def customer_order(token: str, request: Request, db: Session = Depends(get_db)):
     order = db.scalar(
         select(QuoteRequest)
         .where(QuoteRequest.public_token == token)
-        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses))
+        .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.items), selectinload(QuoteRequest.history), selectinload(QuoteRequest.requested_dishes), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses).selectinload(Expense.payments))
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -2485,6 +2512,7 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         catalog_items=catalog_items,
         can_share_quote=(order.status != "new" and order.final_price is not None),
         can_send_kitchen=(order.status == "confirmed"), today=date.today(),
+        expense_payment_summary=expense_payment_summary,
     )
 
 
@@ -2894,15 +2922,15 @@ def admin_order_internal_finance(
             raise ValueError
         order.food_profit_percent = pct
         fields = {
-            "fuel": (fuel_amount, fuel_paid),
-            "delivery": (delivery_amount, delivery_paid),
-            "chef": (chef_amount, chef_paid),
-            "misc": (misc_amount, misc_paid),
-            "other": (other_amount, other_paid),
+            "fuel": fuel_amount,
+            "delivery": delivery_amount,
+            "chef": chef_amount,
+            "misc": misc_amount,
+            "other": other_amount,
         }
         existing = {(e.name or "").strip().casefold(): e for e in order.expenses}
         today = date.today()
-        for key, (raw_amount, raw_paid) in fields.items():
+        for key, raw_amount in fields.items():
             label = INTERNAL_EXPENSE_NAMES[key]
             amount = money(raw_amount)
             if amount < 0:
@@ -2916,7 +2944,6 @@ def admin_order_internal_finance(
                 expense = Expense(order_id=order.id, name=label, amount=amount, expense_date=today)
                 db.add(expense)
             expense.amount = amount
-            expense.paid = bool(raw_paid)
             expense.note = "Build 14 fixed order cost"
     except Exception:
         db.rollback()
@@ -3833,7 +3860,7 @@ def admin_transactions(
             selectinload(QuoteRequest.customer),
             selectinload(QuoteRequest.items),
             selectinload(QuoteRequest.payments),
-            selectinload(QuoteRequest.expenses),
+            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
         )
     )
     if period == "this_month":
@@ -3896,6 +3923,47 @@ def admin_transactions(
     if highest_paid and highest_paid["finance"]["total_paid"] <= 0:
         highest_paid = None
 
+    # Expense-payment ledger is intentionally independent from customer payments.
+    expense_orders = list(db.scalars(
+        select(QuoteRequest)
+        .where(QuoteRequest.status != "voided")
+        .options(
+            selectinload(QuoteRequest.customer),
+            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
+        )
+        .order_by(QuoteRequest.event_date.desc(), QuoteRequest.id.desc())
+    ).unique().all())
+    expense_payment_records = []
+    expense_paid_total = Decimal("0.00")
+    expense_balance_total = Decimal("0.00")
+    expense_cost_total = Decimal("0.00")
+    for expense_order in expense_orders:
+        for expense in expense_order.expenses or []:
+            summary = expense_payment_summary(expense)
+            history = []
+            for payment in reversed(list(summary["history"])):
+                amount_value = money(payment.amount)
+                history.append({
+                    "amount": abs(amount_value),
+                    "date": payment.payment_date,
+                    "reversal": amount_value < 0,
+                })
+            if not history and summary["paid"] and summary["last_paid_date"]:
+                history.append({"amount": summary["paid_amount"], "date": summary["last_paid_date"], "reversal": False, "legacy": True})
+            expense_payment_records.append({
+                "order": expense_order,
+                "expense": expense,
+                "amount": summary["amount"],
+                "paid_amount": summary["paid_amount"],
+                "balance": summary["balance"],
+                "paid": summary["paid"],
+                "history": history,
+                "last_paid_date": summary["last_paid_date"],
+            })
+            expense_cost_total += money(summary["amount"])
+            expense_paid_total += money(summary["paid_amount"])
+            expense_balance_total += money(summary["balance"])
+
     period_options = [
         ("all", "All time"),
         ("this_month", "This month"),
@@ -3929,6 +3997,10 @@ def admin_transactions(
         total_net_profit_percent=total_net_profit_percent,
         total_outstanding=total_outstanding,
         highest_paid=highest_paid,
+        expense_payment_records=expense_payment_records,
+        expense_cost_total=money(expense_cost_total),
+        expense_paid_total=money(expense_paid_total),
+        expense_balance_total=money(expense_balance_total),
         today=date.today(),
     )
 
@@ -3945,7 +4017,7 @@ def admin_transaction_detail(order_id: int, request: Request, db: Session = Depe
             selectinload(QuoteRequest.customer),
             selectinload(QuoteRequest.items),
             selectinload(QuoteRequest.payments),
-            selectinload(QuoteRequest.expenses),
+            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
         )
     )
     if not order:
@@ -4142,6 +4214,49 @@ def admin_expense_add(
     ))
     db.commit()
     return RedirectResponse(f"/admin/transactions/{order_id}?saved=1#expenses", status_code=303)
+
+
+@app.post("/admin/orders/{order_id}/expenses/{expense_id}/payment-status")
+def admin_expense_payment_status(
+    order_id: int,
+    expense_id: int,
+    request: Request,
+    action: str = Form(...),
+    payment_date: str = Form(""),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    expense = db.scalar(
+        select(Expense).where(Expense.id == expense_id, Expense.order_id == order_id)
+        .options(selectinload(Expense.payments))
+    )
+    if not expense:
+        raise HTTPException(status_code=404)
+    try:
+        paid_on = date.fromisoformat(payment_date) if payment_date else date.today()
+    except Exception:
+        paid_on = date.today()
+    summary = expense_payment_summary(expense)
+    if action == "paid":
+        remaining = money(summary["balance"])
+        if remaining > 0:
+            db.add(ExpensePayment(expense_id=expense.id, amount=remaining, payment_date=paid_on, note="Marked paid by admin"))
+        expense.paid = True
+        message = f"{expense.name} marked paid"
+    elif action == "unpaid":
+        paid_amount = money(summary["paid_amount"])
+        if paid_amount > 0 and list(expense.payments or []):
+            db.add(ExpensePayment(expense_id=expense.id, amount=-paid_amount, payment_date=paid_on, note="Marked unpaid by admin"))
+        expense.paid = False
+        message = f"{expense.name} marked unpaid"
+    else:
+        return RedirectResponse(f"/admin/orders/{order_id}?toast=Choose+Paid+or+Not+Paid&toast_type=error#expense-payments", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(message)}&toast_type=success#expense-payments", status_code=303)
 
 
 @app.post("/admin/expenses/{expense_id}/delete")

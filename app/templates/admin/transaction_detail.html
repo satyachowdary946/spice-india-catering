@@ -26,7 +26,7 @@
     <div class="finance-stat positive"><span>Recommended Kid</span><strong>€{{ '%.2f'|format(finance.recommended_kid_charge) }} / head</strong><small>50% of adult</small></div>
   </div>
   <div class="finance-table-wrap" style="margin-top:12px"><table class="finance-table"><thead><tr><th>Expense</th><th>Amount</th><th>Status</th></tr></thead><tbody>
-    {% for key in ['fuel','delivery','chef','misc','other'] %}{% set e=finance.expense_breakdown[key] %}<tr><td>{{ e.name }}</td><td>€{{ '%.2f'|format(e.amount) }}</td><td><span class="payment-badge payment-{{ 'paid' if e.paid else 'unpaid' }}">{{ 'Paid' if e.paid else 'Unpaid' }}</span></td></tr>{% endfor %}
+    {% for key in ['fuel','delivery','chef','misc','other'] %}{% set e=finance.expense_breakdown[key] %}<tr><td>{{ e.name }}</td><td>€{{ '%.2f'|format(e.amount) }}</td><td>Paid €{{ '%.2f'|format(e.paid_amount) }} · Left €{{ '%.2f'|format(e.balance) }}</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 

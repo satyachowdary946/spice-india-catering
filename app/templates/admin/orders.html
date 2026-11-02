@@ -7,7 +7,7 @@
     <a class="order-row-main" href="/admin/orders/{{ order.id }}"><div><strong>{{ order.order_number }} · {{ order.customer.name }}</strong><small>{{ order.customer.customer_number }} · {{ order.event_name }} · {{ order.event_date.strftime('%d %b %Y') }} · {{ order.adults + order.kids }} guests</small></div><span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span></a>
     {% if f %}<div class="dashboard-ops dashboard-action-row orders-payment-only">
       {% if order.final_price is not none %}<button class="payment-mini payment-{{ f.payment_status }}" type="button" data-open-payment data-payment-order-id="{{ order.id }}" data-payment-order="{{ order.order_number }}" data-payment-total="{{ '%.2f'|format(f.final_price) }}" data-payment-received="{{ '%.2f'|format(f.total_paid) }}" data-payment-balance="{{ '%.2f'|format(f.balance_due) }}">{% if f.payment_status=='paid' %}✓ Paid{% elif f.payment_status=='part_paid' %}◐ Part Paid{% else %}○ Unpaid{% endif %}</button>{% else %}<span class="payment-mini">Not Priced</span>{% endif %}
-      <a class="btn secondary small" href="/admin/orders/{{ order.id }}#payments">Payments</a>
+      <a class="btn secondary small" href="/admin/orders/{{ order.id }}#expense-payments">Expense Payments</a>
     </div>{% endif %}
   </div>
 {% else %}<div class="empty">No matching orders.</div>{% endfor %}

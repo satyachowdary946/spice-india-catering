@@ -227,6 +227,18 @@ class Expense(Base):
     paid: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     order: Mapped[QuoteRequest] = relationship(back_populates="expenses")
+    payments: Mapped[list[ExpensePayment]] = relationship(back_populates="expense", cascade="all, delete-orphan", order_by="ExpensePayment.payment_date, ExpensePayment.id")
+
+
+class ExpensePayment(Base):
+    __tablename__ = "expense_payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    expense_id: Mapped[int] = mapped_column(ForeignKey("expenses.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    payment_date: Mapped[date] = mapped_column(Date, default=date.today)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expense: Mapped[Expense] = relationship(back_populates="payments")
 
 
 class StatusHistory(Base):

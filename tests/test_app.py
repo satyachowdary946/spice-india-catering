@@ -140,7 +140,7 @@ def test_build8_mobile_workflow():
         assert "Negotiating" not in orders.text
         assert "Request From" in orders.text and "Request To" in orders.text
         assert "Search & Filters" in orders.text
-        assert "Payments" in orders.text
+        assert "Expense Payments" in orders.text
         dashboard = client.get("/admin")
         assert "Recent orders" in dashboard.text
         assert 'data-payment-dialog' in dashboard.text
@@ -155,11 +155,11 @@ def test_build8_mobile_workflow():
         assert "data-apply-recommended-prices" in detail.text
         assert detail.text.index("Selected Menu") < detail.text.index("Quote & Confirmation")
         assert detail.text.index("Quote & Confirmation") < detail.text.index("Kitchen Sheet & Sharing")
-        assert detail.text.index("Kitchen Sheet & Sharing") < detail.text.index(">Finance<")
+        assert 'id="expense-payments"' in detail.text
         assert "Web Order Charge" not in detail.text
         assert 'Send Quote To Customer' in detail.text
         assert '✓ Approve' in detail.text and '✕ Reject' in detail.text
-        assert 'data-finance-dialog' in detail.text and 'id="payments"' in detail.text
+        assert 'data-finance-dialog' not in detail.text and 'id="payments"' not in detail.text
         assert 'Change the order status to Confirmed' in detail.text
         csrf = csrf_from(detail.text)
         details_update = client.post("/admin/orders/1/details", data={
@@ -180,6 +180,32 @@ def test_build8_mobile_workflow():
         assert details_update.status_code == 303
         detail = client.get("/admin/orders/1")
         assert "Edited Customer" in detail.text and "Wedding Updated" in detail.text and "Updated event address" in detail.text
+        csrf = csrf_from(detail.text)
+        costs = client.post("/admin/orders/1/internal-finance", data={
+            "csrf_token": csrf,
+            "food_profit_percent": "10",
+            "fuel_amount": "40",
+            "delivery_amount": "100",
+            "chef_amount": "70",
+            "misc_amount": "50",
+            "other_amount": "50",
+        }, follow_redirects=False)
+        assert costs.status_code == 303
+        detail = client.get("/admin/orders/1")
+        assert "Expense Payments" in detail.text
+        from app.models import QuoteRequest as QR
+        with SessionLocal() as db:
+            order_obj = db.get(QR, 1)
+            fuel_expense = next(e for e in order_obj.expenses if e.name == "Fuel Charges")
+            fuel_expense_id = fuel_expense.id
+        expense_paid = client.post(f"/admin/orders/1/expenses/{fuel_expense_id}/payment-status", data={
+            "csrf_token": csrf_from(detail.text),
+            "action": "paid",
+            "payment_date": str(date.today()),
+        }, follow_redirects=False)
+        assert expense_paid.status_code == 303
+        detail = client.get("/admin/orders/1")
+        assert "Paid €40.00" in detail.text
         csrf = csrf_from(detail.text)
         upd = client.post("/admin/orders/1", data={
             "csrf_token": csrf,
@@ -232,6 +258,7 @@ def test_build8_mobile_workflow():
         assert "Sort By" in transactions.text
         assert "Food Cost" in transactions.text
         assert "Net Profit" in transactions.text
+        assert "All Expense Payment Records" in transactions.text
         reports = client.get("/admin/reports")
         assert reports.status_code == 200
         assert "Food Cost" in reports.text and "Chef Labour" in reports.text and "Net Profit %" in reports.text
@@ -262,7 +289,7 @@ def test_build8_mobile_workflow():
         }, follow_redirects=False)
         assert confirm_admin.status_code == 303
         detail = client.get("/admin/orders/1")
-        assert "Payments" in detail.text and "Kitchen Sheet & Sharing" in detail.text
+        assert "Expense Payments" in detail.text and "Kitchen Sheet & Sharing" in detail.text
         assert "Deposit Status" not in detail.text
         kitchen = client.post("/admin/orders/1/kitchen-share", data={
             "csrf_token": csrf_from(detail.text),

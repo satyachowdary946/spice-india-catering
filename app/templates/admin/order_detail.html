@@ -138,11 +138,35 @@
     <div class="internal-expense-grid">
       {% set expense_fields = [('fuel','Fuel Charges'),('delivery','Delivery Charges'),('chef','Chef Labour'),('misc','Miscellaneous'),('other','Other Expenses')] %}
       {% for key,label in expense_fields %}{% set e=finance.expense_breakdown[key] %}
-      <div class="internal-expense-row"><div class="field"><label>{{ label }} (€)</label><input name="{{ key }}_amount" type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ '%.2f'|format(e.amount) if e.amount > 0 else '' }}"></div><label class="paid-toggle"><input type="checkbox" name="{{ key }}_paid" {% if e.paid %}checked{% endif %}> <span>Paid</span></label></div>
+      <div class="internal-expense-row"><div class="field"><label>{{ label }} (€)</label><input name="{{ key }}_amount" type="number" min="0" step="0.01" placeholder="Enter amount" value="{{ '%.2f'|format(e.amount) if e.amount > 0 else '' }}"></div></div>
       {% endfor %}
     </div>
     <button class="btn" type="submit">Save Internal Costs & Target Profit</button>
   </form>
+</section>
+
+<section class="card expense-payments-card" id="expense-payments" style="margin-top:14px">
+  <div class="admin-title"><div><div class="eyebrow">Business Expenses</div><h2 style="font-size:1.25rem">Expense Payments</h2><p class="muted">Mark fuel, delivery, chef and other business costs paid or not paid.</p></div></div>
+  <div class="expense-payment-list">
+    {% for expense in order.expenses %}{% set es = expense_payment_summary(expense) %}
+    <div class="expense-payment-row">
+      <div class="expense-payment-name"><strong>{{ expense.name }}</strong><span>Cost €{{ '%.2f'|format(es.amount) }}</span></div>
+      <div class="expense-payment-money"><span>Paid</span><strong>€{{ '%.2f'|format(es.paid_amount) }}</strong></div>
+      <div class="expense-payment-money"><span>Left</span><strong class="{{ 'money-positive' if es.balance <= 0 else 'money-warning' }}">€{{ '%.2f'|format(es.balance) }}</strong></div>
+      <div class="expense-payment-actions">
+        <form method="post" action="/admin/orders/{{ order.id }}/expenses/{{ expense.id }}/payment-status">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="paid"><input type="hidden" name="payment_date" value="{{ today.isoformat() }}">
+          <button class="btn small {{ 'secondary' if es.paid else '' }}" type="submit" {% if es.paid %}disabled{% endif %}>✓ Paid</button>
+        </form>
+        <form method="post" action="/admin/orders/{{ order.id }}/expenses/{{ expense.id }}/payment-status">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="unpaid"><input type="hidden" name="payment_date" value="{{ today.isoformat() }}">
+          <button class="btn secondary small" type="submit" {% if not es.paid_amount %}disabled{% endif %}>Not Paid</button>
+        </form>
+      </div>
+      {% if es.history %}<div class="expense-payment-history">{% for payment in es.history|reverse %}<span>{{ 'Reversed' if payment.amount < 0 else 'Paid' }} €{{ '%.2f'|format(payment.amount|abs) }} · {{ payment.payment_date.strftime('%d %b %Y') }}</span>{% endfor %}</div>{% elif es.paid and es.last_paid_date %}<div class="expense-payment-history"><span>Paid €{{ '%.2f'|format(es.paid_amount) }} · {{ es.last_paid_date.strftime('%d %b %Y') }}</span></div>{% endif %}
+    </div>
+    {% else %}<div class="empty">Add the expense amounts in Internal Costing first.</div>{% endfor %}
+  </div>
 </section>
 
 <section class="card" id="quote-confirmation" style="margin-top:14px">
@@ -192,17 +216,11 @@
 
 <section class="card" style="margin-top:14px"><h2 style="font-size:1.25rem">Status Timeline</h2><div class="timeline">{% for h in order.history if h.status not in ['contacted','negotiating'] %}<div class="timeline-row"><span class="timeline-dot"></span><div class="timeline-content"><strong>{{ h.status.replace('_',' ').title() }}</strong>{% if h.note %}<div class="help">{{ h.note }}</div>{% endif %}<small>{{ local_datetime(h.created_at).strftime('%d %b %Y %H:%M') if local_datetime(h.created_at) else '' }}</small></div></div>{% endfor %}</div></section>
 
-<section class="card finance-quick-card" id="finance" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Finance</div><h2 style="font-size:1.25rem">Finance</h2><p class="muted">Simple order money summary.</p></div><button class="btn secondary small" type="button" data-open-finance-dialog>Open Finance</button></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Sale</span><strong>{% if order.final_price is not none %}€{{ '%.2f'|format(finance.final_price) }}{% else %}—{% endif %}</strong></div><div class="finance-stat positive"><span>Payment Received</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat warning"><span>Need To Pay</span><strong>€{{ '%.2f'|format(finance.balance_due) }}</strong></div><div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }}</strong></div></div></section>
 
-<section class="card" id="payments" style="margin-top:14px"><div class="admin-title"><div><div class="eyebrow">Payments</div><h2 style="font-size:1.25rem">Payments</h2><p class="muted">Record money received for this order without leaving the order page.</p></div>{% if order.final_price is not none %}<button class="btn small" type="button" data-open-payment data-payment-order-id="{{ order.id }}" data-payment-order="{{ order.order_number }}" data-payment-total="{{ '%.2f'|format(finance.final_price) }}" data-payment-received="{{ '%.2f'|format(finance.total_paid) }}" data-payment-balance="{{ '%.2f'|format(finance.balance_due) }}">Record Payment</button>{% endif %}</div><div class="payment-order-summary"><div><span>Status</span><strong>{{ finance.payment_status.replace('_',' ').title() }}</strong></div><div><span>Payment Received</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div><span>Need To Pay</span><strong>€{{ '%.2f'|format(finance.balance_due) }}</strong></div></div><div class="finance-records payment-history-compact">{% for payment in order.payments %}<div class="finance-record"><div><strong>€{{ '%.2f'|format(payment.amount) }}</strong><span>{{ payment.payment_date.strftime('%d %b %Y') }}{% if payment.method %} · {{ payment.method }}{% endif %}</span></div></div>{% else %}<div class="empty">No payments received yet.</div>{% endfor %}</div></section>
-
-<dialog class="admin-finance-dialog" data-finance-dialog><div class="admin-finance-dialog-card"><div class="admin-title"><div><div class="eyebrow">{{ order.order_number }}</div><h2>Finance</h2></div><button class="icon-close" type="button" data-close-finance>×</button></div><div class="finance-summary-grid compact-finance-grid"><div class="finance-stat"><span>Total Sale</span><strong>€{{ '%.2f'|format(finance.final_price) if order.final_price is not none else '0.00' }}</strong></div><div class="finance-stat positive"><span>Payment Received</span><strong>€{{ '%.2f'|format(finance.total_paid) }}</strong></div><div class="finance-stat warning"><span>Need To Pay</span><strong>€{{ '%.2f'|format(finance.balance_due) }}</strong></div><div class="finance-stat expense"><span>Food Cost</span><strong>€{{ '%.2f'|format(finance.food_cost) }}</strong></div><div class="finance-stat expense"><span>Internal Expenses</span><strong>€{{ '%.2f'|format(finance.operating_expenses) }}</strong></div><div class="finance-stat expense"><span>Total Internal Cost</span><strong>€{{ '%.2f'|format(finance.total_cost) }}</strong></div><div class="finance-stat profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(finance.net_profit) }} · {{ '%.2f'|format(finance.net_profit_percent) }}%</strong></div></div><div class="payment-dialog-actions">{% if order.final_price is not none %}<button class="btn" type="button" data-open-payment data-payment-order-id="{{ order.id }}" data-payment-order="{{ order.order_number }}" data-payment-total="{{ '%.2f'|format(finance.final_price) }}" data-payment-received="{{ '%.2f'|format(finance.total_paid) }}" data-payment-balance="{{ '%.2f'|format(finance.balance_due) }}">Record Payment</button>{% endif %}<a class="btn secondary" href="/admin/transactions/{{ order.id }}">Full Transaction History</a></div></div></dialog>
-{% include "admin/_payment_modal.html" %}
 
 </div>
 <script>
 (()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));form.querySelector('[data-apply-recommended-prices]')?.addEventListener('click',()=>{form.elements.adult_charge.value=Number(form.dataset.recommendedAdult||0).toFixed(2);form.elements.kid_charge.value=Number(form.dataset.recommendedKid||0).toFixed(2);calc();});calc();})();
-(()=>{const d=document.querySelector('[data-finance-dialog]');document.querySelector('[data-open-finance-dialog]')?.addEventListener('click',()=>d?.showModal());document.querySelector('[data-close-finance]')?.addEventListener('click',()=>d?.close());d?.addEventListener('click',e=>{if(e.target===d)d.close();});})();
 (()=>{
   const folds=[];
   document.querySelectorAll('.order-detail-page > section.card').forEach(section=>{
