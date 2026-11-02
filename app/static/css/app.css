@@ -1749,3 +1749,77 @@ body.menu-page{overflow-x:clip}
 .quarter-time-trigger.has-value{color:#fff}.quarter-time-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#15322d;color:#63e6d3;font-size:1rem}.quarter-time-chevron{text-align:right;color:#63e6d3;font-size:1.2rem;font-weight:900}
 .quarter-time-dialog{width:min(94vw,620px);padding:0;border:1px solid #50605c;border-radius:18px;background:#0f1715;color:#fff}.quarter-time-dialog::backdrop{background:rgba(0,0,0,.72)}.quarter-time-dialog-card{padding:18px}.quarter-time-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.quarter-time-dialog-head h2{margin:2px 0 0}.quarter-time-close{width:42px;height:42px;border-radius:12px;border:1px solid #52615d;background:#18211f;color:#fff;font-size:1.55rem;line-height:1;cursor:pointer}.quarter-time-periods{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-height:min(62vh,520px);overflow:auto;padding:4px 4px 8px}.quarter-time-option{min-height:44px;border-radius:10px;border:1px solid #3e504b;background:#15201e;color:#edf7f4;font-weight:850;cursor:pointer}.quarter-time-option:hover,.quarter-time-option:focus{border-color:#2dd4bf;background:#19312d}.quarter-time-option.selected{background:#24cbb5;color:#04110e;border-color:#71efdf}
 @media(max-width:620px){.quarter-time-dialog{width:min(96vw,520px)}.quarter-time-dialog-card{padding:14px}.quarter-time-periods{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:68vh}.quarter-time-option{min-height:46px;font-size:.95rem}}
+
+
+/* =========================================================
+   BUILD 14.9 — PROFESSIONAL ADMIN UX / MOBILE-FIRST HOTFIX
+   ========================================================= */
+.admin-body{
+  --admin-bg:#09110f;
+  --admin-panel:#101a17;
+  --admin-panel-2:#15211e;
+  --admin-line:#30423d;
+  --admin-text:#f4f8f7;
+  --admin-muted:#9caaa6;
+  --admin-teal:#28d0b8;
+  --admin-blue:#5ea8ff;
+  --admin-amber:#f5c451;
+  --admin-red:#ef7770;
+  background:var(--admin-bg)!important;
+  color:var(--admin-text)!important;
+}
+.admin-header{background:rgba(10,18,16,.97)!important;border-bottom:1px solid var(--admin-line)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.admin-header .header-row{min-height:68px!important}.admin-header-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.admin-brand-row{display:flex;align-items:center;gap:10px;min-width:0}.admin-brand{display:flex;align-items:center;gap:10px;min-width:0;text-decoration:none}.admin-brand-mark{width:42px;height:42px;flex:0 0 42px;border-radius:12px;background:#f6faf9!important;color:#0c1714!important;font-size:1.15rem}
+.admin-brand-copy{display:grid;line-height:1.04;min-width:0}.admin-brand-copy strong{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;font-size:.98rem;letter-spacing:.01em}.admin-brand-copy small{margin-top:4px;color:var(--admin-teal);font-size:.66rem;font-weight:950;text-transform:uppercase;letter-spacing:.13em}
+.header-back{width:42px;height:42px;border-radius:12px!important;border:1px solid #42534e!important;background:#14201d!important;color:#fff!important;font-size:1.35rem!important}
+.admin-mobile-menu-trigger{display:grid;place-items:center;width:42px;height:42px;border:1px solid #42534e;border-radius:12px;background:#14201d;color:#fff;font-size:1.25rem;cursor:pointer}
+
+/* The desktop sidebar must never leak onto a phone. */
+.admin-sidebar{display:none!important}
+@media(min-width:980px){
+  .admin-sidebar{display:block!important;background:#0d1614!important;border-right:1px solid var(--admin-line);padding:18px 12px!important}
+  .admin-sidebar a{color:#aebbb7!important;margin-bottom:4px!important;padding:11px 12px!important}
+  .admin-sidebar a:hover,.admin-sidebar a.active{background:#17302a!important;color:#7af0df!important}
+  .admin-mobile-menu-trigger{display:none}
+}
+
+.admin-main{background:transparent!important}.admin-main>.container{max-width:1480px}
+.admin-body .card,.admin-body .list-card,.admin-body .metric,.admin-body .table-wrap{background:var(--admin-panel)!important;border-color:var(--admin-line)!important;box-shadow:none!important}
+.admin-body .admin-title{margin-bottom:12px}.admin-body .admin-title h1{color:#fff}.admin-body .admin-title h2{color:#fff}.admin-body .muted{color:var(--admin-muted)!important}
+.admin-body .btn{font-weight:900!important}.admin-body .btn:not(.secondary):not(.danger){background:var(--admin-teal)!important;border-color:#69ead9!important;color:#04110e!important}.admin-body .btn.secondary{background:#16221f!important;border-color:#445650!important;color:#ecf4f2!important}
+
+/* Compact professional phone navigation. */
+.admin-bottom-nav{background:rgba(9,18,16,.98)!important;border-top:1px solid var(--admin-line)!important;padding:4px 4px calc(4px + env(safe-area-inset-bottom))!important;box-shadow:0 -10px 28px rgba(0,0,0,.24)}
+.admin-bottom-nav a{min-height:58px;border-radius:12px;color:#82928d!important;font-size:.67rem!important;font-weight:900!important;text-decoration:none}.admin-bottom-nav a span{font-size:1.08rem}.admin-bottom-nav a.active{background:#13302a!important;color:#72e7d5!important}
+.admin-mobile-menu-dialog{width:min(92vw,390px);padding:0;border:1px solid #40514c;border-radius:20px;background:#0e1815;color:#fff}.admin-mobile-menu-dialog::backdrop{background:rgba(0,0,0,.72)}.admin-mobile-menu-card{padding:16px}.admin-mobile-menu-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--admin-line)}.admin-mobile-menu-head>div{display:grid}.admin-mobile-menu-head small{font-size:.66rem;color:var(--admin-teal);font-weight:950;letter-spacing:.14em}.admin-mobile-menu-head strong{font-size:1.25rem}.admin-mobile-menu-links{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.admin-mobile-menu-links a{display:flex;align-items:center;gap:9px;min-height:48px;padding:10px 12px;border:1px solid #31423d;border-radius:12px;background:#121f1b;color:#ecf4f2;text-decoration:none;font-weight:850}.admin-mobile-menu-links a:hover{border-color:#2dcdb6;color:#7eebda}.admin-mobile-logout{margin-top:12px}.admin-mobile-logout .btn{width:100%}
+
+/* Order detail = compact app-style accordion. Closed means heading only. */
+.order-detail-page{display:grid;gap:10px}.order-detail-page>.admin-title{margin-bottom:4px}.order-detail-page>.admin-title .muted{margin-top:5px}
+.order-detail-page>section.card{margin-top:0!important;border-radius:15px!important;overflow:hidden;padding:0!important}
+.admin-fold-head{min-height:60px!important;margin:0!important;padding:13px 15px!important;align-items:center!important;background:#111d19!important;border-bottom:0!important}
+.admin-fold-head>div:first-child{min-width:0;flex:1}.admin-fold-title-line{display:flex;align-items:center;gap:9px;min-width:0;cursor:pointer}.admin-fold-title-line h2{margin:0!important;font-size:1.05rem!important;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.admin-fold-toggle{display:grid!important;place-items:center!important;width:32px!important;height:32px!important;min-width:32px!important;margin:0!important;padding:0!important;border:1px solid #3f514c!important;background:#172521!important;color:#74e9d7!important;border-radius:9px!important;font-size:1.05rem!important;line-height:1!important}
+.admin-fold-body{margin:0!important;padding:0 15px 15px!important;border-top:1px solid var(--admin-line)}.admin-fold-body>*:first-child{margin-top:14px!important}.admin-fold.is-collapsed .admin-fold-body{display:none!important}.admin-fold.is-collapsed{padding-bottom:0!important}.admin-fold.is-collapsed .eyebrow,.admin-fold.is-collapsed .admin-fold-head .muted{display:none!important}.admin-fold.is-collapsed>.admin-fold-head>.btn,.admin-fold.is-collapsed>.admin-fold-head>.actions,.admin-fold.is-collapsed>.admin-fold-head>form{display:none!important}.admin-fold-head .muted{font-size:.78rem!important;line-height:1.35!important;margin:5px 0 0!important;max-width:720px}
+.order-detail-page .order-meta{gap:0!important}.order-detail-page .meta-row{padding:8px 0!important}.order-detail-page .meta-row strong{color:#91a19c!important}.order-detail-page .meta-row span{color:#f3f7f6!important}
+
+/* Payment modal: no autofocus keyboard, compact summary, previous payment history. */
+.admin-payment-dialog{width:min(94vw,580px)!important;max-height:90dvh!important;border-radius:20px!important;background:#0d1815!important}.admin-payment-dialog-card{max-height:90dvh;overflow:auto;padding:17px!important}.payment-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px}.payment-dialog-head h2{margin:2px 0 0;font-size:1.45rem}.payment-dialog-head .icon-close{flex:0 0 auto}
+.payment-dialog-summary{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;margin:12px 0!important}.payment-dialog-summary>div{min-width:0;padding:10px!important;border-radius:11px!important;background:#13211d!important}.payment-dialog-summary span{font-size:.62rem!important}.payment-dialog-summary strong{font-size:1.05rem!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.payment-dialog-summary .balance{border-color:#765f2a!important}.payment-dialog-summary .balance strong{color:var(--admin-amber)!important}
+.payment-history-panel{margin:12px 0;padding:12px;border:1px solid #344640;border-radius:13px;background:#101d19}.payment-history-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}.payment-history-head strong{font-size:.9rem}.payment-history-head span{color:#8fa09b;font-size:.72rem;font-weight:850}.payment-history-list{display:grid;gap:6px;max-height:150px;overflow:auto}.payment-history-row{display:flex;justify-content:space-between;gap:10px;padding:8px 9px;border-radius:9px;background:#15231f;border:1px solid #2d3e39}.payment-history-row>div{display:grid;gap:2px}.payment-history-row strong{font-size:.9rem;color:#fff}.payment-history-row span{font-size:.72rem;color:#9daca7}.payment-history-empty{padding:9px;color:#8fa09b;font-size:.78rem;text-align:center}
+.payment-dialog-fields{grid-template-columns:1fr 1fr!important;gap:10px!important}.payment-dialog-fields .payment-amount-field{grid-column:1/-1}.payment-dialog-fields .field{margin:0}.payment-dialog-fields input,.payment-dialog-fields select{min-height:46px!important}.payment-dialog-actions{position:sticky;bottom:-17px;margin:14px -17px -17px!important;padding:12px 17px calc(12px + env(safe-area-inset-bottom));background:#0d1815;border-top:1px solid #2d3f3a;z-index:2}
+
+/* Requested dishes and finance use calm, readable surfaces. */
+.requested-admin-row,.requested-admin-row-dark{background:#14201d!important;border-color:#354742!important}.requested-admin-row .btn{min-height:42px!important}.approve-request{background:#12372e!important;border-color:#2d8d70!important;color:#76e5bd!important}.reject-request{background:#351b1a!important;border-color:#81423f!important;color:#ff9d98!important}
+.admin-body .finance-stat.expense{background:#211a16!important;border-color:#66513a!important}.admin-body .finance-stat.profit,.admin-body .finance-stat.positive{background:#10271f!important;border-color:#2c755d!important}
+
+/* Transactions become readable cards on phones instead of a giant horizontal spreadsheet. */
+@media(max-width:760px){
+  .admin-header .container{width:min(100% - 20px,var(--max))}.admin-header .header-row{min-height:64px!important}.admin-brand-mark{width:38px;height:38px;flex-basis:38px}.admin-brand-copy strong{font-size:.9rem;max-width:150px}.admin-main{padding:12px 0 calc(86px + env(safe-area-inset-bottom))!important}.admin-main>.container{width:min(100% - 20px,var(--max))}
+  .admin-body .admin-title{margin-bottom:10px}.admin-body .admin-title h1{font-size:1.55rem!important}.admin-body .admin-title>div>p.muted{display:none}.admin-body .card{padding:14px}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:7px}.metric{padding:11px!important}.metric-value{font-size:1.45rem!important}.metric-label{font-size:.68rem!important;line-height:1.25}
+  .admin-fold-head{min-height:56px!important;padding:12px 13px!important}.admin-fold-body{padding:0 13px 13px!important}.admin-fold-title-line h2{font-size:1rem!important}.admin-fold-toggle{width:30px!important;height:30px!important;min-width:30px!important}
+  .two-column-meta{grid-template-columns:1fr!important}.meta-row{grid-template-columns:100px minmax(0,1fr)!important}.meta-row span{word-break:break-word}
+  .payment-dialog-summary{grid-template-columns:repeat(3,minmax(0,1fr))!important}.payment-dialog-summary>div{padding:8px 6px!important}.payment-dialog-summary span{font-size:.54rem!important;letter-spacing:.02em!important}.payment-dialog-summary strong{font-size:.9rem!important}.payment-dialog-fields{grid-template-columns:1fr!important}.payment-dialog-fields .payment-amount-field{grid-column:auto}.payment-dialog-actions{display:grid!important;grid-template-columns:1fr 1fr!important}.payment-dialog-actions>*{width:100%!important}.admin-payment-dialog-card{padding:14px!important}.payment-dialog-actions{bottom:-14px;margin:12px -14px -14px!important;padding:10px 14px calc(10px + env(safe-area-inset-bottom))!important}
+  .admin-mobile-menu-links{grid-template-columns:1fr 1fr}.admin-mobile-menu-dialog{margin:auto}
+  .finance-table-wrap{overflow:visible!important;border:0!important;background:transparent!important}.finance-table{display:block!important;min-width:0!important}.finance-table thead{display:none!important}.finance-table tbody{display:grid;gap:10px}.finance-table tr{display:grid!important;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--admin-line);border-radius:14px;background:#101a17;overflow:hidden}.finance-table td{display:block!important;padding:9px 11px!important;border-bottom:1px solid #263732!important;font-size:.82rem}.finance-table td:nth-child(1),.finance-table td:nth-child(2){grid-column:1/-1}.finance-table td:nth-child(4),.finance-table td:nth-child(5),.finance-table td:nth-child(6),.finance-table td:nth-child(7),.finance-table td:nth-child(8),.finance-table td:nth-child(9),.finance-table td:nth-child(12){display:none!important}.finance-table td:nth-child(3)::before{content:'Sale';display:block;color:#84958f;font-size:.62rem;font-weight:850;text-transform:uppercase}.finance-table td:nth-child(10)::before{content:'Total Cost';display:block;color:#84958f;font-size:.62rem;font-weight:850;text-transform:uppercase}.finance-table td:nth-child(11)::before{content:'Net Profit';display:block;color:#84958f;font-size:.62rem;font-weight:850;text-transform:uppercase}.finance-table td:nth-child(13)::before{content:'Received';display:block;color:#84958f;font-size:.62rem;font-weight:850;text-transform:uppercase}.finance-table td:nth-child(14)::before{content:'Payment';display:block;color:#84958f;font-size:.62rem;font-weight:850;text-transform:uppercase}.finance-table td:nth-child(14){display:flex!important;align-items:center;justify-content:space-between}.finance-table td:nth-child(14) .payment-badge{margin-left:auto}
+}
+@media(max-width:390px){.admin-brand-copy strong{max-width:120px}.admin-mobile-menu-links{grid-template-columns:1fr}.grid.three{grid-template-columns:1fr 1fr!important}.grid.three>.metric:last-child{grid-column:1/-1}}

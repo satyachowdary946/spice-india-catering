@@ -210,6 +210,20 @@ def test_build8_mobile_workflow():
         assert transaction.status_code == 200
         assert "Delivery & Service Charge" in transaction.text
         assert "Web Order" not in transaction.text
+        assert "Previous Payments" in transaction.text
+        assert "Reference (Optional)" not in transaction.text
+        payment_add = client.post("/admin/transactions/1/payments", data={
+            "csrf_token": csrf_from(transaction.text),
+            "amount": "100.00",
+            "payment_date": str(date.today()),
+            "method": "Cash",
+            "return_to": "/admin/transactions/1",
+        }, follow_redirects=False)
+        assert payment_add.status_code == 303
+        payment_summary = client.get("/admin/orders/1/payment-summary")
+        assert payment_summary.status_code == 200
+        assert payment_summary.json()["payments"][0]["amount"] == "100.00"
+        assert payment_summary.json()["payments"][0]["method"] == "Cash"
 
         transactions = client.get("/admin/transactions")
         assert 'data-transaction-filter-drawer' in transactions.text

@@ -4006,6 +4006,34 @@ def admin_transaction_price(
     return RedirectResponse(f"/admin/transactions/{order_id}?saved=1", status_code=303)
 
 
+@app.get("/admin/orders/{order_id}/payment-summary")
+def admin_order_payment_summary(order_id: int, request: Request, db: Session = Depends(get_db)):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return JSONResponse({"error": "unauthorised"}, status_code=401)
+    order = db.scalar(
+        select(QuoteRequest).where(QuoteRequest.id == order_id)
+        .options(selectinload(QuoteRequest.payments))
+    )
+    if not order:
+        raise HTTPException(status_code=404)
+    payments = sorted(order.payments or [], key=lambda p: (p.payment_date, p.id), reverse=True)
+    return JSONResponse({
+        "order_id": order.id,
+        "order_number": order.order_number,
+        "payments": [
+            {
+                "id": payment.id,
+                "amount": f"{money(payment.amount):.2f}",
+                "date": payment.payment_date.isoformat(),
+                "display_date": payment.payment_date.strftime("%d %b %Y"),
+                "method": payment.method or "",
+            }
+            for payment in payments
+        ],
+    })
+
+
 @app.post("/admin/transactions/{order_id}/payments")
 def admin_payment_add(
     order_id: int,

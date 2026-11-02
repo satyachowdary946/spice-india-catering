@@ -203,6 +203,29 @@
 <script>
 (()=>{const form=document.querySelector('[data-pricing-form]');if(!form)return;const fields=[...form.querySelectorAll('[data-price-field]')],summary=form.querySelector('[data-pricing-summary]'),adults=Number(form.dataset.adults||0),kids=Number(form.dataset.kids||0);const n=x=>Math.max(0,Number(x||0));function calc(){const adult=n(form.elements.adult_charge.value),kid=n(form.elements.kid_charge.value),extra=n(form.elements.delivery_service_charge.value),other=n(form.elements.customer_other_charge?.value),base=adults*adult+kids*kid,total=base+extra+other;summary.innerHTML=`<div><span>Meal Base</span><strong>€${base.toFixed(2)}</strong></div><div><span>Delivery &amp; Service</span><strong>€${extra.toFixed(2)}</strong></div><div><span>Other Charges</span><strong>€${other.toFixed(2)}</strong></div><div class="pricing-total"><span>Total Price</span><strong>€${total.toFixed(2)}</strong></div>`;}fields.forEach(f=>f.addEventListener('input',calc));form.querySelector('[data-apply-recommended-prices]')?.addEventListener('click',()=>{form.elements.adult_charge.value=Number(form.dataset.recommendedAdult||0).toFixed(2);form.elements.kid_charge.value=Number(form.dataset.recommendedKid||0).toFixed(2);calc();});calc();})();
 (()=>{const d=document.querySelector('[data-finance-dialog]');document.querySelector('[data-open-finance-dialog]')?.addEventListener('click',()=>d?.showModal());document.querySelector('[data-close-finance]')?.addEventListener('click',()=>d?.close());d?.addEventListener('click',e=>{if(e.target===d)d.close();});})();
-(()=>{document.querySelectorAll('.order-detail-page > section.card').forEach(section=>{let head=section.querySelector(':scope > .admin-title');let title=section.querySelector(':scope > h2');if(!head&&title){head=document.createElement('div');head.className='admin-title admin-fold-head';title.before(head);head.appendChild(title);}if(!head)return;const body=document.createElement('div');body.className='admin-fold-body';while(head.nextSibling)body.appendChild(head.nextSibling);section.appendChild(body);const btn=document.createElement('button');btn.type='button';btn.className='admin-fold-toggle';btn.setAttribute('aria-label','Open or close section');btn.innerHTML='⌄';head.appendChild(btn);section.classList.add('admin-fold');if(!['customer-event-details','quote-confirmation'].includes(section.id))section.classList.add('is-collapsed');const sync=()=>{const closed=section.classList.contains('is-collapsed');btn.setAttribute('aria-expanded',String(!closed));btn.innerHTML=closed?'⌄':'⌃';};btn.addEventListener('click',()=>{section.classList.toggle('is-collapsed');sync();});sync();});})();
+(()=>{
+  const folds=[];
+  document.querySelectorAll('.order-detail-page > section.card').forEach(section=>{
+    let head=section.querySelector(':scope > .admin-title');
+    let title=section.querySelector(':scope > h2');
+    if(!head&&title){head=document.createElement('div');head.className='admin-title admin-fold-head';title.before(head);head.appendChild(title);}
+    if(!head)return;
+    head.classList.add('admin-fold-head');
+    title=head.querySelector('h2');if(!title)return;
+    const body=document.createElement('div');body.className='admin-fold-body';
+    while(head.nextSibling)body.appendChild(head.nextSibling);
+    section.appendChild(body);
+    const btn=document.createElement('button');btn.type='button';btn.className='admin-fold-toggle';btn.setAttribute('aria-label','Open or close section');
+    const line=document.createElement('div');line.className='admin-fold-title-line';title.before(line);line.append(title,btn);
+    section.classList.add('admin-fold','is-collapsed');
+    const sync=()=>{const closed=section.classList.contains('is-collapsed');btn.setAttribute('aria-expanded',String(!closed));btn.textContent=closed?'⌄':'⌃';};
+    const toggle=()=>{section.classList.toggle('is-collapsed');sync();};
+    btn.addEventListener('click',e=>{e.stopPropagation();toggle();});
+    line.addEventListener('click',e=>{if(e.target!==btn)toggle();});
+    section._syncAdminFold=sync;folds.push(section);sync();
+  });
+  const openHash=()=>{const id=(location.hash||'').slice(1);if(!id)return;const section=document.getElementById(id);if(section?.classList.contains('admin-fold')){section.classList.remove('is-collapsed');section._syncAdminFold?.();setTimeout(()=>section.scrollIntoView({block:'start'}),20);}};
+  openHash();window.addEventListener('hashchange',openHash);
+})();
 </script>
 {% endblock %}
