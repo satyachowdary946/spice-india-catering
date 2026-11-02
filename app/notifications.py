@@ -14,21 +14,37 @@ def _customer_email_configured() -> bool:
 
 
 def resend_email_configured() -> bool:
-    return bool(_customer_email_configured() and os.getenv("ADMIN_NOTIFICATION_EMAIL"))
+    return bool(_customer_email_configured())
 
 
-async def _send_email(to_email: str, subject: str, html_body: str) -> tuple[bool, str]:
+def _normalise_recipients(to_email: str | Iterable[str]) -> list[str]:
+    if isinstance(to_email, str):
+        values = [to_email]
+    else:
+        values = list(to_email or [])
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip().lower()
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+async def _send_email(to_email: str | Iterable[str], subject: str, html_body: str) -> tuple[bool, str]:
     if not _customer_email_configured():
         return False, "Resend is not configured."
-    if not to_email:
-        return False, "Customer email is missing."
+    recipients = _normalise_recipients(to_email)
+    if not recipients:
+        return False, "Email recipient is missing."
     headers = {
         "Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
         "Content-Type": "application/json",
     }
     payload = {
         "from": os.environ["RESEND_FROM_EMAIL"],
-        "to": [to_email],
+        "to": recipients,
         "subject": subject,
         "html": html_body,
     }
@@ -182,6 +198,7 @@ async def notify_admin_new_quote_email(
     delivery_time: str,
     total_people: int,
     admin_url: str,
+    recipient_emails: Iterable[str] | None = None,
 ) -> tuple[bool, str]:
     if not resend_email_configured():
         return False, "Resend email notification is not configured."
@@ -203,7 +220,8 @@ async def notify_admin_new_quote_email(
       <a href="{safe_admin_url}" style="display:inline-block;padding:13px 20px;background:#0f766e;color:#fff;text-decoration:none;border-radius:10px;font-weight:800">Open Order</a>
     """
     html_body = _email_shell("New catering quote received", f"{order_number} · {customer_name}", body)
-    return await _send_email(os.environ["ADMIN_NOTIFICATION_EMAIL"], f"New Catering Quote — {order_number} — {customer_name}", html_body)
+    recipients = list(recipient_emails or []) or [os.getenv("ADMIN_NOTIFICATION_EMAIL", "")]
+    return await _send_email(recipients, f"New Catering Quote — {order_number} — {customer_name}", html_body)
 
 
 # =========================================================
@@ -396,6 +414,7 @@ async def notify_admin_order_confirmed_email(
     admin_url: str,
     print_url: str,
     kitchen_url: str,
+    recipient_emails: Iterable[str] | None = None,
 ) -> tuple[bool, str]:
     if not resend_email_configured():
         return False, "Admin email notification is not configured."
@@ -413,7 +432,8 @@ async def notify_admin_order_confirmed_email(
       <p style="margin-top:20px;color:#5f6c68">Kitchen sending remains protected in the admin portal and is available only after confirmation.</p>
     """
     email_html = _email_shell("Order confirmed ✅", f"{order_number} · ready for kitchen preparation", body)
-    return await _send_email(os.environ["ADMIN_NOTIFICATION_EMAIL"], f"✅ Catering Order Confirmed — {order_number}", email_html)
+    recipients = list(recipient_emails or []) or [os.getenv("ADMIN_NOTIFICATION_EMAIL", "")]
+    return await _send_email(recipients, f"✅ Catering Order Confirmed — {order_number}", email_html)
 
 
 # =========================================================

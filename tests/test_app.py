@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from pathlib import Path
+from sqlalchemy import func, select
 from urllib.parse import unquote
 
 TEST_DB = Path(__file__).parent / "test_catering.db"
@@ -89,6 +90,49 @@ def test_build8_mobile_workflow():
             "confirm_password": "StrongPass123!",
         }, follow_redirects=False)
         assert r.status_code == 303
+
+        # Build 14.16: business settings support up to 3 order-alert emails and 5 admin logins.
+        settings = client.get("/admin/settings")
+        assert settings.status_code == 200
+        assert "Order Notification Emails" in settings.text
+        assert "Admin Login Accounts" in settings.text
+        settings_csrf = csrf_from(settings.text)
+        saved_settings = client.post("/admin/settings", data={
+            "csrf_token": settings_csrf,
+            "company_name": "Spice India",
+            "notification_email_1": "owner@example.com",
+            "notification_email_2": "orders@example.com",
+            "notification_email_3": "manager@example.com",
+        }, follow_redirects=False)
+        assert saved_settings.status_code == 303
+        with SessionLocal() as db:
+            biz = db.get(BusinessSettings, 1)
+            assert biz.notification_email_1 == "owner@example.com"
+            assert biz.notification_email_2 == "orders@example.com"
+            assert biz.notification_email_3 == "manager@example.com"
+
+        for number in range(2, 6):
+            page = client.get("/admin/settings")
+            add_admin = client.post("/admin/settings/admins/add", data={
+                "csrf_token": csrf_from(page.text),
+                "email": f"admin{number}@example.com",
+                "password": "StrongPass123!",
+                "confirm_password": "StrongPass123!",
+            }, follow_redirects=False)
+            assert add_admin.status_code == 303
+        page = client.get("/admin/settings")
+        assert "5/5" not in page.text  # add form disappears at the limit
+        blocked = client.post("/admin/settings/admins/add", data={
+            "csrf_token": csrf_from(page.text),
+            "email": "admin6@example.com",
+            "password": "StrongPass123!",
+            "confirm_password": "StrongPass123!",
+        }, follow_redirects=False)
+        assert blocked.status_code == 303
+        assert "Maximum+5+admin+login+accounts+allowed" in blocked.headers["location"]
+        from app.models import Admin as AdminModel
+        with SessionLocal() as db:
+            assert db.scalar(select(func.count(AdminModel.id))) == 5
 
         # Strict phone and Eircode validation.
         bad = quote_payload(phone="08912abc67")
@@ -366,7 +410,6 @@ def test_build8_mobile_workflow():
         }, follow_redirects=False)
         assert reset_again.status_code == 303
 
-        from sqlalchemy import func, select
         from app.models import QuoteRequest
         with SessionLocal() as db:
             assert (db.scalar(select(func.count(QuoteRequest.id))) or 0) == 0

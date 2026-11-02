@@ -207,6 +207,9 @@ def ensure_schema_compatibility() -> None:
             "menu_workbook_filename": "VARCHAR(255) DEFAULT ''",
             "menu_workbook_cloud_key": "VARCHAR(500) DEFAULT ''",
             "menu_workbook_uploaded_at": "TIMESTAMP",
+            "notification_email_1": "VARCHAR(255) DEFAULT ''",
+            "notification_email_2": "VARCHAR(255) DEFAULT ''",
+            "notification_email_3": "VARCHAR(255) DEFAULT ''",
         }
         for name, ddl in additions.items():
             if name not in columns:
@@ -236,6 +239,22 @@ def business(db: Session) -> BusinessSettings:
         db.commit()
         db.refresh(obj)
     return obj
+
+
+def admin_notification_emails(db: Session) -> list[str]:
+    biz = business(db)
+    emails = [
+        (biz.notification_email_1 or "").strip().lower(),
+        (biz.notification_email_2 or "").strip().lower(),
+        (biz.notification_email_3 or "").strip().lower(),
+    ]
+    seen: set[str] = set()
+    result: list[str] = []
+    for email in emails:
+        if email and email not in seen:
+            seen.add(email)
+            result.append(email)
+    return result
 
 
 def local_datetime(value: datetime | None) -> datetime | None:
@@ -1288,6 +1307,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         order.delivery_time.strftime("%H:%M") if order.delivery_time else "",
         adults + kids,
         admin_order_url(request, order.id),
+        admin_notification_emails(db),
     )
     selected_names = [item_by_id[item_id].name for item_id in unique_ids if item_id in item_by_id]
     received_local = local_datetime(order.created_at)
@@ -1476,7 +1496,7 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
         order.order_number, order.customer.name, order.customer.phone, order.event_name,
         order.event_date.strftime("%d %b %Y"), event_day(order), order.event_time.strftime("%H:%M"),
         order.delivery_time.strftime("%H:%M") if order.delivery_time else "", order.adults + order.kids,
-        admin_order_url(request, order.id),
+        admin_order_url(request, order.id), admin_notification_emails(db),
     )
     return {"ok": True, "token": order.public_token, "order_number": order.order_number}
 
@@ -1588,7 +1608,8 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
 def admin_settings(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
-    return render(request, db, "admin/settings.html", admin=admin)
+    admins = db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all()
+    return render(request, db, "admin/settings.html", admin=admin, admins=admins)
 
 
 @app.post("/admin/settings")
@@ -1596,6 +1617,7 @@ async def admin_settings_post(
     request: Request,
     company_name: str = Form(""), owner_name: str = Form(""), phone: str = Form(""), whatsapp: str = Form(""),
     email: str = Form(""), address: str = Form(""), eircode: str = Form(""), footer_note: str = Form(""),
+    notification_email_1: str = Form(""), notification_email_2: str = Form(""), notification_email_3: str = Form(""),
     branch_label: str = Form("Athlone Branch"), announcement_enabled: bool = Form(False),
     announcement_title: str = Form(""), announcement_text: str = Form(""),
     kitchen_whatsapp: str = Form(""),
@@ -1613,6 +1635,12 @@ async def admin_settings_post(
     obj.phone = phone.strip()
     obj.whatsapp = whatsapp.strip()
     obj.email = email.strip()
+    notification_emails = [notification_email_1.strip().lower(), notification_email_2.strip().lower(), notification_email_3.strip().lower()]
+    for value in notification_emails:
+        if value and not valid_email(value):
+            admins = db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all()
+            return render(request, db, "admin/settings.html", admin=admin, admins=admins, error=f"Invalid order notification email: {value}")
+    obj.notification_email_1, obj.notification_email_2, obj.notification_email_3 = notification_emails
     obj.address = address.strip()
     obj.eircode = eircode.strip().upper()
     obj.footer_note = footer_note.strip()
@@ -1623,15 +1651,15 @@ async def admin_settings_post(
     obj.kitchen_whatsapp = clean_phone(kitchen_whatsapp) if kitchen_whatsapp.strip() else ""
     group_url = kitchen_whatsapp_group_url.strip()
     if group_url and not group_url.startswith(("https://chat.whatsapp.com/", "https://wa.me/")):
-        return render(request, db, "admin/settings.html", admin=admin, error="Kitchen WhatsApp group link must be a valid WhatsApp link.")
+        return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Kitchen WhatsApp group link must be a valid WhatsApp link.")
     obj.kitchen_whatsapp_group_url = group_url
     allowed = {"image/png", "image/jpeg", "image/webp"}
     if logo and logo.filename:
         if logo.content_type not in allowed:
-            return render(request, db, "admin/settings.html", admin=admin, error="Logo must be PNG, JPEG or WebP.")
+            return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Logo must be PNG, JPEG or WebP.")
         data = await logo.read()
         if len(data) > 2 * 1024 * 1024:
-            return render(request, db, "admin/settings.html", admin=admin, error="Logo must be smaller than 2 MB.")
+            return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Logo must be smaller than 2 MB.")
         obj.logo_blob = data
         obj.logo_content_type = logo.content_type
 
@@ -1640,14 +1668,87 @@ async def admin_settings_post(
         obj.hero_image_content_type = None
     if hero_image and hero_image.filename:
         if hero_image.content_type not in allowed:
-            return render(request, db, "admin/settings.html", admin=admin, error="Homepage background must be PNG, JPEG or WebP.")
+            return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Homepage background must be PNG, JPEG or WebP.")
         hero_data = await hero_image.read()
         if len(hero_data) > 5 * 1024 * 1024:
-            return render(request, db, "admin/settings.html", admin=admin, error="Homepage background must be smaller than 5 MB.")
+            return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Homepage background must be smaller than 5 MB.")
         obj.hero_image_blob = hero_data
         obj.hero_image_content_type = hero_image.content_type
     db.commit()
     return RedirectResponse("/admin/settings?saved=1", status_code=303)
+
+
+@app.post("/admin/settings/admins/add")
+def admin_settings_add_admin(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    if (db.scalar(select(func.count(Admin.id))) or 0) >= 5:
+        return RedirectResponse("/admin/settings?admin_error=Maximum+5+admin+login+accounts+allowed", status_code=303)
+    email = email.strip().lower()
+    if not valid_email(email):
+        return RedirectResponse("/admin/settings?admin_error=Enter+a+valid+admin+email", status_code=303)
+    if db.scalar(select(Admin).where(Admin.email == email)):
+        return RedirectResponse("/admin/settings?admin_error=That+admin+email+already+exists", status_code=303)
+    if password != confirm_password:
+        return RedirectResponse("/admin/settings?admin_error=Passwords+do+not+match", status_code=303)
+    try:
+        password_hash = hash_password(password)
+    except ValueError as exc:
+        return RedirectResponse(f"/admin/settings?admin_error={quote(str(exc))}", status_code=303)
+    db.add(Admin(email=email, password_hash=password_hash))
+    db.commit()
+    return RedirectResponse("/admin/settings?admin_saved=1", status_code=303)
+
+
+@app.post("/admin/settings/admins/{admin_id}")
+def admin_settings_update_admin(
+    admin_id: int,
+    request: Request,
+    email: str = Form(...),
+    new_password: str = Form(""),
+    action: str = Form("save"),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    current_admin, redirect = admin_or_redirect(request, db)
+    if redirect:
+        return redirect
+    check_csrf(request, csrf_token)
+    target = db.get(Admin, admin_id)
+    if not target:
+        return RedirectResponse("/admin/settings?admin_error=Admin+account+not+found", status_code=303)
+    if action == "delete":
+        if target.id == current_admin.id:
+            return RedirectResponse("/admin/settings?admin_error=You+cannot+delete+the+account+you+are+currently+using", status_code=303)
+        if (db.scalar(select(func.count(Admin.id))) or 0) <= 1:
+            return RedirectResponse("/admin/settings?admin_error=At+least+one+admin+account+must+remain", status_code=303)
+        db.delete(target)
+        db.commit()
+        return RedirectResponse("/admin/settings?admin_deleted=1", status_code=303)
+
+    email = email.strip().lower()
+    if not valid_email(email):
+        return RedirectResponse("/admin/settings?admin_error=Enter+a+valid+admin+email", status_code=303)
+    duplicate = db.scalar(select(Admin).where(Admin.email == email, Admin.id != target.id))
+    if duplicate:
+        return RedirectResponse("/admin/settings?admin_error=That+admin+email+already+exists", status_code=303)
+    target.email = email
+    if new_password.strip():
+        try:
+            target.password_hash = hash_password(new_password)
+        except ValueError as exc:
+            return RedirectResponse(f"/admin/settings?admin_error={quote(str(exc))}", status_code=303)
+    db.commit()
+    return RedirectResponse("/admin/settings?admin_saved=1", status_code=303)
 
 
 @app.post("/admin/settings/reset-orders")
@@ -3277,6 +3378,7 @@ async def customer_confirm_order(token: str, request: Request, db: Session = Dep
             order.event_date.strftime("%d %b %Y"), event_day(order), order.adults + order.kids,
             f"{p['total']:.2f}", admin_order_url(request, order.id),
             f"{base}/admin/orders/{order.id}/print", f"{base}/admin/orders/{order.id}/kitchen-quick-share",
+            admin_notification_emails(db),
         )
         await send_customer_status_email_for_order(order, request, db, "confirmed")
     return RedirectResponse(f"/orders/{token}?confirmed=1", status_code=303)

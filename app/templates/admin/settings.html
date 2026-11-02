@@ -1,8 +1,134 @@
-{% extends "admin/admin_base.html" %}{% block title %}Business Settings · Catering Admin{% endblock %}{% block body %}
-<div class="admin-title"><div><div class="eyebrow">Website Identity</div><h1>Business Settings</h1><p class="muted">Update public details, branding and operational settings.</p></div></div>{% if request.query_params.get('saved') %}<div class="notice success">Business Settings Saved.</div>{% endif %}{% if request.query_params.get('orders_reset') %}<div class="notice success"><strong>Test orders removed.</strong> New public order numbering will restart from CAT0001.</div>{% endif %}{% if request.query_params.get('reset_error') %}<div class="notice error">{{ request.query_params.get('reset_error').replace('+',' ') }}</div>{% endif %}{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
-<form class="card" method="post" action="/admin/settings" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="admin-form-grid two"><div class="field"><label>Company Name</label><input name="company_name" value="{{ business.company_name }}"></div><div class="field"><label>Header Branch Label</label><input name="branch_label" value="{{ business.branch_label or 'Athlone Branch' }}"></div><div class="field"><label>Owner / Contact Name</label><input name="owner_name" value="{{ business.owner_name }}"></div><div class="field"><label>Phone</label><input name="phone" type="tel" value="{{ business.phone }}"></div><div class="field"><label>WhatsApp</label><input name="whatsapp" type="tel" value="{{ business.whatsapp }}"></div><div class="field"><label>Kitchen WhatsApp Number</label><input name="kitchen_whatsapp" type="tel" value="{{ business.kitchen_whatsapp or '' }}"><span class="help">Optional fallback for direct WhatsApp sharing.</span></div><div class="field"><label>Kitchen WhatsApp Group Link</label><input name="kitchen_whatsapp_group_url" type="url" value="{{ business.kitchen_whatsapp_group_url or '' }}" placeholder="https://chat.whatsapp.com/..."><span class="help">Paste the kitchen group's WhatsApp invite link. Send To Kitchen will prepare the PDF message, then open this group.</span></div><div class="field"><label>Email</label><input name="email" type="email" value="{{ business.email }}"></div><div class="field"><label>Eircode</label><input name="eircode" value="{{ business.eircode }}"></div></div><div class="field" style="margin-top:12px"><label>Address</label><textarea name="address">{{ business.address }}</textarea></div>
-<section class="settings-section"><div class="eyebrow">Homepage</div><h2>Food Background Image</h2>{% if business.hero_image_blob %}<img src="/homepage-food-image" alt="Current homepage food background" class="settings-hero-preview">{% endif %}<div class="field"><label>Replace Homepage Background</label><input name="hero_image" type="file" accept="image/png,image/jpeg,image/webp"></div>{% if business.hero_image_blob %}<label class="checkbox-row" style="margin-top:12px"><input name="remove_hero_image" type="checkbox" value="true"><span><strong>Remove Custom Background</strong></span></label>{% endif %}</section>
-<section class="settings-section"><div class="eyebrow">Customer Website Banner</div><h2>Announcement / Ad Display</h2><label class="checkbox-row announcement-toggle"><input name="announcement_enabled" type="checkbox" value="true" {% if business.announcement_enabled %}checked{% endif %}><span><strong>Show Announcement</strong></span></label><div class="admin-form-grid two"><div class="field"><label>Small Label</label><input name="announcement_title" value="{{ business.announcement_title or '' }}"></div><div class="field"><label>Announcement Text</label><input name="announcement_text" value="{{ business.announcement_text or '' }}"></div></div></section>
-<div class="field" style="margin-top:12px"><label>Footer Note</label><textarea name="footer_note">{{ business.footer_note }}</textarea></div><div class="field" style="margin-top:12px"><label>Logo / Profile Image</label>{% if business.logo_blob %}<img src="/business-logo" alt="Current business logo" class="settings-logo-preview">{% endif %}<input name="logo" type="file" accept="image/png,image/jpeg,image/webp"></div><button class="btn" type="submit" style="margin-top:16px">Save Settings</button></form>
-{% if not business.orders_reset_completed %}<section class="card reset-orders-card" style="margin-top:18px"><div class="eyebrow">One-Time Test Data Reset</div><h2>Reset Test Orders & Restart Numbering</h2><p class="muted">This one-time action permanently deletes all current catering orders, payments, expenses, requested dishes and order history. Menus, customers, business settings and admin login are kept. The next order starts at <strong>CAT0001</strong>. <strong>After you use it successfully, this entire reset section disappears permanently.</strong></p><form method="post" action="/admin/settings/reset-orders" onsubmit="return confirm('Permanently delete ALL current orders and restart numbering? This one-time reset cannot be shown again.')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Type RESET ORDERS To Confirm</label><input name="confirmation" autocomplete="off" required></div><button class="btn danger" type="submit" style="margin-top:10px">Reset Test Orders</button></form></section>{% endif %}
+{% extends "admin/admin_base.html" %}
+{% block title %}Business Settings · Catering Admin{% endblock %}
+{% block body %}
+<div class="admin-title">
+  <div>
+    <div class="eyebrow">Website & Admin</div>
+    <h1>Business Settings</h1>
+    <p class="muted">Manage business details, order alerts and admin access.</p>
+  </div>
+</div>
+
+{% if request.query_params.get('saved') %}<div class="notice success">Business Settings Saved.</div>{% endif %}
+{% if request.query_params.get('admin_saved') %}<div class="notice success">Admin login account saved.</div>{% endif %}
+{% if request.query_params.get('admin_deleted') %}<div class="notice success">Admin login account removed.</div>{% endif %}
+{% if request.query_params.get('admin_error') %}<div class="notice error">{{ request.query_params.get('admin_error').replace('+',' ') }}</div>{% endif %}
+{% if request.query_params.get('orders_reset') %}<div class="notice success"><strong>Test orders removed.</strong> New public order numbering will restart from CAT0001.</div>{% endif %}
+{% if request.query_params.get('reset_error') %}<div class="notice error">{{ request.query_params.get('reset_error').replace('+',' ') }}</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+<form class="card" method="post" action="/admin/settings" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div class="eyebrow">Business Details</div>
+  <div class="admin-form-grid two">
+    <div class="field"><label>Company Name</label><input name="company_name" value="{{ business.company_name }}"></div>
+    <div class="field"><label>Header Branch Label</label><input name="branch_label" value="{{ business.branch_label or 'Athlone Branch' }}"></div>
+    <div class="field"><label>Owner / Contact Name</label><input name="owner_name" value="{{ business.owner_name }}"></div>
+    <div class="field"><label>Phone</label><input name="phone" type="tel" value="{{ business.phone }}"></div>
+    <div class="field"><label>WhatsApp</label><input name="whatsapp" type="tel" value="{{ business.whatsapp }}"></div>
+    <div class="field"><label>Public Business Email</label><input name="email" type="email" value="{{ business.email }}"></div>
+    <div class="field"><label>Eircode</label><input name="eircode" value="{{ business.eircode }}"></div>
+  </div>
+  <div class="field" style="margin-top:12px"><label>Address</label><textarea name="address">{{ business.address }}</textarea></div>
+
+  <section class="settings-section">
+    <div class="eyebrow">Order Alerts</div>
+    <h2>Order Notification Emails</h2>
+    <p class="muted">Up to 3 email addresses can receive new customer quote requests and confirmed-order alerts.</p>
+    <div class="admin-form-grid two">
+      <div class="field"><label>Notification Email 1</label><input name="notification_email_1" type="email" value="{{ business.notification_email_1 or '' }}" placeholder="owner@example.com"></div>
+      <div class="field"><label>Notification Email 2</label><input name="notification_email_2" type="email" value="{{ business.notification_email_2 or '' }}" placeholder="manager@example.com"></div>
+      <div class="field"><label>Notification Email 3</label><input name="notification_email_3" type="email" value="{{ business.notification_email_3 or '' }}" placeholder="orders@example.com"></div>
+    </div>
+    <span class="help">Leave unused boxes empty. If all three are empty, the existing server notification email is used as the fallback.</span>
+  </section>
+
+  <section class="settings-section">
+    <div class="eyebrow">Kitchen WhatsApp</div>
+    <h2>Kitchen Sharing</h2>
+    <div class="admin-form-grid two">
+      <div class="field"><label>Kitchen WhatsApp Number</label><input name="kitchen_whatsapp" type="tel" value="{{ business.kitchen_whatsapp or '' }}"><span class="help">Optional fallback for direct WhatsApp sharing.</span></div>
+      <div class="field"><label>Kitchen WhatsApp Group Link</label><input name="kitchen_whatsapp_group_url" type="url" value="{{ business.kitchen_whatsapp_group_url or '' }}" placeholder="https://chat.whatsapp.com/..."><span class="help">Paste the kitchen group's WhatsApp invite link.</span></div>
+    </div>
+  </section>
+
+  <section class="settings-section">
+    <div class="eyebrow">Homepage</div>
+    <h2>Food Background Image</h2>
+    {% if business.hero_image_blob %}<img src="/homepage-food-image" alt="Current homepage food background" class="settings-hero-preview">{% endif %}
+    <div class="field"><label>Replace Homepage Background</label><input name="hero_image" type="file" accept="image/png,image/jpeg,image/webp"></div>
+    {% if business.hero_image_blob %}<label class="checkbox-row" style="margin-top:12px"><input name="remove_hero_image" type="checkbox" value="true"><span><strong>Remove Custom Background</strong></span></label>{% endif %}
+  </section>
+
+  <section class="settings-section">
+    <div class="eyebrow">Customer Website Banner</div>
+    <h2>Announcement / Ad Display</h2>
+    <label class="checkbox-row announcement-toggle"><input name="announcement_enabled" type="checkbox" value="true" {% if business.announcement_enabled %}checked{% endif %}><span><strong>Show Announcement</strong></span></label>
+    <div class="admin-form-grid two">
+      <div class="field"><label>Small Label</label><input name="announcement_title" value="{{ business.announcement_title or '' }}"></div>
+      <div class="field"><label>Announcement Text</label><input name="announcement_text" value="{{ business.announcement_text or '' }}"></div>
+    </div>
+  </section>
+
+  <div class="field" style="margin-top:12px"><label>Footer Note</label><textarea name="footer_note">{{ business.footer_note }}</textarea></div>
+  <div class="field" style="margin-top:12px"><label>Logo / Profile Image</label>{% if business.logo_blob %}<img src="/business-logo" alt="Current business logo" class="settings-logo-preview">{% endif %}<input name="logo" type="file" accept="image/png,image/jpeg,image/webp"></div>
+  <button class="btn" type="submit" style="margin-top:16px">Save Business Settings</button>
+</form>
+
+<section class="card" style="margin-top:18px">
+  <div class="eyebrow">Admin Access</div>
+  <h2>Admin Login Accounts</h2>
+  <p class="muted">Create up to 5 separate login accounts. Passwords are never displayed. Leave the password field blank unless you want to reset it.</p>
+
+  <div style="display:grid;gap:12px;margin-top:16px">
+    {% for account in admins %}
+    <form method="post" action="/admin/settings/admins/{{ account.id }}" class="settings-section" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="admin-form-grid two">
+        <div class="field">
+          <label>Login Email {% if account.id == admin.id %}<span class="muted">· Current Account</span>{% endif %}</label>
+          <input name="email" type="email" value="{{ account.email }}" required>
+        </div>
+        <div class="field">
+          <label>New Password (Optional)</label>
+          <input name="new_password" type="password" minlength="10" autocomplete="new-password" placeholder="Leave blank to keep current password">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn" type="submit" name="action" value="save">Save Login</button>
+        {% if account.id != admin.id %}<button class="btn danger" type="submit" name="action" value="delete" onclick="return confirm('Remove this admin login account?')">Remove Login</button>{% endif %}
+      </div>
+    </form>
+    {% endfor %}
+  </div>
+
+  {% if admins|length < 5 %}
+  <form method="post" action="/admin/settings/admins/add" class="settings-section" style="margin-top:16px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3>Add Admin Login <span class="muted">({{ admins|length }}/5 used)</span></h3>
+    <div class="admin-form-grid two">
+      <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username"></div>
+      <div class="field"><label>Password</label><input name="password" type="password" minlength="10" required autocomplete="new-password"></div>
+      <div class="field"><label>Confirm Password</label><input name="confirm_password" type="password" minlength="10" required autocomplete="new-password"></div>
+    </div>
+    <button class="btn" type="submit" style="margin-top:12px">Add Admin Login</button>
+  </form>
+  {% else %}
+  <div class="notice">Maximum 5 admin login accounts are already in use.</div>
+  {% endif %}
+</section>
+
+{% if not business.orders_reset_completed %}
+<section class="card reset-orders-card" style="margin-top:18px">
+  <div class="eyebrow">One-Time Test Data Reset</div>
+  <h2>Reset Test Orders & Restart Numbering</h2>
+  <p class="muted">This one-time action permanently deletes all current catering orders, payments, expenses, requested dishes and order history. Menus, customers, business settings and admin logins are kept. The next order starts at <strong>CAT0001</strong>.</p>
+  <form method="post" action="/admin/settings/reset-orders" onsubmit="return confirm('Permanently delete ALL current orders and restart numbering? This one-time reset cannot be shown again.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label>Type RESET ORDERS To Confirm</label><input name="confirmation" autocomplete="off" required></div>
+    <button class="btn danger" type="submit" style="margin-top:10px">Reset Test Orders</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}
