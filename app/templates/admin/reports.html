@@ -11,7 +11,7 @@
 <script>(()=>{const d=document.querySelector('[data-chef-payments-dialog]');if(!d)return;document.querySelector('[data-open-chef-payments]')?.addEventListener('click',()=>d.showModal());d.querySelectorAll('[data-close-chef-payments]').forEach(b=>b.addEventListener('click',()=>d.close()));d.addEventListener('click',e=>{if(e.target===d)d.close();});})();</script>
 {% endblock %}
 {% block body %}
-<div class="admin-title finance-page-title"><div><div class="eyebrow">Business performance</div><h1>Reports</h1><p class="muted">Admin-only sales, costs and profit based on event date. Cancelled and voided orders are excluded.</p></div><div class="actions"><a class="btn" href="/admin/reports/pdf?period={{ period }}">Download PDF report</a><a class="btn secondary" href="/admin/transactions">Transactions</a></div></div>
+<div class="admin-title finance-page-title"><div><div class="eyebrow">Irish business records</div><h1>Catering Financial Records</h1><p class="muted">Sales, customer receipts, business costs and expense-payment records for management, accountant and Revenue record-keeping support.</p></div><div class="actions"><a class="btn" href="/admin/reports/pdf?period={{ period }}">Download Irish Business Record PDF</a><a class="btn secondary" href="/admin/transactions">Transactions</a></div></div>
 <form class="report-filterbar" method="get" action="/admin/reports"><div class="field"><label for="report-period">Reporting Period</label><select id="report-period" name="period">{% for value,label in period_options %}<option value="{{ value }}" {% if period==value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><button class="btn" type="submit">Update report</button></form>
 <div class="finance-period-line"><strong>{{ period_label }}</strong><span>{% if start_date %}{{ start_date.strftime('%d %b %Y') }} – {% endif %}{{ end_date.strftime('%d %b %Y') }}</span></div>
 <section class="report-kpi-grid" aria-label="Financial report summary">
@@ -24,7 +24,9 @@
  <div class="report-kpi profit"><span>Net Profit</span><strong>€{{ '%.2f'|format(net_profit) }}</strong><small>Sale minus total cost</small></div>
  <div class="report-kpi profit"><span>Net Profit %</span><strong>{{ '%.2f'|format(net_profit_percent) }}%</strong><small>Net profit ÷ sales</small></div>
  <div class="report-kpi positive"><span>Payment Received</span><strong>€{{ '%.2f'|format(collected) }}</strong><small>Payments received</small></div>
- <div class="report-kpi warning"><span>Outstanding</span><strong>€{{ '%.2f'|format(outstanding) }}</strong><small>Still due</small></div>
+ <div class="report-kpi warning"><span>Outstanding</span><strong>€{{ '%.2f'|format(outstanding) }}</strong><small>Customer balance due</small></div>
+ <div class="report-kpi positive"><span>Expenses Paid</span><strong>€{{ '%.2f'|format(expense_paid_total) }}</strong><small>Business expense payments made</small></div>
+ <div class="report-kpi warning"><span>Expenses Unpaid</span><strong>€{{ '%.2f'|format(expense_left_total) }}</strong><small>Operating costs still to pay</small></div>
 </section>
 <section class="report-kpi-grid expense-breakdown-kpis" aria-label="Operating expense breakdown">
  <div class="report-kpi expense"><span>Fuel</span><strong>€{{ '%.2f'|format(fixed_expense_totals.fuel) }}</strong></div>
@@ -33,6 +35,7 @@
  <div class="report-kpi expense"><span>Miscellaneous</span><strong>€{{ '%.2f'|format(fixed_expense_totals.misc) }}</strong></div>
  <div class="report-kpi expense"><span>Other</span><strong>€{{ '%.2f'|format(fixed_expense_totals.other) }}</strong></div>
 </section>
+<div class="report-record-note"><strong>Record-keeping:</strong> keep supporting invoices, receipts and payment records with this report. The PDF is an internal business record, not a Revenue tax or VAT return.</div>
 <section class="report-insight-grid" aria-label="Report highlights">
  <article class="report-insight-card"><span>Highest Paid Order</span>{% if highest_paid %}<strong>€{{ '%.2f'|format(highest_paid.finance.total_paid) }}</strong><p>{{ highest_paid.order.order_number }} · {{ highest_paid.order.customer.name }}</p><a href="/admin/transactions/{{ highest_paid.order.id }}">Open order →</a>{% else %}<strong>—</strong><p>No payments in this period.</p>{% endif %}</article>
  <article class="report-insight-card"><span>Most Profitable Order</span>{% if most_profitable %}<strong>€{{ '%.2f'|format(most_profitable.finance.net_profit) }}</strong><p>{{ most_profitable.order.order_number }} · {{ most_profitable.order.customer.name }} · {{ '%.2f'|format(most_profitable.finance.net_profit_percent) }}%</p><a href="/admin/transactions/{{ most_profitable.order.id }}">Open order →</a>{% else %}<strong>—</strong><p>No positive profit recorded.</p>{% endif %}</article>

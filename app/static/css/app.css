@@ -2030,3 +2030,18 @@ body.menu-page{overflow-x:clip}
 
 /* BUILD 14.19 PAYMENT COMMENT HOTFIX */
 .payment-comment-field textarea{min-height:72px!important;max-height:100px;resize:vertical}.payment-history-note{color:#d8e4df!important;font-size:.72rem!important;line-height:1.35;white-space:pre-wrap}
+
+
+/* BUILD 14.20 — biryani style chooser */
+.biryani-style-card{max-width:560px}
+.biryani-style-options{display:grid;gap:10px;margin-top:14px}
+.biryani-style-options button{display:grid;gap:3px;text-align:left;padding:14px 16px;border:1px solid #35504a;border-radius:14px;background:#0f1b18;color:#f8fafc;cursor:pointer}
+.biryani-style-options button:hover,.biryani-style-options button:focus-visible{border-color:#2dd4bf;background:#12322c;outline:none}
+.biryani-style-options strong{font-size:1rem}.biryani-style-options span{font-size:.78rem;color:#aabbb6}
+.item-variant-preview,.review-item-variant{display:block;color:#f6c85f;font-size:.76rem;font-weight:800;margin-top:3px}
+@media(max-width:699px){.biryani-style-card{width:min(92vw,520px)}.biryani-style-options button{padding:12px 13px}}
+
+/* BUILD 14.20 — sharper Irish business reports */
+.report-record-note{margin:12px 0 16px;padding:10px 12px;border:1px solid #38534c;border-radius:10px;background:#101b18;color:#b8c7c2;font-size:.78rem}
+.report-kpi-grid{gap:10px!important}.report-kpi{padding:14px 16px!important;border-radius:12px!important;min-height:108px!important}.report-kpi strong{font-size:1.65rem!important}.expense-breakdown-kpis .report-kpi{min-height:92px!important;padding:12px 14px!important}.report-insight-card{border-radius:12px!important}
+@media(max-width:699px){.report-kpi{min-height:92px!important;padding:12px 13px!important}.report-kpi strong{font-size:1.4rem!important}.report-record-note{font-size:.72rem}}

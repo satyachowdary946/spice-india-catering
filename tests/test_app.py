@@ -73,6 +73,7 @@ def test_build8_mobile_workflow():
         assert 'Review Basket' in menu_page.text
         assert 'data-item-details-dialog' in menu_page.text
         assert 'data-item-comment-dialog' in menu_page.text
+        assert 'data-biryani-style-dialog' in menu_page.text
         assert 'data-open-allergy-info' not in menu_page.text
         assert 'data-open-allergy-info' in home.text
         assert 'Cereals containing gluten' in home.text
@@ -83,6 +84,7 @@ def test_build8_mobile_workflow():
         assert 'data-quarter-time-dialog' in details_page.text
         assert 'data-time-target="event_time"' in details_page.text
         assert 'data-time-target="delivery_time"' in details_page.text
+        assert 'Type Of Event' in details_page.text
         assert 'type="time"' not in details_page.text
         # The page is already the menu, so the primary header does not repeat a Menu link.
         header_html = menu_page.text.split('</header>', 1)[0]
@@ -220,6 +222,7 @@ def test_build8_mobile_workflow():
         assert 'approve-request' in detail.text and 'reject-request' in detail.text
         assert 'data-finance-dialog' not in detail.text and 'id="payments"' not in detail.text
         assert 'Change the order status to Confirmed' in detail.text
+        assert 'Open Kitchen WhatsApp Group' not in detail.text
         csrf = csrf_from(detail.text)
         details_update = client.post("/admin/orders/1/details", data={
             "csrf_token": csrf,
@@ -331,6 +334,7 @@ def test_build8_mobile_workflow():
         reports = client.get("/admin/reports")
         assert reports.status_code == 200
         assert "Food Cost" in reports.text and "Chef Labour" in reports.text and "Net Profit %" in reports.text
+        assert "Irish business records" in reports.text and "Expenses Paid" in reports.text
         assert "data-open-chef-payments" in reports.text and "Chef Labour Payments" in reports.text
         reports_pdf = client.get("/admin/reports/pdf")
         assert reports_pdf.status_code == 200 and reports_pdf.content.startswith(b"%PDF")

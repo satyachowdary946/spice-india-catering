@@ -546,6 +546,33 @@ def event_day(order_or_date: Any) -> str:
     return event_date.strftime("%A")
 
 
+BIRYANI_STYLES = ("Malabar", "Hyderabadi", "North Indian")
+
+def normalise_biryani_style(value: Any) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "")).strip()
+    aliases = {"hyderabad": "Hyderabadi", "hyderbadi": "Hyderabadi", "north india": "North Indian"}
+    raw = aliases.get(raw.casefold(), raw)
+    for style in BIRYANI_STYLES:
+        if raw.casefold() == style.casefold():
+            return style
+    return ""
+
+def item_display_name(item: MenuItem, variant: str = "") -> str:
+    category = getattr(getattr(item, "subcategory", None), "category", None)
+    if category and (category.name or "").strip().casefold() == "biryani's":
+        style = normalise_biryani_style(variant)
+        if style:
+            return f"{style} {item.name}"
+    return item.name
+
+def order_item_biryani_style(item: QuoteItem) -> str:
+    text = str(getattr(item, "item_name", "") or "").strip()
+    for style in BIRYANI_STYLES:
+        if text.casefold().startswith(style.casefold() + " "):
+            return style
+    return ""
+
+
 def normalise_whatsapp_number(value: str) -> str:
     digits = re.sub(r"\D", "", value or "")
     if digits.startswith("00"):
@@ -1128,6 +1155,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     details = payload.get("details") or {}
     item_ids = payload.get("item_ids") or []
     raw_item_comments = payload.get("item_comments") or {}
+    raw_item_variants = payload.get("item_variants") or {}
     raw_requested_dishes = payload.get("requested_dishes") or []
     customer_notes = str(payload.get("customer_notes") or "").strip()
     errors: dict[str, str] = {}
@@ -1165,7 +1193,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     if not re.fullmatch(r"[0-9]{7,10}", phone_raw): errors["phone"] = "Phone number must contain digits only and be no more than 10 digits."
     if not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw): errors["whatsapp"] = "WhatsApp number must contain digits only and be no more than 10 digits."
     if not valid_email(email): errors["email"] = "Enter a valid email address for the catering quote."
-    if not event_name: errors["event_name"] = "Enter the event name."
+    if not event_name: errors["event_name"] = "Enter the type of event."
     if not address: errors["address"] = "Enter the event address."
     if not valid_eircode(eircode): errors["eircode"] = "Eircode must be exactly 7 letters and numbers."
 
@@ -1212,6 +1240,16 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
             comment = re.sub(r"\s+", " ", str(raw_comment or "")).strip()[:300]
             if comment:
                 item_comments[item_id] = comment
+    item_variants: dict[int, str] = {}
+    if isinstance(raw_item_variants, dict):
+        for raw_id, raw_variant in raw_item_variants.items():
+            try:
+                item_id = int(raw_id)
+            except Exception:
+                continue
+            style = normalise_biryani_style(raw_variant)
+            if style:
+                item_variants[item_id] = style
     if not unique_ids and not requested_dishes:
         errors["items"] = "Add at least one menu item or request a dish."
 
@@ -1225,6 +1263,9 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     ).all()
     if len(items) != len(unique_ids):
         return JSONResponse({"ok": False, "error": "One or more menu items are no longer available. Refresh the menu and review your basket."}, status_code=409)
+    missing_biryani_style = [item.name for item in items if (item.subcategory.category.name or "").strip().casefold() == "biryani's" and not item_variants.get(item.id)]
+    if missing_biryani_style:
+        return JSONResponse({"ok": False, "error": "Choose a biryani style for: " + ", ".join(missing_biryani_style)}, status_code=422)
 
     customer = db.scalar(select(Customer).where(Customer.phone == phone).order_by(Customer.id.asc()).limit(1))
     if not customer:
@@ -1277,7 +1318,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         db.add(QuoteItem(
             order_id=order.id,
             item_id=item.id,
-            item_name=item.name,
+            item_name=item_display_name(item, item_variants.get(item.id, "")),
             menu_name=menu.name,
             category_name=cat.name,
             subcategory_name=sub.name,
@@ -1452,6 +1493,7 @@ def customer_add_dishes(token: str, request: Request, db: Session = Depends(get_
         },
         "item_ids": [item.item_id for item in order.items if item.item_id],
         "item_comments": {str(item.item_id): item.customer_comment for item in order.items if item.item_id and (item.customer_comment or "").strip()},
+        "item_variants": {str(item.item_id): order_item_biryani_style(item) for item in order.items if item.item_id and order_item_biryani_style(item)},
         "requested_dishes": [dish.name for dish in order.requested_dishes],
         "customer_notes": order.customer_notes or "",
         "last_updated": datetime.utcnow().isoformat(),
@@ -1479,6 +1521,7 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     except Exception:
         unique_ids = []
     raw_item_comments = payload.get("item_comments") or {}
+    raw_item_variants = payload.get("item_variants") or {}
     item_comments: dict[int, str] = {}
     if isinstance(raw_item_comments, dict):
         for raw_id, raw_comment in raw_item_comments.items():
@@ -1489,6 +1532,16 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
             comment = re.sub(r"\s+", " ", str(raw_comment or "")).strip()[:300]
             if comment:
                 item_comments[item_id] = comment
+    item_variants: dict[int, str] = {}
+    if isinstance(raw_item_variants, dict):
+        for raw_id, raw_variant in raw_item_variants.items():
+            try:
+                item_id = int(raw_id)
+            except Exception:
+                continue
+            style = normalise_biryani_style(raw_variant)
+            if style:
+                item_variants[item_id] = style
     requested_names = []
     seen = set()
     for raw in payload.get("requested_dishes") or []:
@@ -1504,12 +1557,15 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     ).all()
     if len(items) != len(unique_ids):
         return JSONResponse({"ok": False, "error": "One or more menu items are no longer available."}, status_code=409)
+    missing_biryani_style = [item.name for item in items if (item.subcategory.category.name or "").strip().casefold() == "biryani's" and not item_variants.get(item.id)]
+    if missing_biryani_style:
+        return JSONResponse({"ok": False, "error": "Choose a biryani style for: " + ", ".join(missing_biryani_style)}, status_code=422)
     for old in list(order.items):
         db.delete(old)
     item_by_id = {item.id: item for item in items}
     for sort_index, item_id in enumerate(unique_ids):
         item = item_by_id[item_id]; sub = item.subcategory; cat = sub.category; menu = cat.menu
-        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item.name, menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, internal_cost_per_guest=item.internal_cost_per_guest, customer_comment=item_comments.get(item.id, ""), sort_order=sort_index))
+        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item_display_name(item, item_variants.get(item.id, "")), menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, internal_cost_per_guest=item.internal_cost_per_guest, customer_comment=item_comments.get(item.id, ""), sort_order=sort_index))
     existing = {dish.name.casefold(): dish for dish in order.requested_dishes}
     for name in requested_names:
         if name.casefold() not in existing:
@@ -2720,7 +2776,7 @@ def admin_order_details_update(
         if clean_email and not valid_email(clean_email):
             raise ValueError("Enter a valid email address")
         if not clean_event:
-            raise ValueError("Enter the event name")
+            raise ValueError("Enter the type of event")
         if not clean_address:
             raise ValueError("Enter the event address")
         if clean_code and not valid_eircode(clean_code):
@@ -4737,6 +4793,8 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
     fixed_expense_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
     fixed_expense_paid_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
     fixed_expense_left_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
+    expense_paid_total = Decimal("0.00")
+    expense_left_total = Decimal("0.00")
     chef_payment_rows: list[dict[str, Any]] = []
     customers: set[int] = set()
     customer_revenue: dict[int, dict[str, Any]] = {}
@@ -4751,6 +4809,10 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         operating_expenses += summary["operating_expenses"]
         expenses += summary["total_expenses"]
         net_profit += summary["net_profit"]
+        for expense in order.expenses or []:
+            payment_summary = expense_payment_summary(expense)
+            expense_paid_total += money(payment_summary["paid_amount"])
+            expense_left_total += money(payment_summary["balance"])
         for key in INTERNAL_EXPENSE_NAMES:
             fixed_row = summary["expense_breakdown"][key]
             fixed_expense_totals[key] += money(fixed_row["amount"])
@@ -4812,6 +4874,8 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         "fixed_expense_totals": fixed_expense_totals,
         "fixed_expense_paid_totals": fixed_expense_paid_totals,
         "fixed_expense_left_totals": fixed_expense_left_totals,
+        "expense_paid_total": money(expense_paid_total),
+        "expense_left_total": money(expense_left_total),
         "chef_payment_rows": chef_payment_rows,
         "cash_profit": cash_profit,
         "highest_paid": highest_paid,
@@ -4821,189 +4885,119 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
 
 
 def build_finance_report_pdf(data: dict[str, Any], biz: BusinessSettings) -> bytes:
+    """Create an Irish business record-keeping report suitable for accountant/Revenue support.
+
+    This is deliberately a management/accounting record, not a Revenue tax return and not a VAT return.
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        rightMargin=28,
-        leftMargin=28,
-        topMargin=30,
-        bottomMargin=30,
-        title=f"Catering financial report - {data['period_label']}",
+        rightMargin=24,
+        leftMargin=24,
+        topMargin=26,
+        bottomMargin=28,
+        title=f"Irish catering business financial record - {data['period_label']}",
     )
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "FinanceReportTitle",
-        parent=styles["Title"],
-        fontName="Helvetica-Bold",
-        fontSize=19,
-        leading=22,
-        textColor=colors.HexColor("#111111"),
-        alignment=0,
-        spaceAfter=4,
-    )
-    kicker = ParagraphStyle(
-        "FinanceReportKicker",
-        parent=styles["BodyText"],
-        fontName="Helvetica-Bold",
-        fontSize=7.5,
-        leading=9,
-        textColor=colors.HexColor("#5C6764"),
-        spaceAfter=4,
-    )
-    body = ParagraphStyle(
-        "FinanceReportBody",
-        parent=styles["BodyText"],
-        fontName="Helvetica",
-        fontSize=8.5,
-        leading=11,
-        textColor=colors.HexColor("#222222"),
-    )
-    small = ParagraphStyle(
-        "FinanceReportSmall",
-        parent=body,
-        fontSize=7,
-        leading=9,
-        textColor=colors.HexColor("#555555"),
-    )
-    section = ParagraphStyle(
-        "FinanceReportSection",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=12,
-        leading=15,
-        textColor=colors.HexColor("#111111"),
-        spaceBefore=14,
-        spaceAfter=7,
-    )
+    title_style = ParagraphStyle("IrishRecordTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=21, textColor=colors.HexColor("#10211D"), alignment=0, spaceAfter=4)
+    kicker = ParagraphStyle("IrishRecordKicker", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.5, textColor=colors.HexColor("#51716A"), spaceAfter=3)
+    body = ParagraphStyle("IrishRecordBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=8.1, leading=10.2, textColor=colors.HexColor("#1D2926"))
+    small = ParagraphStyle("IrishRecordSmall", parent=body, fontSize=6.6, leading=8.2, textColor=colors.HexColor("#53615D"))
+    section = ParagraphStyle("IrishRecordSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11.2, leading=13.5, textColor=colors.HexColor("#10211D"), spaceBefore=11, spaceAfter=6)
 
-    company = html.escape((biz.company_name or "Catering").strip())
-    period_dates = (
-        f"{data['start_date'].strftime('%d %b %Y')} - {data['end_date'].strftime('%d %b %Y')}"
-        if data["start_date"]
-        else f"Up to {data['end_date'].strftime('%d %b %Y')}"
-    )
+    company = html.escape((biz.company_name or "Catering Business").strip())
+    period_dates = f"{data['start_date'].strftime('%d %b %Y')} - {data['end_date'].strftime('%d %b %Y')}" if data["start_date"] else f"Up to {data['end_date'].strftime('%d %b %Y')}"
     story = [
-        Paragraph("FINANCIAL REPORT", kicker),
+        Paragraph("IRISH CATERING BUSINESS RECORD", kicker),
         Paragraph(company, title_style),
         Paragraph(f"<b>{html.escape(data['period_label'])}</b> · {period_dates}", body),
-        Spacer(1, 12),
+        Paragraph("Management record for accounts and Irish Revenue record-keeping support. This document is not a tax return or VAT return.", small),
+        Spacer(1, 10),
     ]
 
     summary_rows = [
-        ["Orders", str(data["order_count"]), "Unique customers", str(data["customer_count"])],
-        ["Total sales", f"€{data['booked_revenue']:.2f}", "Payment Received", f"€{data['collected']:.2f}"],
-        ["Food cost", f"€{data['food_cost']:.2f}", "Other expenses", f"€{data['operating_expenses']:.2f}"],
-        ["Total cost", f"€{data['expenses']:.2f}", "Outstanding", f"€{data['outstanding']:.2f}"],
-        ["Net profit", f"€{data['net_profit']:.2f}", "Net profit %", f"{data['net_profit_percent']:.2f}%"],
-        ["Fuel", f"€{data['fixed_expense_totals']['fuel']:.2f}", "Delivery", f"€{data['fixed_expense_totals']['delivery']:.2f}"],
-        ["Chef labour", f"€{data['fixed_expense_totals']['chef']:.2f}", "Miscellaneous", f"€{data['fixed_expense_totals']['misc']:.2f}"],
-        ["Other expenses", f"€{data['fixed_expense_totals']['other']:.2f}", "", ""],
+        ["Orders", str(data["order_count"]), "Customers", str(data["customer_count"])],
+        ["Sales recorded", f"€{data['booked_revenue']:.2f}", "Customer payments received", f"€{data['collected']:.2f}"],
+        ["Customer outstanding", f"€{data['outstanding']:.2f}", "Food cost", f"€{data['food_cost']:.2f}"],
+        ["Operating expenses", f"€{data['operating_expenses']:.2f}", "Total business cost", f"€{data['expenses']:.2f}"],
+        ["Expense payments made", f"€{data['expense_paid_total']:.2f}", "Expense costs unpaid", f"€{data['expense_left_total']:.2f}"],
+        ["Net profit (accrual view)", f"€{data['net_profit']:.2f}", "Net margin", f"{data['net_profit_percent']:.2f}%"],
     ]
-    summary = Table(summary_rows, colWidths=[92, 85, 92, 85], hAlign="LEFT")
+    summary = Table(summary_rows, colWidths=[104, 82, 116, 82], hAlign="LEFT")
     summary.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F4F7F6")),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#CCD4D1")),
-        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
-        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
-        ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
-        ("FONTSIZE", (0,0), (-1,-1), 8.5),
-        ("TEXTCOLOR", (0,0), (-1,-1), colors.HexColor("#111111")),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 7),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
-        ("LEFTPADDING", (0,0), (-1,-1), 7),
-        ("RIGHTPADDING", (0,0), (-1,-1), 7),
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F5F7F6")),
+        ("GRID", (0,0), (-1,-1), 0.45, colors.HexColor("#C8D1CE")),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"), ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 7.7), ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING", (0,0), (-1,-1), 5), ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING", (0,0), (-1,-1), 6), ("RIGHTPADDING", (0,0), (-1,-1), 6),
     ]))
-    story.extend([summary, Paragraph("Order income and profitability", section)])
+    story.append(summary)
 
-    order_table_data = [[
-        Paragraph("ORDER", small), Paragraph("CUSTOMER / EVENT", small), Paragraph("SALE", small),
-        Paragraph("FOOD", small), Paragraph("OTHER", small), Paragraph("TOTAL COST", small),
-        Paragraph("NET", small), Paragraph("MARGIN", small),
-    ]]
+    # Sales / receipts ledger.
+    story.append(Paragraph("Sales & customer receipts ledger", section))
+    sales_rows = [["ORDER", "EVENT / CUSTOMER", "EVENT DATE", "SALE", "RECEIVED", "OUTSTANDING", "STATUS"]]
     for row in data["rows"]:
-        order = row["order"]
-        finance = row["finance"]
-        order_table_data.append([
-            Paragraph(html.escape(order.order_number), body),
-            Paragraph(
-                f"<b>{html.escape(order.customer.name)}</b><br/>{html.escape(order.event_name)} · {order.event_date.strftime('%d %b %Y')}",
-                small,
-            ),
-            f"€{finance['final_price']:.2f}",
-            f"€{finance['food_cost']:.2f}",
-            f"€{finance['operating_expenses']:.2f}",
-            f"€{finance['total_expenses']:.2f}",
-            f"€{finance['net_profit']:.2f}",
-            f"{finance['net_profit_percent']:.2f}%",
+        order = row["order"]; f = row["finance"]
+        sales_rows.append([
+            order.order_number,
+            Paragraph(f"<b>{html.escape(order.event_name)}</b><br/>{html.escape(order.customer.name if order.customer else '')}", small),
+            order.event_date.strftime("%d %b %Y"),
+            f"€{f['final_price']:.2f}", f"€{f['total_paid']:.2f}", f"€{f['balance_due']:.2f}", str(f['payment_status']).replace('_',' ').title(),
         ])
-    if len(order_table_data) == 1:
-        order_table_data.append(["No orders", "", "", "", "", "", "", ""])
-
-    order_table = Table(
-        order_table_data,
-        repeatRows=1,
-        colWidths=[62, 130, 52, 52, 52, 58, 52, 48],
-        hAlign="LEFT",
-    )
-    order_table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#15211E")),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTNAME", (2,1), (-1,-1), "Helvetica-Bold"),
-        ("FONTSIZE", (0,0), (-1,-1), 6.7),
-        ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#CBD3D0")),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("TOPPADDING", (0,0), (-1,-1), 5),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-        ("LEFTPADDING", (0,0), (-1,-1), 4),
-        ("RIGHTPADDING", (0,0), (-1,-1), 4),
+    if len(sales_rows)==1: sales_rows.append(["No orders", "", "", "", "", "", ""])
+    sales_table = Table(sales_rows, repeatRows=1, colWidths=[58, 126, 66, 58, 62, 66, 66], hAlign="LEFT")
+    sales_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#17352F")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 6.6),
+        ("GRID", (0,0), (-1,-1), 0.35, colors.HexColor("#CBD3D0")), ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
     ]))
-    story.append(order_table)
+    story.append(sales_table)
 
-    expense_rows = []
+    # Cost and profitability ledger.
+    story.append(Paragraph("Order cost & profitability ledger", section))
+    cost_rows = [["ORDER", "FOOD", "FUEL", "DELIVERY", "CHEF", "MISC", "OTHER", "TOTAL COST", "NET", "MARGIN"]]
     for row in data["rows"]:
-        order = row["order"]
-        for expense in order.expenses:
-            expense_rows.append([
-                Paragraph(html.escape(order.order_number), small),
-                expense.expense_date.strftime("%d %b %Y"),
-                Paragraph(html.escape(expense.name), body),
-                f"€{money(expense.amount):.2f}",
-                Paragraph(html.escape(expense.note or ""), small),
-            ])
+        order=row["order"]; f=row["finance"]; b=f["expense_breakdown"]
+        other = money(b["other"]["amount"]) + sum((money(e.amount) for e in b.get("extras", [])), Decimal("0.00"))
+        cost_rows.append([order.order_number, f"€{f['food_cost']:.2f}", f"€{b['fuel']['amount']:.2f}", f"€{b['delivery']['amount']:.2f}", f"€{b['chef']['amount']:.2f}", f"€{b['misc']['amount']:.2f}", f"€{other:.2f}", f"€{f['total_expenses']:.2f}", f"€{f['net_profit']:.2f}", f"{f['net_profit_percent']:.2f}%"])
+    if len(cost_rows)==1: cost_rows.append(["No orders"]+[""]*9)
+    cost_table=Table(cost_rows, repeatRows=1, colWidths=[52,49,44,50,44,44,44,58,52,46], hAlign="LEFT")
+    cost_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#4A2A26")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 6.2),
+        ("GRID", (0,0), (-1,-1), 0.35, colors.HexColor("#D8CFCD")), ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+    ]))
+    story.append(cost_table)
 
-    story.append(Paragraph("Recorded catering expenses", section))
+    # Expense ledger including paid/left status.
+    story.append(Paragraph("Operating expense & payment ledger", section))
+    expense_rows=[]
+    for row in data["rows"]:
+        order=row["order"]
+        for expense in order.expenses:
+            ps=expense_payment_summary(expense)
+            expense_rows.append([order.order_number, expense.expense_date.strftime("%d %b %Y"), Paragraph(html.escape(expense.name), body), f"€{ps['amount']:.2f}", f"€{ps['paid_amount']:.2f}", f"€{ps['balance']:.2f}", Paragraph(html.escape(expense.note or ""), small)])
     if expense_rows:
-        expense_table = Table(
-            [["ORDER", "DATE", "EXPENSE", "AMOUNT", "NOTE"]] + expense_rows,
-            repeatRows=1,
-            colWidths=[82, 70, 135, 70, 160],
-            hAlign="LEFT",
-        )
+        expense_table=Table([["ORDER","DATE","EXPENSE","COST","PAID","LEFT","NOTE"]]+expense_rows, repeatRows=1, colWidths=[55,62,112,55,55,55,128], hAlign="LEFT")
         expense_table.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#4A211E")),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE", (0,0), (-1,-1), 7.2),
-            ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#D5CBC9")),
-            ("VALIGN", (0,0), (-1,-1), "TOP"),
-            ("TOPPADDING", (0,0), (-1,-1), 6),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-            ("LEFTPADDING", (0,0), (-1,-1), 5),
-            ("RIGHTPADDING", (0,0), (-1,-1), 5),
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#253A35")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 6.4),
+            ("GRID", (0,0), (-1,-1), 0.35, colors.HexColor("#CDD5D2")), ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
         ]))
         story.append(expense_table)
     else:
-        story.append(Paragraph("No catering expenses were recorded in this period.", body))
+        story.append(Paragraph("No operating expenses were recorded in this period.", body))
 
     story.extend([
-        Spacer(1, 14),
-        Paragraph(
-            "Total sales use the final agreed catering price. Food cost uses the selected dish internal cost per guest multiplied by order guest count. Net profit is total sales minus food cost and operating expenses. Cancelled and voided orders are excluded.",
-            small,
-        ),
+        Spacer(1, 12),
+        Paragraph("Record-keeping note", section),
+        Paragraph("Keep supporting source documents such as supplier invoices, purchase receipts, customer sales records, bank/payment records and other linking documents. Irish Revenue generally requires business records to be retained for six years. This report does not calculate or certify VAT, Income Tax or Corporation Tax; those figures should be prepared from the underlying records by the business/accountant according to the business's tax status.", small),
+        Paragraph("Revenue guidance: revenue.ie - Keeping records / VAT records and invoices.", small),
     ])
     doc.build(story)
     return buffer.getvalue()
@@ -5051,7 +5045,7 @@ def admin_reports_pdf(
     data = finance_report_data(db, period)
     pdf = build_finance_report_pdf(data, business(db))
     safe_period = re.sub(r"[^a-z0-9_-]+", "-", period.lower()).strip("-") or "report"
-    filename = f"catering-financial-report-{safe_period}-{date.today().isoformat()}.pdf"
+    filename = f"irish-catering-business-record-{safe_period}-{date.today().isoformat()}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",

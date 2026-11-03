@@ -1,16 +1,17 @@
 const DraftStore = (() => {
   const KEY = 'cateringDraftV1';
-  const blank = () => ({details:{}, item_ids:[], item_comments:{}, requested_dishes:[], customer_notes:'', last_updated:null});
-  const load = () => { try { const d=JSON.parse(localStorage.getItem(KEY))||blank(); d.details=d.details||{}; d.item_ids=Array.isArray(d.item_ids)?d.item_ids:[]; d.item_comments=(d.item_comments&&typeof d.item_comments==='object'&&!Array.isArray(d.item_comments))?d.item_comments:{}; d.requested_dishes=Array.isArray(d.requested_dishes)?d.requested_dishes:[]; d.customer_notes=String(d.customer_notes||''); return d; } catch { return blank(); } };
+  const blank = () => ({details:{}, item_ids:[], item_comments:{}, item_variants:{}, requested_dishes:[], customer_notes:'', last_updated:null});
+  const load = () => { try { const d=JSON.parse(localStorage.getItem(KEY))||blank(); d.details=d.details||{}; d.item_ids=Array.isArray(d.item_ids)?d.item_ids:[]; d.item_comments=(d.item_comments&&typeof d.item_comments==='object'&&!Array.isArray(d.item_comments))?d.item_comments:{}; d.item_variants=(d.item_variants&&typeof d.item_variants==='object'&&!Array.isArray(d.item_variants))?d.item_variants:{}; d.requested_dishes=Array.isArray(d.requested_dishes)?d.requested_dishes:[]; d.customer_notes=String(d.customer_notes||''); return d; } catch { return blank(); } };
   const save = (draft) => { draft.last_updated=new Date().toISOString(); localStorage.setItem(KEY,JSON.stringify(draft)); window.dispatchEvent(new CustomEvent('draftchange',{detail:draft})); };
   const clear = () => { localStorage.removeItem(KEY); window.dispatchEvent(new CustomEvent('draftchange',{detail:blank()})); };
   const setDetails = (details) => { const d=load(); d.details=details; save(d); return d; };
-  const toggleItem = (id) => { const d=load(); const n=Number(id); if(d.item_ids.includes(n)){d.item_ids=d.item_ids.filter(x=>x!==n);delete d.item_comments[String(n)];}else{d.item_ids=[...d.item_ids,n];} save(d); return d; };
-  const removeItem = (id) => { const d=load(); const n=Number(id); d.item_ids=d.item_ids.filter(x=>x!==n);delete d.item_comments[String(n)];save(d);return d; };
-  const setItemComment = (id,comment) => { const d=load(); const n=Number(id),key=String(n),value=String(comment||'').replace(/\s+/g,' ').trim().slice(0,300);if(value)d.item_comments[key]=value;else delete d.item_comments[key];if(value&&!d.item_ids.includes(n))d.item_ids=[...d.item_ids,n];save(d);return d; };
+  const toggleItem = (id) => { const d=load(); const n=Number(id); if(d.item_ids.includes(n)){d.item_ids=d.item_ids.filter(x=>x!==n);delete d.item_comments[String(n)];delete d.item_variants[String(n)];}else{d.item_ids=[...d.item_ids,n];} save(d); return d; };
+  const removeItem = (id) => { const d=load(); const n=Number(id); d.item_ids=d.item_ids.filter(x=>x!==n);delete d.item_comments[String(n)];delete d.item_variants[String(n)];save(d);return d; };
+  const setItemComment = (id,comment) => { const d=load(); const n=Number(id),key=String(n),value=String(comment||'').replace(/\s+/g,' ').trim().slice(0,300);if(value)d.item_comments[key]=value;else delete d.item_comments[key];save(d);return d; };
+  const setItemVariant = (id,variant) => { const d=load(); const n=Number(id),key=String(n),value=String(variant||'').trim();if(value)d.item_variants[key]=value;else delete d.item_variants[key];if(value&&!d.item_ids.includes(n))d.item_ids=[...d.item_ids,n];save(d);return d; };
   const setRequestedDishes = (dishes) => { const d=load(); d.requested_dishes=dishes; save(d); return d; };
   const setCustomerNotes = (notes) => { const d=load(); d.customer_notes=String(notes||''); save(d); return d; };
-  return {load,save,clear,setDetails,toggleItem,removeItem,setItemComment,setRequestedDishes,setCustomerNotes};
+  return {load,save,clear,setDetails,toggleItem,removeItem,setItemComment,setItemVariant,setRequestedDishes,setCustomerNotes};
 })();
 window.DraftStore=DraftStore;
 
@@ -96,7 +97,7 @@ async function submitCurrentDraft(button,errorBox){
   if(!current.item_ids.length&&!current.requested_dishes.length)throw new Error('Please choose at least one menu item or requested dish.');
   const editToken=localStorage.getItem('cateringEditOrderToken');
   const endpoint=editToken?'/api/orders/'+encodeURIComponent(editToken)+'/menu-update':'/api/quotes';
-  const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,item_comments:current.item_comments,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});
+  const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,item_comments:current.item_comments,item_variants:current.item_variants,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});
   const raw=await res.text();let body={};
   try{body=raw?JSON.parse(raw):{};}catch{body={ok:false,error:'We could not send your quote request. Please try again.'};}
   if(!res.ok||!body.ok){const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];throw new Error(errors.length?errors.join(' '):(body.error||'Could not send quote.'));}
@@ -163,6 +164,8 @@ function initMenu(){
   const categoryDialog=document.querySelector('[data-category-dialog]'), currentCategoryLabel=document.querySelector('[data-current-category]');
   const requestRows=document.querySelector('[data-request-rows]'), requestCount=document.querySelector('[data-request-count]');
   const comboDialog=document.querySelector('[data-combo-dialog]'), comboList=document.querySelector('[data-combo-list]'), comboTitle=document.querySelector('[data-combo-title]');
+  const biryaniDialog=document.querySelector('[data-biryani-style-dialog]'), biryaniTitle=biryaniDialog?.querySelector('[data-biryani-style-title]');
+  let pendingBiryaniItem=null;
   let selectedMenu=null;
   let selectedDiet='veg';
   let activeCategory=null;
@@ -232,6 +235,9 @@ function initMenu(){
   document.querySelectorAll('[data-close-item-details]').forEach(btn=>btn.addEventListener('click',()=>document.querySelector('[data-item-details-dialog]')?.close()));
   document.querySelector('[data-item-details-dialog]')?.addEventListener('click',e=>{if(e.target.matches('[data-item-details-dialog]'))e.target.close();});
   comboDialog?.addEventListener('click',e=>{if(e.target===comboDialog)comboDialog.close();});
+  document.querySelectorAll('[data-close-biryani-style]').forEach(btn=>btn.addEventListener('click',()=>biryaniDialog?.close()));
+  biryaniDialog?.addEventListener('click',e=>{if(e.target===biryaniDialog)biryaniDialog.close();});
+  biryaniDialog?.querySelectorAll('[data-biryani-style]').forEach(btn=>btn.addEventListener('click',()=>{if(!pendingBiryaniItem)return;DraftStore.setItemVariant(pendingBiryaniItem.id,btn.dataset.biryaniStyle||'');pendingBiryaniItem=null;biryaniDialog.close();render();updateBasketBar();}));
 
   function visibleMenus(){return selectedMenu===null?data:data.filter(m=>m.id===selectedMenu);}
   function buildCategories(){
@@ -240,15 +246,17 @@ function initMenu(){
       let cat=categories.get(category.name);
       if(!cat){cat={id:`cat-${categories.size}`,name:category.name,subs:new Map()};categories.set(category.name,cat);}
       category.subcategories.forEach(sub=>{
-        let targetSub=cat.subs.get(sub.name);
-        if(!targetSub){targetSub={id:sub.id,name:sub.name,items:new Map(),sort_order:sub.sort_order,heading_color:sub.heading_color||'#94A3B8'};cat.subs.set(sub.name,targetSub);}
+        const isBiryaniCategory=String(category.name||'').trim().toLowerCase()==="biryani's";
+        const subKey=isBiryaniCategory?'Biryani':sub.name;
+        let targetSub=cat.subs.get(subKey);
+        if(!targetSub){targetSub={id:isBiryaniCategory?'biryani-style':sub.id,name:subKey,items:new Map(),sort_order:sub.sort_order,heading_color:sub.heading_color||'#94A3B8'};cat.subs.set(subKey,targetSub);}
         sub.items.forEach(item=>{
-          const neutralCategory=['welcome drink','desserts','add ons'].includes(String(category.name||'').trim().toLowerCase());
-          const matchesDiet=neutralCategory||selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
+          const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
           const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name).toLowerCase();
           const matchesSearch=!searchTerm||haystack.includes(searchTerm);
           if(!matchesDiet||!matchesSearch)return;
-          if(!targetSub.items.has(item.id)){targetSub.items.set(item.id,{...item,menu:menu.name,category:category.name,subcategory:sub.name});if(item.heading_color)targetSub.heading_color=item.heading_color;}
+          const itemKey=isBiryaniCategory?String(item.name||'').trim().toLowerCase():item.id;
+          if(!targetSub.items.has(itemKey)){targetSub.items.set(itemKey,{...item,menu:menu.name,category:category.name,subcategory:subKey});if(item.heading_color)targetSub.heading_color=item.heading_color;}
         });
       });
     }));
@@ -312,10 +320,23 @@ function initMenu(){
     const results=new Map();
     visibleMenus().forEach(menu=>menu.categories.forEach(category=>category.subcategories.forEach(sub=>sub.items.forEach(item=>{
       const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name+' '+menu.name).toLowerCase();
-      if(searchTerm&&haystack.includes(searchTerm)&&!results.has(item.id))results.set(item.id,{...item,menu:menu.name,category:category.name,subcategory:sub.name});
+      const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
+      const isBiryani=String(category.name||'').trim().toLowerCase()==="biryani's";
+      const resultKey=isBiryani?`biryani:${String(item.name||'').trim().toLowerCase()}`:`id:${item.id}`;
+      if(matchesDiet&&searchTerm&&haystack.includes(searchTerm)&&!results.has(resultKey))results.set(resultKey,{...item,menu:menu.name,category:category.name,subcategory:isBiryani?'Biryani':sub.name});
     }))));
     return [...results.values()];
   };
+
+  function isBiryaniItem(item){return String(item?.category||'').trim().toLowerCase()==="biryani's";}
+  function handleAddItem(item){
+    if(!item)return;
+    const state=DraftStore.load();
+    const selected=state.item_ids.includes(Number(item.id));
+    if(selected){DraftStore.toggleItem(item.id);render();updateBasketBar();return;}
+    if(isBiryaniItem(item)){pendingBiryaniItem=item;if(biryaniTitle)biryaniTitle.textContent=`Choose ${item.name} Style`;biryaniDialog?.showModal();return;}
+    DraftStore.toggleItem(item.id);render();updateBasketBar();showComboSuggestions(item.id);
+  }
 
   function render(){
     regionBtns.forEach(b=>b.classList.toggle('active',b.dataset.menuChoice==='all'?selectedMenu===null:Number(b.dataset.menuChoice)===selectedMenu));
@@ -330,7 +351,7 @@ function initMenu(){
         ? `<section class="search-results-section"><div class="search-results-head"><div><div class="eyebrow">Search Results</div><h2>${results.length?`${results.length} Dish${results.length===1?'':'es'} Found`:'No Dishes Found'}</h2></div>${results.length?`<span class="muted">Tap + to add</span>`:''}</div><div class="menu-list search-result-list">${results.map(i=>itemCard(i,draft.item_ids.includes(i.id))).join('')}</div>${results.length?'':`<div class="empty search-empty"><strong>No menu dishes match “${escapeHtml(searchTerm)}”.</strong><span>Try another dish name or return to the full menu.</span></div>`}</section>`
         : '<div class="search-start-state"><div class="search-start-icon">⌕</div><h2>Search The Menu</h2><p>Start typing a dish name such as Biriyani, Paneer, Naan or Dosa.</p></div>';
       content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
-        const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
+        const id=Number(btn.dataset.addItem);handleAddItem(itemMap.get(id));
       }));
       bindItemDetails();updateBasketBar();
       return;
@@ -393,7 +414,7 @@ function initMenu(){
     updateCategoryFromScroll();
 
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
-      const id=Number(btn.dataset.addItem);const wasSelected=DraftStore.load().item_ids.includes(id);DraftStore.toggleItem(id);render();updateBasketBar();if(!wasSelected)showComboSuggestions(id);
+      const id=Number(btn.dataset.addItem);handleAddItem(itemMap.get(id));
     }));
     bindItemDetails();updateBasketBar();
   }
@@ -434,7 +455,7 @@ function initReview(){
 async function renderReviewItems(ids,box,submit,requestedCount=0){
   if(!ids.length){box.innerHTML='<div class="empty">No standard menu items selected. <a href="/menu"><strong>Choose Menu Items</strong></a></div>';if(submit)submit.disabled=requestedCount===0;return;}
   try{const res=await fetch('/api/menu-items?ids='+encodeURIComponent(ids.join(','))),items=await res.json(),groups={};items.forEach(i=>{(((groups[i.menu]??={})[i.category]??={})[i.subcategory]??=[]).push(i)});
-    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;const catCount=Object.values(subs).reduce((n,arr)=>n+arr.length,0);return `<div class="review-category review-category-highlight">${escapeHtml(c)} <span>× ${catCount}</span></div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list review-basket-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item review-basket-item ${escapeHtml(i.dietary)}">${i.image_url?`<img class="review-basket-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="review-basket-image review-basket-placeholder" aria-hidden="true">SI</div>`}<span class="review-basket-copy"><strong>${escapeHtml(i.name)}</strong>${DraftStore.load().item_comments?.[String(i.id)]?`<small class="review-item-comment">Your comment: ${escapeHtml(DraftStore.load().item_comments[String(i.id)])}</small>`:''}${i.description?`<small>${escapeHtml(i.description)}</small>`:''}${i.price!=null?`<strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
+    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;const catCount=Object.values(subs).reduce((n,arr)=>n+arr.length,0);return `<div class="review-category review-category-highlight">${escapeHtml(c)} <span>× ${catCount}</span></div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list review-basket-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item review-basket-item ${escapeHtml(i.dietary)}">${i.image_url?`<img class="review-basket-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="review-basket-image review-basket-placeholder" aria-hidden="true">SI</div>`}<span class="review-basket-copy"><strong>${escapeHtml(i.name)}</strong>${DraftStore.load().item_variants?.[String(i.id)]?`<small class="review-item-variant">Style: ${escapeHtml(DraftStore.load().item_variants[String(i.id)])}</small>`:''}${DraftStore.load().item_comments?.[String(i.id)]?`<small class="review-item-comment">Your comment: ${escapeHtml(DraftStore.load().item_comments[String(i.id)])}</small>`:''}${i.description?`<small>${escapeHtml(i.description)}</small>`:''}${i.price!=null?`<strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
     box.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>DraftStore.removeItem(Number(b.dataset.remove))));if(submit)submit.disabled=false;
   }catch{box.innerHTML='<div class="notice error">Could not load your selected items. Return to the menu and try again.</div>';if(submit)submit.disabled=true;}
 }
@@ -446,7 +467,7 @@ function initItemCommentDialog(){
   d.querySelector('[data-save-item-comment]')?.addEventListener('click',()=>{
     const id=Number(d.dataset.itemId);if(!id)return;
     const state=DraftStore.setItemComment(id,input.value);const comment=state.item_comments?.[String(id)]||'';d.close();
-    document.querySelectorAll(`[data-item-comment="${id}"]`).forEach(btn=>{btn.textContent=comment?'Comment ✓':'Comment';btn.classList.toggle('has-comment',Boolean(comment));const card=btn.closest('.menu-item');if(card){card.classList.add('selected');let preview=card.querySelector('.item-comment-preview');if(comment){if(!preview){preview=document.createElement('div');preview.className='item-comment-preview';card.querySelector('.menu-item-name')?.insertAdjacentElement('afterend',preview);}preview.textContent='Note: '+comment;}else preview?.remove();const add=card.querySelector(`[data-add-item="${id}"]`);if(add){add.textContent='✓';add.classList.add('active');add.setAttribute('aria-label','Remove '+(card.querySelector('.menu-item-name')?.textContent||'item'));}}});
+    document.querySelectorAll(`[data-item-comment="${id}"]`).forEach(btn=>{btn.textContent=comment?'Comment ✓':'Comment';btn.classList.toggle('has-comment',Boolean(comment));const card=btn.closest('.menu-item');if(card){const selected=state.item_ids.includes(id);card.classList.toggle('selected',selected);let preview=card.querySelector('.item-comment-preview');if(comment){if(!preview){preview=document.createElement('div');preview.className='item-comment-preview';card.querySelector('.menu-item-name')?.insertAdjacentElement('afterend',preview);}preview.textContent='Note: '+comment;}else preview?.remove();const add=card.querySelector(`[data-add-item="${id}"]`);if(add){add.textContent=selected?'✓':'+';add.classList.toggle('active',selected);add.setAttribute('aria-label',(selected?'Remove ':'Add ')+(card.querySelector('.menu-item-name')?.textContent||'item'));}}});
     updateBasketBar();
   });
   d.addEventListener('click',e=>{if(e.target===d)d.close();});
