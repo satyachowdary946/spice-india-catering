@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/app.css?v=build14_17">
+  <link rel="stylesheet" href="/static/css/app.css?v=build14_18">
   {% block head %}{% endblock %}
 </head>
 <body class="public-site{% if request.url.path == '/' %} home-page{% endif %}{% if request.url.path == '/menu' %} menu-page{% endif %}">
@@ -38,9 +38,12 @@
   <aside class="site-announcement no-print" aria-label="Catering announcement"><div class="container announcement-row">{% if business.announcement_title %}<span class="announcement-label">{{ business.announcement_title }}</span>{% endif %}<strong>{{ business.announcement_text }}</strong></div></aside>
   {% endif %}
   {% block body %}{% endblock %}
+  {% if request.url.path == "/" %}
+  <div class="container no-print"><div class="public-allergy-strip public-allergy-strip-home"><div><strong>Allergy Information</strong><span>Need allergen information? Contact us before ordering.</span></div><button type="button" class="allergy-info-btn" data-open-allergy-info>Allergy Info</button></div></div>
+  {% endif %}
   {% if request.url.path != "/menu" %}
-  <div class="container no-print"><div class="public-allergy-strip public-allergy-strip-footer"><div><strong>Allergy Information</strong><span>For allergen information about any dish, contact us before ordering.</span></div><button type="button" class="allergy-info-btn" data-open-allergy-info>View Allergy Info</button></div></div>
   <footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>{% endif %}
+  {% if request.url.path in ["/", "/review"] %}
   <dialog class="request-dialog allergy-info-dialog no-print" data-allergy-info-dialog aria-labelledby="allergy-info-title">
     <div class="request-dialog-card allergy-info-card">
       <div class="admin-title"><div><div class="eyebrow">Food Allergy Information</div><h2 id="allergy-info-title">Allergy Information</h2></div><button class="icon-close" type="button" data-close-allergy-info aria-label="Close">×</button></div>
@@ -56,7 +59,8 @@
       <p class="help">Please tell us the exact dishes and allergy/intolerance involved. Do not rely on general menu names alone.</p>
     </div>
   </dialog>
-  <script src="/static/js/customer.js?v=build14_17" defer></script>
+  {% endif %}
+  <script src="/static/js/customer.js?v=build14_18" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

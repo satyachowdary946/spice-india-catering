@@ -73,8 +73,11 @@ def test_build8_mobile_workflow():
         assert 'Review Basket' in menu_page.text
         assert 'data-item-details-dialog' in menu_page.text
         assert 'data-item-comment-dialog' in menu_page.text
-        assert 'data-open-allergy-info' in menu_page.text
-        assert 'Cereals containing gluten' in menu_page.text
+        assert 'data-open-allergy-info' not in menu_page.text
+        assert 'data-open-allergy-info' in home.text
+        assert 'Cereals containing gluten' in home.text
+        review_page = client.get('/review')
+        assert 'data-open-allergy-info' in review_page.text
         details_page = client.get('/order?next=/submit')
         assert details_page.status_code == 200
         assert 'data-quarter-time-dialog' in details_page.text
@@ -193,7 +196,8 @@ def test_build8_mobile_workflow():
         assert "Negotiating" not in orders.text
         assert "Request From" in orders.text and "Request To" in orders.text
         assert "Search & Filters" in orders.text
-        assert "Expense Payments" in orders.text
+        assert "data-open-expense-order" in orders.text
+        assert ">Expenses<" in orders.text
         dashboard = client.get("/admin")
         assert "Recent orders" in dashboard.text
         assert 'data-payment-dialog' in dashboard.text
@@ -322,11 +326,12 @@ def test_build8_mobile_workflow():
         assert "Food Cost" in transactions.text
         assert "Net Profit" in transactions.text
         assert "All Expense Payment Records" not in transactions.text
-        assert "Expense Payments" in transactions.text
+        assert ">Expenses<" in transactions.text
         assert "data-expense-order-dialog" in transactions.text
         reports = client.get("/admin/reports")
         assert reports.status_code == 200
         assert "Food Cost" in reports.text and "Chef Labour" in reports.text and "Net Profit %" in reports.text
+        assert "data-open-chef-payments" in reports.text and "Chef Labour Payments" in reports.text
         reports_pdf = client.get("/admin/reports/pdf")
         assert reports_pdf.status_code == 200 and reports_pdf.content.startswith(b"%PDF")
 
@@ -376,7 +381,7 @@ def test_build8_mobile_workflow():
         assert "SPICE INDIA — KITCHEN SHEET" in share_json["share_text"]
         assert "CONFIRMED MENU" in share_json["share_text"]
         assert share_json["pdf_url"].endswith("/kitchen/" + b1["token"] + ".pdf")
-        assert share_json["pdf_filename"] == "Kitchen-CAT0001.pdf"
+        assert share_json["pdf_filename"] == "Kitchen Sheet CAT0001.pdf"
         kitchen_pdf = client.get(f"/kitchen/{b1['token']}.pdf")
         assert kitchen_pdf.status_code == 200
         assert kitchen_pdf.content.startswith(b"%PDF")

@@ -181,10 +181,10 @@
 
 <section class="card" id="kitchen-sharing" style="margin-top:14px">
   <div class="admin-title">
-    <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Generate the confirmed kitchen PDF and share the actual PDF file to WhatsApp.</p></div>
+    <div><div class="eyebrow">Kitchen</div><h2 style="font-size:1.25rem">Kitchen Sheet & Sharing</h2><p class="muted">Generate the Kitchen Sheet PDF and share the PDF file to WhatsApp.</p></div>
     <div class="actions">{% if can_send_kitchen %}<a class="btn secondary small" href="/admin/orders/{{ order.id }}/print" target="_blank">Open / Print Sheet</a>{% else %}<button class="btn secondary small" type="button" disabled>Open / Print Sheet</button>{% endif %}</div>
   </div>
-  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" data-kitchen-share-form><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Included clearly at the end of the kitchen PDF.</span></div><button class="btn" type="submit" data-kitchen-share-btn style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Generate PDF & Share To Kitchen WhatsApp</button><div class="help" data-kitchen-share-status style="margin-top:8px">Generates the kitchen PDF and opens the phone share flow with the PDF attached.</div>{% if business.kitchen_whatsapp_group_url %}<a class="btn secondary small" href="{{ business.kitchen_whatsapp_group_url }}" target="_blank" rel="noopener" style="margin-top:10px">Open Kitchen WhatsApp Group</a>{% endif %}</form>
+  <form method="post" action="/admin/orders/{{ order.id }}/kitchen-share" data-kitchen-share-form><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="field"><label>Kitchen Comments *</label><textarea name="kitchen_comments" required maxlength="3000" {% if not can_send_kitchen %}disabled{% endif %}>{{ order.kitchen_comments }}</textarea><span class="help">Included clearly at the end of the kitchen PDF.</span></div><button class="btn" type="submit" data-kitchen-share-btn style="margin-top:10px" {% if not can_send_kitchen %}disabled{% endif %}>Share Kitchen Sheet PDF</button><div class="help" data-kitchen-share-status style="margin-top:8px">Generates the kitchen PDF and opens the phone share flow with the PDF attached.</div>{% if business.kitchen_whatsapp_group_url %}<a class="btn secondary small" href="{{ business.kitchen_whatsapp_group_url }}" target="_blank" rel="noopener" style="margin-top:10px">Open Kitchen WhatsApp Group</a>{% endif %}</form>
   {% if not can_send_kitchen %}<div class="help" style="margin-top:8px">Change the order status to Confirmed before sending anything to the kitchen.</div>{% endif %}
 </section>
 
@@ -228,7 +228,7 @@
     if(!kitchenForm.reportValidity())return;
     const btn=kitchenForm.querySelector('[data-kitchen-share-btn]');
     const status=kitchenForm.querySelector('[data-kitchen-share-status]');
-    const original=btn?.textContent||'Generate PDF & Share To Kitchen WhatsApp';
+    const original=btn?.textContent||'Share Kitchen Sheet PDF';
     if(btn){btn.disabled=true;btn.textContent='Generating PDF…';}
     if(status)status.textContent='Generating the kitchen PDF…';
     let objectUrl='';
@@ -241,7 +241,7 @@
       const pdfResponse=await fetch(data.pdf_url,{credentials:'same-origin',cache:'no-store'});
       if(!pdfResponse.ok)throw new Error('Kitchen PDF could not be generated.');
       const blob=await pdfResponse.blob();
-      const filename=data.pdf_filename||'Kitchen-Order.pdf';
+      const filename=data.pdf_filename||'Kitchen Sheet Order.pdf';
       const file=new File([blob],filename,{type:'application/pdf'});
       const canFileShare=!!(navigator.share && navigator.canShare && navigator.canShare({files:[file]}));
 

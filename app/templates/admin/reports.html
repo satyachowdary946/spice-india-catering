@@ -1,5 +1,15 @@
 {% extends "admin/admin_base.html" %}
-{% block title %}Reports · Catering Admin{% endblock %}
+{% block title %}Reports · Catering Admin
+<dialog class="report-detail-dialog" data-chef-payments-dialog aria-labelledby="chef-payments-title">
+  <div class="report-detail-card">
+    <div class="payment-dialog-head"><div><div class="eyebrow">Chef Labour</div><h2 id="chef-payments-title">Chef Labour Payments</h2></div><button class="icon-close" type="button" data-close-chef-payments aria-label="Close">×</button></div>
+    <div class="expense-order-summary compact-report-summary"><div><span>Total</span><strong>€{{ '%.2f'|format(fixed_expense_totals.chef) }}</strong></div><div><span>Paid</span><strong>€{{ '%.2f'|format(fixed_expense_paid_totals.chef) }}</strong></div><div><span>Left</span><strong>€{{ '%.2f'|format(fixed_expense_left_totals.chef) }}</strong></div></div>
+    <div class="report-payment-list">{% for row in chef_payment_rows %}<div class="report-payment-row"><div><strong>{{ row.order_number }} · {{ row.customer }}</strong><span>{% if row.last_paid_date %}Last paid {{ row.last_paid_date.strftime('%d %b %Y') }}{% else %}No payment yet{% endif %}</span></div><div><span>Cost €{{ '%.2f'|format(row.amount) }}</span><span class="money-positive">Paid €{{ '%.2f'|format(row.paid) }}</span><span class="money-warning">Left €{{ '%.2f'|format(row.left) }}</span></div></div>{% else %}<div class="empty">No chef labour expenses in this period.</div>{% endfor %}</div>
+    <div class="payment-dialog-actions"><button class="btn secondary" type="button" data-close-chef-payments>Close</button></div>
+  </div>
+</dialog>
+<script>(()=>{const d=document.querySelector('[data-chef-payments-dialog]');if(!d)return;document.querySelector('[data-open-chef-payments]')?.addEventListener('click',()=>d.showModal());d.querySelectorAll('[data-close-chef-payments]').forEach(b=>b.addEventListener('click',()=>d.close()));d.addEventListener('click',e=>{if(e.target===d)d.close();});})();</script>
+{% endblock %}
 {% block body %}
 <div class="admin-title finance-page-title"><div><div class="eyebrow">Business performance</div><h1>Reports</h1><p class="muted">Admin-only sales, costs and profit based on event date. Cancelled and voided orders are excluded.</p></div><div class="actions"><a class="btn" href="/admin/reports/pdf?period={{ period }}">Download PDF report</a><a class="btn secondary" href="/admin/transactions">Transactions</a></div></div>
 <form class="report-filterbar" method="get" action="/admin/reports"><div class="field"><label for="report-period">Reporting Period</label><select id="report-period" name="period">{% for value,label in period_options %}<option value="{{ value }}" {% if period==value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><button class="btn" type="submit">Update report</button></form>
@@ -19,7 +29,7 @@
 <section class="report-kpi-grid expense-breakdown-kpis" aria-label="Operating expense breakdown">
  <div class="report-kpi expense"><span>Fuel</span><strong>€{{ '%.2f'|format(fixed_expense_totals.fuel) }}</strong></div>
  <div class="report-kpi expense"><span>Delivery</span><strong>€{{ '%.2f'|format(fixed_expense_totals.delivery) }}</strong></div>
- <div class="report-kpi expense"><span>Chef Labour</span><strong>€{{ '%.2f'|format(fixed_expense_totals.chef) }}</strong></div>
+ <button class="report-kpi expense report-kpi-button" type="button" data-open-chef-payments><span>Chef Labour</span><strong>€{{ '%.2f'|format(fixed_expense_totals.chef) }}</strong><small>Paid €{{ '%.2f'|format(fixed_expense_paid_totals.chef) }} · Left €{{ '%.2f'|format(fixed_expense_left_totals.chef) }}</small></button>
  <div class="report-kpi expense"><span>Miscellaneous</span><strong>€{{ '%.2f'|format(fixed_expense_totals.misc) }}</strong></div>
  <div class="report-kpi expense"><span>Other</span><strong>€{{ '%.2f'|format(fixed_expense_totals.other) }}</strong></div>
 </section>
@@ -31,4 +41,14 @@
 <section class="card finance-table-card"><div class="finance-section-heading"><div><h2>Order profitability</h2><p class="muted">Private finance breakdown for {{ period_label|lower }}.</p></div></div><div class="finance-table-wrap"><table class="finance-table"><thead><tr><th>Order</th><th>Event</th><th>Sale</th><th>Food Cost</th><th>Fuel</th><th>Delivery</th><th>Chef</th><th>Misc</th><th>Other</th><th>Total Cost</th><th>Net Profit</th><th>Profit %</th><th>Payment Received</th><th>Outstanding</th></tr></thead><tbody>
 {% for row in rows %}{% set order=row.order %}{% set f=row.finance %}<tr class="finance-click-row" onclick="window.location='/admin/transactions/{{ order.id }}'" tabindex="0"><td><strong>{{ order.order_number }}</strong><small>{{ order.customer.name }}</small></td><td>{{ order.event_date.strftime('%d %b %Y') }}<small>{{ order.event_name }}</small></td><td>€{{ '%.2f'|format(f.final_price) }}</td><td class="money-expense">€{{ '%.2f'|format(f.food_cost) }}</td><td class="money-expense">€{{ '%.2f'|format(f.expense_breakdown.fuel.amount) }}</td><td class="money-expense">€{{ '%.2f'|format(f.expense_breakdown.delivery.amount) }}</td><td class="money-expense">€{{ '%.2f'|format(f.expense_breakdown.chef.amount) }}</td><td class="money-expense">€{{ '%.2f'|format(f.expense_breakdown.misc.amount) }}</td><td class="money-expense">€{{ '%.2f'|format(f.expense_breakdown.other.amount + (f.expense_breakdown.extras|sum(attribute='amount'))) }}</td><td class="money-expense">€{{ '%.2f'|format(f.total_expenses) }}</td><td class="money-profit">€{{ '%.2f'|format(f.net_profit) }}</td><td class="money-profit">{{ '%.2f'|format(f.net_profit_percent) }}%</td><td class="money-positive">€{{ '%.2f'|format(f.total_paid) }}</td><td class="money-warning">€{{ '%.2f'|format(f.balance_due) }}</td></tr>{% else %}<tr><td colspan="14"><div class="empty">No orders in this reporting period.</div></td></tr>{% endfor %}
 </tbody></table></div></section>
+
+<dialog class="report-detail-dialog" data-chef-payments-dialog aria-labelledby="chef-payments-title">
+  <div class="report-detail-card">
+    <div class="payment-dialog-head"><div><div class="eyebrow">Chef Labour</div><h2 id="chef-payments-title">Chef Labour Payments</h2></div><button class="icon-close" type="button" data-close-chef-payments aria-label="Close">×</button></div>
+    <div class="expense-order-summary compact-report-summary"><div><span>Total</span><strong>€{{ '%.2f'|format(fixed_expense_totals.chef) }}</strong></div><div><span>Paid</span><strong>€{{ '%.2f'|format(fixed_expense_paid_totals.chef) }}</strong></div><div><span>Left</span><strong>€{{ '%.2f'|format(fixed_expense_left_totals.chef) }}</strong></div></div>
+    <div class="report-payment-list">{% for row in chef_payment_rows %}<div class="report-payment-row"><div><strong>{{ row.order_number }} · {{ row.customer }}</strong><span>{% if row.last_paid_date %}Last paid {{ row.last_paid_date.strftime('%d %b %Y') }}{% else %}No payment yet{% endif %}</span></div><div><span>Cost €{{ '%.2f'|format(row.amount) }}</span><span class="money-positive">Paid €{{ '%.2f'|format(row.paid) }}</span><span class="money-warning">Left €{{ '%.2f'|format(row.left) }}</span></div></div>{% else %}<div class="empty">No chef labour expenses in this period.</div>{% endfor %}</div>
+    <div class="payment-dialog-actions"><button class="btn secondary" type="button" data-close-chef-payments>Close</button></div>
+  </div>
+</dialog>
+<script>(()=>{const d=document.querySelector('[data-chef-payments-dialog]');if(!d)return;document.querySelector('[data-open-chef-payments]')?.addEventListener('click',()=>d.showModal());d.querySelectorAll('[data-close-chef-payments]').forEach(b=>b.addEventListener('click',()=>d.close()));d.addEventListener('click',e=>{if(e.target===d)d.close();});})();</script>
 {% endblock %}

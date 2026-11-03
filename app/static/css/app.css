@@ -1978,3 +1978,52 @@ body.menu-page{overflow-x:clip}
 .allergy-info-card{max-width:680px}.allergen-chip-list{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0 16px}.allergen-chip-list span{padding:7px 9px;border:1px solid #46524f;border-radius:999px;background:#111a18;color:#dce8e4;font-size:.8rem;font-weight:700}.allergy-contact-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
 .public-allergy-strip-footer{margin-top:22px;margin-bottom:22px}
 @media(max-width:699px){.menu-item-actions{gap:5px}.item-comment-btn,.item-details-btn{min-height:32px;padding:0 7px;font-size:.62rem}.public-allergy-strip{align-items:flex-start}.public-allergy-strip span{font-size:.74rem}.allergy-info-btn{padding:8px 9px;font-size:.72rem}}
+
+/* =========================================================
+   BUILD 14.18 — compact notes, expense toggles, sharper reports
+   ========================================================= */
+.menu-item-actions{width:148px;display:grid!important;grid-template-rows:auto auto;gap:6px!important;align-items:center}
+.menu-item-action-top{display:flex;align-items:center;justify-content:flex-end;gap:6px;width:100%}
+.menu-item-action-top .item-details-btn{flex:1;min-width:0}
+.menu-item-actions .item-comment-btn{width:100%;min-height:28px;height:28px;padding:0 9px;border-radius:8px;font-size:.68rem}
+.item-comment-dialog-card{max-width:460px}
+.item-comment-short-copy{margin:6px 0 10px;font-size:.88rem}
+.item-comment-dialog-card textarea{min-height:72px!important;max-height:100px}
+
+.compact-expense-row{padding:11px 13px!important;gap:10px!important}
+.compact-expense-toggle{display:inline-flex!important;gap:4px!important;justify-content:flex-end!important;align-items:center}
+.expense-state-btn{appearance:none;border:1px solid #40504b;background:#111917;color:#9eaaa6;border-radius:8px;min-height:30px;padding:0 10px;font-size:.7rem;font-weight:850;cursor:pointer}
+.expense-state-btn.paid.is-selected{background:#183f36;border-color:#2dd4bf;color:#8ff5df}
+.expense-state-btn.unpaid.is-selected{background:#44211d;border-color:#e45b4f;color:#ffaaa2}
+.expense-state-btn:hover{border-color:#6b7e78;color:#fff}
+.orders-expense-btn{min-width:auto!important;padding-inline:10px!important}
+
+/* Reports: smaller, sharper cards instead of oversized blocks. */
+.report-kpi{min-height:82px!important;padding:11px 12px!important;border-radius:10px!important;gap:3px!important}
+.report-kpi strong{font-size:1.35rem!important;line-height:1.05}
+.report-kpi span{font-size:.67rem!important}
+.report-kpi small{font-size:.68rem;line-height:1.25}
+.report-kpi-button{font:inherit;text-align:left;width:100%;cursor:pointer;color:inherit}
+.report-kpi-button:hover{border-color:#5c7b72;transform:translateY(-1px)}
+.report-detail-dialog{border:0;background:transparent;padding:0;width:min(760px,calc(100vw - 24px));max-width:none}
+.report-detail-dialog::backdrop{background:rgba(0,0,0,.74)}
+.report-detail-card{background:#0c1715;border:1px solid #3b4b46;border-radius:16px;padding:18px;color:#fff;max-height:min(82vh,760px);overflow:auto}
+.compact-report-summary{margin:12px 0}
+.report-payment-list{display:grid;gap:8px}
+.report-payment-row{display:flex;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid #35433f;border-radius:10px;background:#101b19}
+.report-payment-row>div{display:grid;gap:3px}.report-payment-row>div:last-child{text-align:right}.report-payment-row span{font-size:.76rem;color:#a9b7b2}
+
+.public-allergy-strip-home{margin-top:18px}
+
+@media(max-width:699px){
+  .menu-item-actions{width:132px!important;gap:5px!important}
+  .menu-item-action-top{gap:5px}
+  .menu-item-actions .item-comment-btn{height:27px;min-height:27px;font-size:.64rem}
+  .menu-item-action-top .item-details-btn{min-height:34px;padding-inline:8px;font-size:.68rem}
+  .menu-item-action-top .add-btn{width:40px;height:40px}
+  .item-comment-dialog-card{padding:15px 14px}
+  .report-kpi{min-height:74px!important;padding:9px 10px!important}
+  .report-kpi strong{font-size:1.16rem!important}
+  .report-payment-row{display:grid;gap:7px}.report-payment-row>div:last-child{text-align:left;display:flex;flex-wrap:wrap;gap:10px}
+  .expense-state-btn{min-height:28px;padding:0 8px;font-size:.66rem}
+}

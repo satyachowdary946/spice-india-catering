@@ -1808,7 +1808,7 @@ def admin_reset_orders(
             selectinload(QuoteRequest.history),
             selectinload(QuoteRequest.requested_dishes),
             selectinload(QuoteRequest.payments),
-            selectinload(QuoteRequest.expenses),
+            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
         )
     ).all()
     for order in orders:
@@ -3316,7 +3316,7 @@ def admin_order_kitchen_share(
             "share_title": f"Kitchen {order.order_number}",
             "share_text": message,
             "pdf_url": pdf_url,
-            "pdf_filename": f"Kitchen-{order.order_number}.pdf",
+            "pdf_filename": f"Kitchen Sheet {order.order_number}.pdf",
             "group_url": biz.kitchen_whatsapp_group_url or "",
         })
 
@@ -3369,7 +3369,7 @@ def public_kitchen_pdf(token: str, db: Session = Depends(get_db)):
         pdf = build_order_pdf(order, business(db))
     except Exception:
         pdf = build_order_pdf_fallback(order, business(db))
-    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="Kitchen-{order.order_number}.pdf"', "Cache-Control": "no-store"})
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="Kitchen Sheet {order.order_number}.pdf"', "Cache-Control": "no-store"})
 
 
 @app.post("/orders/{token}/confirm")
@@ -3547,203 +3547,231 @@ def _pdf_time(value: time | None) -> str:
 
 
 def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
-    """Professional compact A4 kitchen sheet designed to stay within 1–2 pages."""
+    """Build the compact kitchen sheet used for printing and WhatsApp file sharing.
+
+    The layout intentionally mirrors the admin printable kitchen sheet: one clean
+    A4 page for normal orders, with a second page only when the menu is unusually
+    large. Keep this function deliberately defensive because it is also the
+    production fallback for legacy orders.
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        rightMargin=18,
-        leftMargin=18,
-        topMargin=16,
-        bottomMargin=16,
+        rightMargin=20,
+        leftMargin=20,
+        topMargin=18,
+        bottomMargin=18,
         allowSplitting=True,
+        title=f"Kitchen Sheet {getattr(order, 'order_number', '')}",
     )
     styles = getSampleStyleSheet()
-    tiny = ParagraphStyle("KitchenTiny14_13", parent=styles["BodyText"], fontSize=6.6, leading=8.0, textColor=colors.HexColor("#222222"))
-    small = ParagraphStyle("KitchenSmall14_13", parent=styles["BodyText"], fontSize=7.6, leading=9.2, textColor=colors.HexColor("#111111"))
-    bold = ParagraphStyle("KitchenBold14_13", parent=small, fontName="Helvetica-Bold")
-    title = ParagraphStyle("KitchenTitle14_13", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=15, leading=16, spaceAfter=0)
-    menu_head = ParagraphStyle("KitchenMenuHead14_13", parent=small, fontName="Helvetica-Bold", fontSize=8.4, leading=10, textColor=colors.white)
-    item_style = ParagraphStyle("KitchenItem14_13", parent=tiny, fontName="Helvetica-Bold", leftIndent=0, spaceAfter=0.4)
-    note_style = ParagraphStyle("KitchenNote14_13", parent=small, fontName="Helvetica-Bold", fontSize=7.8, leading=9.4)
+    eyebrow = ParagraphStyle("KitchenEyebrow14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.4, textColor=colors.HexColor("#7D8683"), spaceAfter=1)
+    company_style = ParagraphStyle("KitchenCompany14_18", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=15.5, leading=16.5, spaceAfter=0, textColor=colors.black)
+    order_style = ParagraphStyle("KitchenOrder14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=9.2, leading=10.5, textColor=colors.black)
+    label_style = ParagraphStyle("KitchenLabel14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=6.5, leading=7.4, textColor=colors.HexColor("#4C5552"))
+    value_style = ParagraphStyle("KitchenValue14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.4, leading=9.5, textColor=colors.black)
+    address_style = ParagraphStyle("KitchenAddress14_18", parent=styles["BodyText"], fontSize=7.4, leading=8.6, textColor=colors.HexColor("#333333"))
+    box_title = ParagraphStyle("KitchenBoxTitle14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=9.0, leading=10.4, textColor=colors.black)
+    menu_name_style = ParagraphStyle("KitchenMenuName14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.0, leading=8.2, textColor=colors.HexColor("#7A817F"), spaceBefore=2, spaceAfter=3)
+    category_style = ParagraphStyle("KitchenCategory14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.3, leading=8.6, textColor=colors.black, spaceBefore=3, spaceAfter=1)
+    item_style = ParagraphStyle("KitchenItem14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.0, leading=8.4, leftIndent=7, firstLineIndent=-7, textColor=colors.black, spaceAfter=0.5)
+    note_label = ParagraphStyle("KitchenNoteLabel14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.4, leading=8.6, textColor=colors.black)
+    note_value = ParagraphStyle("KitchenNoteValue14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.6, leading=9.2, textColor=colors.black)
 
-    company = (getattr(biz, "company_name", "") or "Spice India Catering").strip()
-    header = Table(
-        [[
-            Paragraph(_pdf_text(company), title),
-            Paragraph(f"<b>{_pdf_text(order.order_number)}</b><br/><font size='7'>KITCHEN / CATERING SHEET</font>", small),
-        ]],
-        colWidths=[390, 151],
-    )
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-        ("LINEBELOW", (0, 0), (-1, -1), 1.4, colors.HexColor("#111111")),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
+    company = (getattr(biz, "company_name", "") or "SPICE INDIA").strip()
+    order_number = _pdf_text(getattr(order, "order_number", ""), "")
+    story: list[Any] = [
+        Paragraph("Kitchen / Catering Sheet", eyebrow),
+        Paragraph(_pdf_text(company), company_style),
+        Paragraph(order_number, order_style),
+        Spacer(1, 3),
+        Table([[""]], colWidths=[555], rowHeights=[1.2], style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.black)])),
+        Spacer(1, 4),
+    ]
 
-    event_date_text = order.event_date.strftime("%d/%m/%Y") if getattr(order, "event_date", None) else "—"
-    timing = Table([[
-        Paragraph(f"<b>DATE</b><br/>{event_date_text}", small),
-        Paragraph(f"<b>DAY</b><br/>{_pdf_text(event_day(order))}", small),
-        Paragraph(f"<b>EVENT</b><br/>{_pdf_time(getattr(order, 'event_time', None))}", small),
-        Paragraph(f"<b>DELIVERY</b><br/>{_pdf_time(getattr(order, 'delivery_time', None))}", small),
-    ]], colWidths=[135.25] * 4)
+    def info_cell(label: str, value: str) -> list[Any]:
+        return [Paragraph(label.upper(), label_style), Paragraph(value or "-", value_style)]
+
+    event_date = getattr(order, "event_date", None)
+    event_date_text = event_date.strftime("%d/%m/%Y") if event_date else "-"
+    event_time = getattr(order, "event_time", None)
+    delivery_time = getattr(order, "delivery_time", None)
+    # Match the existing printable sheet's compact 24-hour display.
+    event_time_text = event_time.strftime("%H:%M") if event_time else "-"
+    delivery_time_text = delivery_time.strftime("%H:%M") if delivery_time else "-"
+    timing = Table([[info_cell("Date", event_date_text), info_cell("Day", _pdf_text(event_day(order), "-")), info_cell("Event", event_time_text), info_cell("Delivery", delivery_time_text)]], colWidths=[138.75] * 4)
     timing.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.45, colors.HexColor("#8A8A8A")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#C0C0C0")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B5B5B5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
+    story.extend([timing, Spacer(1, 4)])
 
     customer = getattr(order, "customer", None)
     adults = int(getattr(order, "adults", 0) or 0)
     kids = int(getattr(order, "kids", 0) or 0)
-    address_text = ", ".join(x for x in [_pdf_text(getattr(order, "address", ""), ""), _pdf_text(getattr(order, "eircode", ""), "")] if x)
-    details = Table([[
-        Paragraph(f"<b>CUSTOMER</b><br/>{_pdf_text(getattr(customer, 'name', ''))}", tiny),
-        Paragraph(f"<b>PHONE</b><br/>{_pdf_text(getattr(customer, 'phone', ''))}", tiny),
-        Paragraph(f"<b>GUESTS</b><br/>{adults} adults · {kids} kids · <b>{adults + kids}</b>", tiny),
-        Paragraph(f"<b>EVENT</b><br/>{_pdf_text(getattr(order, 'event_name', ''))}", tiny),
-    ]], colWidths=[135.25] * 4)
+    details = Table([[info_cell("Customer", _pdf_text(getattr(customer, "name", ""), "-")), info_cell("Phone", _pdf_text(getattr(customer, "phone", ""), "-")), info_cell("Guests", f"{adults} + {kids} = {adults + kids}"), info_cell("Event", _pdf_text(getattr(order, "event_name", ""), "-"))]], colWidths=[138.75] * 4)
     details.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.45, colors.HexColor("#999999")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D0D0D0")),
+        ("BOX", (0, 0), (-1, -1), 0.45, colors.HexColor("#8A8A8A")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B5B5B5")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
+    story.extend([details, Spacer(1, 4)])
 
-    story = [header, Spacer(1, 4), timing, Spacer(1, 4), details]
-    if address_text:
-        story.extend([Spacer(1, 3), Paragraph(f"<b>ADDRESS:</b> {address_text}", tiny)])
-    story.extend([Spacer(1, 5), Paragraph("<b>CONFIRMED MENU</b>", bold), Spacer(1, 3)])
+    raw_address = ", ".join(x for x in [(getattr(order, "address", "") or "").strip(), (getattr(order, "eircode", "") or "").strip()] if x)
+    if raw_address:
+        story.extend([Paragraph(f"<b>Address:</b> {_pdf_text(raw_address)}", address_style), Spacer(1, 6)])
 
-    # Build compact category blocks and chunk very large categories so the
-    # two-column table can split cleanly rather than pushing an entire menu to
-    # the next printed page.
-    blocks: list[list[Any]] = []
-    for menu_name, categories in order_groups(order).items():
-        for cat_name, subs in categories.items():
-            names: list[str] = []
-            for _, menu_items in subs.items():
-                for menu_item in menu_items:
-                    name = _pdf_text(getattr(menu_item, "item_name", ""))
-                    comment = (getattr(menu_item, "customer_comment", "") or "").strip()
-                    if comment:
-                        name += f" — Note: {_pdf_text(comment)}"
-                    names.append(name)
-            if not names:
-                continue
-            chunks = [names[i:i + 12] for i in range(0, len(names), 12)]
-            for chunk_index, chunk in enumerate(chunks):
-                suffix = " · CONT." if chunk_index else ""
-                heading = f"{_pdf_text(menu_name, 'Menu')} · {_pdf_text(cat_name, 'Selection').upper()}{suffix}"
-                cell: list[Any] = [Paragraph(heading, menu_head), Spacer(1, 2)]
-                for idx, name in enumerate(chunk, 1 + chunk_index * 12):
-                    cell.append(Paragraph(f"{idx}. {name}", item_style))
-                blocks.append(cell)
+    # Build menu sections directly from stored QuoteItem snapshots. This avoids
+    # failures caused by missing/legacy relationships while preserving the same
+    # category structure the admin printable sheet uses.
+    ordered_items = sorted(list(getattr(order, "items", None) or []), key=lambda x: (getattr(x, "sort_order", 0) or 0, getattr(x, "id", 0) or 0))
+    section_map: dict[tuple[str, str], list[Any]] = {}
+    section_order: list[tuple[str, str]] = []
+    for qi in ordered_items:
+        menu_name = (getattr(qi, "menu_name", "") or "Menu").strip()
+        category_name = (getattr(qi, "category_name", "") or "Selection").strip()
+        key = (menu_name, category_name)
+        if key not in section_map:
+            section_map[key] = []
+            section_order.append(key)
+        section_map[key].append(qi)
 
-    approved = [d for d in (getattr(order, "requested_dishes", None) or []) if d.status == "approved"]
+    approved = [d for d in (getattr(order, "requested_dishes", None) or []) if (getattr(d, "status", "") or "") == "approved"]
     if approved:
-        cell = [Paragraph("APPROVED REQUESTED DISHES", menu_head), Spacer(1, 2)]
-        for idx, dish in enumerate(approved, 1):
-            cell.append(Paragraph(f"{idx}. {_pdf_text(getattr(dish, 'name', ''))}", item_style))
-        blocks.append(cell)
+        key = ("", "Approved Requested Dishes")
+        section_map[key] = approved
+        section_order.append(key)
 
-    # Pair menu blocks side-by-side. A normal catering menu now fits one A4;
-    # large menus continue naturally onto a second A4 without blank pages.
-    grid_rows = []
-    for i in range(0, len(blocks), 2):
-        left = blocks[i]
-        right = blocks[i + 1] if i + 1 < len(blocks) else []
-        grid_rows.append([left, right])
-    if grid_rows:
-        menu_grid = Table(grid_rows, colWidths=[268, 268], hAlign="LEFT", splitByRow=1)
-        menu_grid.setStyle(TableStyle([
+    def section_weight(key: tuple[str, str]) -> int:
+        return 2 + len(section_map.get(key, []))
+
+    # Split sections across at most two pages, then balance each page into two columns.
+    pages: list[list[tuple[str, str]]] = [[]]
+    current_weight = 0
+    for key in section_order:
+        w = section_weight(key)
+        if pages[-1] and current_weight + w > 54 and len(pages) < 2:
+            pages.append([]); current_weight = 0
+        pages[-1].append(key); current_weight += w
+
+    if not pages[0]:
+        pages = [[("", "No menu items")]]
+        section_map[("", "No menu items")] = []
+
+    for page_index, page_sections in enumerate(pages):
+        if page_index:
+            story.extend([PageBreak(), Paragraph("CONFIRMED MENU - CONTINUED", box_title), Spacer(1, 4)])
+        else:
+            story.extend([Paragraph("CONFIRMED MENU", box_title), Spacer(1, 4)])
+
+        total_weight = sum(section_weight(k) for k in page_sections)
+        half = max(1, total_weight / 2)
+        left_keys: list[tuple[str, str]] = []
+        right_keys: list[tuple[str, str]] = []
+        running = 0
+        for key in page_sections:
+            if running < half or not left_keys:
+                left_keys.append(key); running += section_weight(key)
+            else:
+                right_keys.append(key)
+
+        def build_column(keys: list[tuple[str, str]]) -> list[Any]:
+            flows: list[Any] = []
+            last_menu = None
+            for menu_name, category_name in keys:
+                if menu_name and menu_name != last_menu:
+                    flows.append(Paragraph(_pdf_text(menu_name), menu_name_style))
+                    last_menu = menu_name
+                flows.append(Paragraph(_pdf_text(category_name).upper(), category_style))
+                entries = section_map.get((menu_name, category_name), [])
+                for idx, entry in enumerate(entries, 1):
+                    if hasattr(entry, "item_name"):
+                        name = _pdf_text(getattr(entry, "item_name", ""), "")
+                        comment = (getattr(entry, "customer_comment", "") or "").strip()
+                        if comment:
+                            name += f" - NOTE: {_pdf_text(comment)}"
+                    else:
+                        name = _pdf_text(getattr(entry, "name", ""), "")
+                    flows.append(Paragraph(f"{idx}. {name}", item_style))
+                if not entries and category_name == "No menu items":
+                    flows.append(Paragraph("No confirmed menu items.", item_style))
+                flows.append(Spacer(1, 2))
+            return flows or [Paragraph("", item_style)]
+
+        menu_table = Table([[build_column(left_keys), build_column(right_keys)]], colWidths=[277.5, 277.5])
+        menu_table.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.65, colors.HexColor("#222222")),
+            ("LINEAFTER", (0, 0), (0, -1), 0.35, colors.HexColor("#D6D6D6")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("BOX", (0, 0), (-1, -1), 0.35, colors.HexColor("#B5B5B5")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D5D5D5")),
-            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
-        # Header paragraphs use white text, so give their cells a dark strip by
-        # putting the heading paragraph itself inside a dark one-row mini-table.
-        # Convert each block's first paragraph to a mini table now.
-        for row in grid_rows:
-            for cell in row:
-                if cell:
-                    first = cell[0]
-                    cell[0] = Table([[first]], colWidths=[254], style=TableStyle([
-                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#202625")),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                        ("TOPPADDING", (0, 0), (-1, -1), 3),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                    ]))
-        # Recreate after heading conversion.
-        menu_grid = Table(grid_rows, colWidths=[268, 268], hAlign="LEFT", splitByRow=1)
-        menu_grid.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("BOX", (0, 0), (-1, -1), 0.35, colors.HexColor("#B5B5B5")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D5D5D5")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
-        story.append(menu_grid)
+        story.append(menu_table)
 
     kitchen_comments = (getattr(order, "kitchen_comments", "") or "").strip()
     customer_notes = (getattr(order, "customer_notes", "") or "").strip()
-    note_rows = []
     if kitchen_comments:
-        note_rows.append([Paragraph("<b>KITCHEN COMMENTS</b>", small), Paragraph(_pdf_text(kitchen_comments), note_style)])
+        story.extend([Spacer(1, 6), Table([[Paragraph("KITCHEN COMMENTS", note_label)], [Paragraph(_pdf_text(kitchen_comments), note_value)]], colWidths=[555], style=TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.9, colors.HexColor("#333333")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF2BF")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))])
     if customer_notes:
-        note_rows.append([Paragraph("<b>CUSTOMER NOTES</b>", small), Paragraph(_pdf_text(customer_notes), small)])
-    if note_rows:
-        story.extend([Spacer(1, 5), Table(note_rows, colWidths=[105, 431], style=TableStyle([
-            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#888888")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CCCCCC")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F3F2")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        story.extend([Spacer(1, 5), Paragraph("CUSTOMER NOTES", note_label), Spacer(1, 2), Table([[Paragraph(_pdf_text(customer_notes), address_style)]], colWidths=[555], style=TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#555555")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))])
 
     doc.build(story)
     return buffer.getvalue()
 
+
 def build_order_pdf_fallback(order: QuoteRequest, biz: BusinessSettings) -> bytes:
-    """Last-resort PDF so Download PDF never becomes a 500 for a legacy order."""
+    """Last-resort kitchen sheet that still looks like the normal printable sheet."""
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=28, leftMargin=28, topMargin=28, bottomMargin=28)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=22, leftMargin=22, topMargin=20, bottomMargin=20, title=f"Kitchen Sheet {getattr(order, 'order_number', '')}")
     styles = getSampleStyleSheet()
-    body = styles["BodyText"]
-    heading = styles["Heading2"]
-    customer = getattr(order, 'customer', None)
-    story = [
-        Paragraph(_pdf_text(getattr(biz, 'company_name', '') or 'Spice India Catering'), styles['Title']),
-        Paragraph(f"Kitchen Sheet · {_pdf_text(getattr(order, 'order_number', ''))}", heading),
-        Paragraph(f"Customer: {_pdf_text(getattr(customer, 'name', ''))}", body),
-        Paragraph(f"Event: {_pdf_text(getattr(order, 'event_name', ''))}", body),
-        Paragraph(f"Event time: {_pdf_time(getattr(order, 'event_time', None))}", body),
-        Paragraph(f"Delivery time: {_pdf_time(getattr(order, 'delivery_time', None))}", body),
-        Spacer(1, 10), Paragraph("Menu", heading),
+    small = ParagraphStyle("KitchenFallbackSmall14_18", parent=styles["BodyText"], fontSize=7.2, leading=8.5)
+    bold = ParagraphStyle("KitchenFallbackBold14_18", parent=small, fontName="Helvetica-Bold")
+    title = ParagraphStyle("KitchenFallbackTitle14_18", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=15, leading=16)
+    story: list[Any] = [Paragraph("Kitchen / Catering Sheet", small), Paragraph(_pdf_text(getattr(biz, "company_name", "") or "SPICE INDIA"), title), Paragraph(_pdf_text(getattr(order, "order_number", "")), bold), Spacer(1, 4)]
+    customer = getattr(order, "customer", None)
+    event_date = getattr(order, "event_date", None)
+    event_time = getattr(order, "event_time", None)
+    delivery_time = getattr(order, "delivery_time", None)
+    adults = int(getattr(order, "adults", 0) or 0); kids = int(getattr(order, "kids", 0) or 0)
+    info = [
+        [Paragraph("<b>DATE</b><br/>" + (event_date.strftime("%d/%m/%Y") if event_date else "-"), small), Paragraph("<b>DAY</b><br/>" + _pdf_text(event_day(order), "-"), small), Paragraph("<b>EVENT</b><br/>" + (event_time.strftime("%H:%M") if event_time else "-"), small), Paragraph("<b>DELIVERY</b><br/>" + (delivery_time.strftime("%H:%M") if delivery_time else "-"), small)],
+        [Paragraph("<b>CUSTOMER</b><br/>" + _pdf_text(getattr(customer, "name", ""), "-"), small), Paragraph("<b>PHONE</b><br/>" + _pdf_text(getattr(customer, "phone", ""), "-"), small), Paragraph(f"<b>GUESTS</b><br/>{adults} + {kids} = {adults + kids}", small), Paragraph("<b>EVENT</b><br/>" + _pdf_text(getattr(order, "event_name", ""), "-"), small)],
     ]
-    for qi in sorted((getattr(order, 'items', None) or []), key=lambda x: (getattr(x, 'sort_order', 0) or 0, getattr(x, 'id', 0) or 0)):
-        story.append(Paragraph("• " + _pdf_text(getattr(qi, 'item_name', '')), body))
-    comments = (getattr(order, 'kitchen_comments', '') or '').strip()
-    if comments:
-        story.extend([Spacer(1,10), Paragraph("Kitchen Comments", heading), Paragraph(_pdf_text(comments), body)])
+    table = Table(info, colWidths=[137.5]*4)
+    table.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.5,colors.HexColor("#888")),("INNERGRID",(0,0),(-1,-1),.35,colors.HexColor("#BBB")),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+    story.extend([table, Spacer(1,6), Paragraph("<b>CONFIRMED MENU</b>", bold)])
+    menu_flows: list[Any] = []
+    last_category = None
+    for qi in sorted(list(getattr(order, "items", None) or []), key=lambda x:(getattr(x,"sort_order",0) or 0,getattr(x,"id",0) or 0)):
+        category = (getattr(qi, "category_name", "") or "Selection").strip()
+        if category != last_category:
+            menu_flows.append(Spacer(1,3)); menu_flows.append(Paragraph(f"<b>{_pdf_text(category).upper()}</b>", small)); last_category = category
+        text_value = _pdf_text(getattr(qi, "item_name", ""), "")
+        comment = (getattr(qi, "customer_comment", "") or "").strip()
+        if comment: text_value += " - NOTE: " + _pdf_text(comment)
+        menu_flows.append(Paragraph("• " + text_value, small))
+    if not menu_flows: menu_flows=[Paragraph("No confirmed menu items.", small)]
+    menu_box=Table([[menu_flows]],colWidths=[550],style=TableStyle([("BOX",(0,0),(-1,-1),.7,colors.HexColor("#222")),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+    story.append(menu_box)
+    comments=(getattr(order,"kitchen_comments","") or "").strip()
+    notes=(getattr(order,"customer_notes","") or "").strip()
+    if comments: story.extend([Spacer(1,6),Paragraph("<b>KITCHEN COMMENTS</b>",bold),Table([[Paragraph(_pdf_text(comments),bold)]],colWidths=[550],style=TableStyle([("BOX",(0,0),(-1,-1),.7,colors.HexColor("#333")),("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#FFF2BF")),("LEFTPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))])
+    if notes: story.extend([Spacer(1,5),Paragraph("<b>CUSTOMER NOTES</b>",bold),Table([[Paragraph(_pdf_text(notes),small)]],colWidths=[550],style=TableStyle([("BOX",(0,0),(-1,-1),.6,colors.HexColor("#555")),("LEFTPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))])
     doc.build(story)
     return buffer.getvalue()
 
@@ -4686,7 +4714,7 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
             selectinload(QuoteRequest.customer),
             selectinload(QuoteRequest.items),
             selectinload(QuoteRequest.payments),
-            selectinload(QuoteRequest.expenses),
+            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
         )
     )
     if start_date:
@@ -4706,6 +4734,9 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
     expenses = Decimal("0.00")
     net_profit = Decimal("0.00")
     fixed_expense_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
+    fixed_expense_paid_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
+    fixed_expense_left_totals = {key: Decimal("0.00") for key in INTERNAL_EXPENSE_NAMES}
+    chef_payment_rows: list[dict[str, Any]] = []
     customers: set[int] = set()
     customer_revenue: dict[int, dict[str, Any]] = {}
 
@@ -4720,7 +4751,20 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         expenses += summary["total_expenses"]
         net_profit += summary["net_profit"]
         for key in INTERNAL_EXPENSE_NAMES:
-            fixed_expense_totals[key] += money(summary["expense_breakdown"][key]["amount"])
+            fixed_row = summary["expense_breakdown"][key]
+            fixed_expense_totals[key] += money(fixed_row["amount"])
+            fixed_expense_paid_totals[key] += money(fixed_row.get("paid_amount"))
+            fixed_expense_left_totals[key] += money(fixed_row.get("balance"))
+        chef_row = summary["expense_breakdown"]["chef"]
+        if money(chef_row["amount"]) > 0:
+            chef_payment_rows.append({
+                "order_number": order.order_number,
+                "customer": order.customer.name if order.customer else "",
+                "amount": money(chef_row["amount"]),
+                "paid": money(chef_row.get("paid_amount")),
+                "left": money(chef_row.get("balance")),
+                "last_paid_date": chef_row.get("last_paid_date"),
+            })
         # Any ad-hoc expenses outside the five standard fields roll into Other Expenses in reports.
         fixed_expense_totals["other"] += sum((money(e.amount) for e in summary["expense_breakdown"].get("extras", [])), Decimal("0.00"))
         customers.add(order.customer_id)
@@ -4765,6 +4809,9 @@ def finance_report_data(db: Session, period: str) -> dict[str, Any]:
         "net_profit": net_profit,
         "net_profit_percent": net_profit_percent,
         "fixed_expense_totals": fixed_expense_totals,
+        "fixed_expense_paid_totals": fixed_expense_paid_totals,
+        "fixed_expense_left_totals": fixed_expense_left_totals,
+        "chef_payment_rows": chef_payment_rows,
         "cash_profit": cash_profit,
         "highest_paid": highest_paid,
         "most_profitable": most_profitable,

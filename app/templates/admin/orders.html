@@ -7,10 +7,26 @@
     <a class="order-row-main" href="/admin/orders/{{ order.id }}"><div><strong>{{ order.order_number }} · {{ order.customer.name }}</strong><small>{{ order.customer.customer_number }} · {{ order.event_name }} · {{ order.event_date.strftime('%d %b %Y') }} · {{ order.adults + order.kids }} guests</small></div><span class="badge {{ order.status }}">{{ order.status.replace('_',' ').title() }}</span></a>
     {% if f %}<div class="dashboard-ops dashboard-action-row orders-payment-only">
       {% if order.final_price is not none %}<button class="payment-mini payment-{{ f.payment_status }}" type="button" data-open-payment data-payment-order-id="{{ order.id }}" data-payment-order="{{ order.order_number }}" data-payment-total="{{ '%.2f'|format(f.final_price) }}" data-payment-received="{{ '%.2f'|format(f.total_paid) }}" data-payment-balance="{{ '%.2f'|format(f.balance_due) }}">{% if f.payment_status=='paid' %}✓ Paid{% elif f.payment_status=='part_paid' %}◐ Part Paid{% else %}○ Unpaid{% endif %}</button>{% else %}<span class="payment-mini">Not Priced</span>{% endif %}
-      <a class="btn secondary small" href="/admin/orders/{{ order.id }}#expense-payments">Expense Payments</a>
+      <button class="btn secondary small orders-expense-btn" type="button" data-open-expense-order data-expense-order-id="{{ order.id }}">Expenses</button>
     </div>{% endif %}
   </div>
 {% else %}<div class="empty">No matching orders.</div>{% endfor %}
 </div>
 {% include "admin/_payment_modal.html" %}
+<dialog class="expense-order-dialog" data-expense-order-dialog aria-labelledby="orders-expense-title">
+  <div class="expense-order-card">
+    <div class="payment-dialog-head"><div><div class="eyebrow">Business Expenses</div><h2 id="orders-expense-title" data-expense-order-title>Expenses</h2><p class="muted" data-expense-order-customer></p></div><button class="icon-close" type="button" data-close-expense-order aria-label="Close">×</button></div>
+    <div class="expense-order-summary"><div><span>Total</span><strong data-expense-total>€0.00</strong></div><div><span>Paid</span><strong data-expense-paid>€0.00</strong></div><div><span>Left</span><strong data-expense-left>€0.00</strong></div></div>
+    <div class="field expense-payment-date"><label>Payment Date</label><input type="date" value="{{ today.isoformat() }}" data-expense-payment-date></div>
+    <div class="expense-order-list" data-expense-order-list><div class="empty">Choose an order.</div></div>
+    <div class="payment-dialog-actions"><button class="btn secondary" type="button" data-close-expense-order>Close</button></div>
+  </div>
+</dialog>
+<script>(()=>{
+ const dialog=document.querySelector('[data-expense-order-dialog]'),list=dialog?.querySelector('[data-expense-order-list]');if(!dialog||!list)return;const csrf={{ csrf_token|tojson }};let activeOrderId=null;
+ const money=v=>`€${Number(v||0).toFixed(2)}`;const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+ async function load(orderId){activeOrderId=orderId;list.innerHTML='<div class="empty">Loading…</div>';const res=await fetch(`/admin/orders/${orderId}/expense-payment-summary`,{headers:{Accept:'application/json'}});if(!res.ok){list.innerHTML='<div class="notice error">Could not load expenses.</div>';return;}const data=await res.json();dialog.querySelector('[data-expense-order-title]').textContent=`${data.order_number} · Expenses`;dialog.querySelector('[data-expense-order-customer]').textContent=data.customer||'';dialog.querySelector('[data-expense-total]').textContent=money(data.total);dialog.querySelector('[data-expense-paid]').textContent=money(data.paid);dialog.querySelector('[data-expense-left]').textContent=money(data.left);list.innerHTML=data.expenses.map(e=>`<article class="expense-order-row compact-expense-row"><div class="expense-order-name"><strong>${esc(e.name)}</strong><span>${money(e.amount)}</span></div><div class="expense-order-numbers"><span>Paid <strong>${money(e.paid_amount)}</strong></span><span>Left <strong>${money(e.balance)}</strong></span></div><div class="expense-order-actions compact-expense-toggle"><button type="button" class="expense-state-btn paid ${e.paid?'is-selected':''}" data-expense-id="${e.id}" data-expense-action="paid">Paid</button><button type="button" class="expense-state-btn unpaid ${!e.paid?'is-selected':''}" data-expense-id="${e.id}" data-expense-action="unpaid">Unpaid</button></div></article>`).join('')||'<div class="empty">No expenses set.</div>'; }
+ document.querySelectorAll('[data-open-expense-order]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();dialog.showModal();load(b.dataset.expenseOrderId);}));dialog.querySelectorAll('[data-close-expense-order]').forEach(b=>b.addEventListener('click',()=>dialog.close()));
+ list.addEventListener('click',async e=>{const b=e.target.closest('[data-expense-action]');if(!b||!activeOrderId)return;const fd=new FormData();fd.set('csrf_token',csrf);fd.set('action',b.dataset.expenseAction);fd.set('payment_date',dialog.querySelector('[data-expense-payment-date]').value||'');const res=await fetch(`/admin/orders/${activeOrderId}/expenses/${b.dataset.expenseId}/payment-status`,{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest','Accept':'application/json'},body:fd});if(res.ok)await load(activeOrderId);});
+})();</script>
 {% endblock %}
