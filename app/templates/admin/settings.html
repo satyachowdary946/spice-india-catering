@@ -13,8 +13,6 @@
 {% if request.query_params.get('admin_saved') %}<div class="notice success">Admin login account saved.</div>{% endif %}
 {% if request.query_params.get('admin_deleted') %}<div class="notice success">Admin login account removed.</div>{% endif %}
 {% if request.query_params.get('admin_error') %}<div class="notice error">{{ request.query_params.get('admin_error').replace('+',' ') }}</div>{% endif %}
-{% if request.query_params.get('orders_reset') %}<div class="notice success"><strong>Test orders removed.</strong> New public order numbering will restart from CAT0001.</div>{% endif %}
-{% if request.query_params.get('reset_error') %}<div class="notice error">{{ request.query_params.get('reset_error').replace('+',' ') }}</div>{% endif %}
 {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
 
 <form class="card" method="post" action="/admin/settings" enctype="multipart/form-data">
@@ -119,16 +117,5 @@
   {% endif %}
 </section>
 
-{% if not business.orders_reset_completed %}
-<section class="card reset-orders-card" style="margin-top:18px">
-  <div class="eyebrow">One-Time Test Data Reset</div>
-  <h2>Reset Test Orders & Restart Numbering</h2>
-  <p class="muted">This one-time action permanently deletes all current catering orders, payments, expenses, requested dishes and order history. Menus, customers, business settings and admin logins are kept. The next order starts at <strong>CAT0001</strong>.</p>
-  <form method="post" action="/admin/settings/reset-orders" onsubmit="return confirm('Permanently delete ALL current orders and restart numbering? This one-time reset cannot be shown again.')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="field"><label>Type RESET ORDERS To Confirm</label><input name="confirmation" autocomplete="off" required></div>
-    <button class="btn danger" type="submit" style="margin-top:10px">Reset Test Orders</button>
-  </form>
-</section>
-{% endif %}
+
 {% endblock %}

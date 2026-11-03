@@ -93,6 +93,7 @@ DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non 
 REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
 DUBLIN_TZ = ZoneInfo("Europe/Dublin")
 UTC_TZ = ZoneInfo("UTC")
+ADMIN_IDLE_TIMEOUT_SECONDS = 10 * 60
 
 
 def ensure_schema_compatibility() -> None:
@@ -207,6 +208,7 @@ def ensure_schema_compatibility() -> None:
             "kitchen_whatsapp": "VARCHAR(60) DEFAULT ''",
             "kitchen_whatsapp_group_url": "VARCHAR(500) DEFAULT ''",
             "orders_reset_completed": "BOOLEAN DEFAULT FALSE",
+            "live_order_cleanup_v1421_completed": "BOOLEAN DEFAULT FALSE",
             "next_order_sequence": "INTEGER DEFAULT 1",
             "menu_workbook_blob": "BYTEA" if engine.dialect.name == "postgresql" else "BLOB",
             "menu_workbook_filename": "VARCHAR(255) DEFAULT ''",
@@ -233,8 +235,43 @@ def startup() -> None:
     ensure_schema_compatibility()
     with SessionLocal() as db:
         ensure_seed_data(db)
+        apply_live_order_cleanup_v1421(db)
         initialise_order_sequence(db)
 
+
+
+def apply_live_order_cleanup_v1421(db: Session) -> bool:
+    """One-time production cleanup requested for Build 14.21.
+
+    Safety guard: only runs when the two specifically retained live orders are still
+    present at their known database IDs and public order numbers. If that guard does
+    not match, nothing is deleted and the migration remains pending.
+    """
+    biz = business(db)
+    if bool(getattr(biz, "live_order_cleanup_v1421_completed", False)):
+        return False
+
+    keep_1 = db.get(QuoteRequest, 29)  # CAT0019 · Roopesh Bharatwaj KR
+    keep_2 = db.get(QuoteRequest, 30)  # CAT0020 · SAJU
+    if not keep_1 or not keep_2 or keep_1.order_number != "CAT0019" or keep_2.order_number != "CAT0020":
+        print("Build 14.21 order cleanup NOT run: expected live orders 29/CAT0019 and 30/CAT0020 were not both found.")
+        return False
+
+    all_orders = db.scalars(select(QuoteRequest)).all()
+    for order in all_orders:
+        if order.id not in {29, 30}:
+            db.delete(order)
+    # Flush deletions first so old CAT0001/CAT0002 rows cannot conflict with the new numbers.
+    db.flush()
+
+    keep_1.order_number = "CAT0001"
+    keep_2.order_number = "CAT0002"
+    biz.next_order_sequence = 3
+    biz.orders_reset_completed = True
+    biz.live_order_cleanup_v1421_completed = True
+    db.commit()
+    print("Build 14.21 order cleanup completed: retained CAT0019→CAT0001 and CAT0020→CAT0002; next order CAT0003.")
+    return True
 
 def business(db: Session) -> BusinessSettings:
     obj = db.get(BusinessSettings, 1)
@@ -696,10 +733,27 @@ def require_admin(request: Request, db: Session) -> Admin:
     admin_id = request.session.get("admin_id")
     if not admin_id:
         raise HTTPException(status_code=401, detail="Admin login required")
+
+    now_ts = int(datetime.now(UTC_TZ).timestamp())
+    last_activity = request.session.get("admin_last_activity")
+    if last_activity is not None:
+        try:
+            if now_ts - int(last_activity) > ADMIN_IDLE_TIMEOUT_SECONDS:
+                request.session.clear()
+                request.state.admin_session_expired = True
+                raise HTTPException(status_code=401, detail="Admin session expired")
+        except (TypeError, ValueError):
+            request.session.clear()
+            request.state.admin_session_expired = True
+            raise HTTPException(status_code=401, detail="Admin session expired")
+
     admin = db.get(Admin, int(admin_id))
     if not admin:
         request.session.clear()
         raise HTTPException(status_code=401, detail="Admin login required")
+
+    # Rolling 10-minute inactivity window: each authenticated admin request refreshes it.
+    request.session["admin_last_activity"] = now_ts
     return admin
 
 
@@ -707,7 +761,8 @@ def admin_or_redirect(request: Request, db: Session):
     try:
         return require_admin(request, db), None
     except HTTPException:
-        return None, RedirectResponse("/admin/login", status_code=303)
+        suffix = "?expired=1" if getattr(request.state, "admin_session_expired", False) else ""
+        return None, RedirectResponse(f"/admin/login{suffix}", status_code=303)
 
 
 def check_csrf(request: Request, token: str | None) -> None:
@@ -1639,6 +1694,7 @@ def admin_setup_post(
     db.commit()
     db.refresh(admin)
     request.session["admin_id"] = admin.id
+    request.session["admin_last_activity"] = int(datetime.now(UTC_TZ).timestamp())
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -1647,7 +1703,11 @@ def admin_login(request: Request, db: Session = Depends(get_db)):
     if db.scalar(select(func.count(Admin.id))) == 0:
         return RedirectResponse("/admin/setup", status_code=303)
     if request.session.get("admin_id"):
-        return RedirectResponse("/admin", status_code=303)
+        try:
+            require_admin(request, db)
+            return RedirectResponse("/admin", status_code=303)
+        except HTTPException:
+            pass
     return render(request, db, "admin/login.html")
 
 
@@ -1664,6 +1724,7 @@ def admin_login_post(
     if not admin or not verify_password(password, admin.password_hash):
         return render(request, db, "admin/login.html", error="Email or password is incorrect.")
     request.session["admin_id"] = admin.id
+    request.session["admin_last_activity"] = int(datetime.now(UTC_TZ).timestamp())
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -1840,40 +1901,6 @@ def admin_settings_update_admin(
             return RedirectResponse(f"/admin/settings?admin_error={quote(str(exc))}", status_code=303)
     db.commit()
     return RedirectResponse("/admin/settings?admin_saved=1", status_code=303)
-
-
-@app.post("/admin/settings/reset-orders")
-def admin_reset_orders(
-    request: Request,
-    confirmation: str = Form(...),
-    csrf_token: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    admin, redirect = admin_or_redirect(request, db)
-    if redirect:
-        return redirect
-    check_csrf(request, csrf_token)
-    biz = business(db)
-    if biz.orders_reset_completed:
-        return RedirectResponse("/admin/settings?reset_error=The+one-time+order+reset+has+already+been+used", status_code=303)
-    if confirmation.strip().upper() != "RESET ORDERS":
-        return RedirectResponse("/admin/settings?reset_error=Type+RESET+ORDERS+exactly+to+confirm", status_code=303)
-    orders = db.scalars(
-        select(QuoteRequest).options(
-            selectinload(QuoteRequest.items),
-            selectinload(QuoteRequest.history),
-            selectinload(QuoteRequest.requested_dishes),
-            selectinload(QuoteRequest.payments),
-            selectinload(QuoteRequest.expenses).selectinload(Expense.payments),
-        )
-    ).all()
-    for order in orders:
-        db.delete(order)
-    biz = business(db)
-    biz.next_order_sequence = 1
-    biz.orders_reset_completed = True
-    db.commit()
-    return RedirectResponse("/admin/settings?orders_reset=1", status_code=303)
 
 
 @app.get("/business-logo")
