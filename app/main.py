@@ -209,6 +209,7 @@ def ensure_schema_compatibility() -> None:
             "kitchen_whatsapp_group_url": "VARCHAR(500) DEFAULT ''",
             "orders_reset_completed": "BOOLEAN DEFAULT FALSE",
             "live_order_cleanup_v1421_completed": "BOOLEAN DEFAULT FALSE",
+            "live_customer_cleanup_v1422_completed": "BOOLEAN DEFAULT FALSE",
             "next_order_sequence": "INTEGER DEFAULT 1",
             "menu_workbook_blob": "BYTEA" if engine.dialect.name == "postgresql" else "BLOB",
             "menu_workbook_filename": "VARCHAR(255) DEFAULT ''",
@@ -236,6 +237,7 @@ def startup() -> None:
     with SessionLocal() as db:
         ensure_seed_data(db)
         apply_live_order_cleanup_v1421(db)
+        apply_live_customer_cleanup_v1422(db)
         initialise_order_sequence(db)
 
 
@@ -272,6 +274,55 @@ def apply_live_order_cleanup_v1421(db: Session) -> bool:
     db.commit()
     print("Build 14.21 order cleanup completed: retained CAT0019→CAT0001 and CAT0020→CAT0002; next order CAT0003.")
     return True
+
+def apply_live_customer_cleanup_v1422(db: Session) -> bool:
+    """One-time production customer cleanup requested for Build 14.22.
+
+    Safety guard: only runs after the Build 14.21 order cleanup and only when the
+    retained live order IDs still map to CAT0001 / CAT0002 and their known
+    customer numbers. All unrelated customer rows are removed, then the two
+    retained customers are renumbered to match their retained orders.
+    """
+    biz = business(db)
+    if bool(getattr(biz, "live_customer_cleanup_v1422_completed", False)):
+        return False
+
+    order_1 = db.get(QuoteRequest, 29)  # Roopesh -> CAT0001
+    order_2 = db.get(QuoteRequest, 30)  # SAJU -> CAT0002
+    all_order_ids = set(db.scalars(select(QuoteRequest.id)).all())
+    if (
+        not order_1 or not order_2
+        or all_order_ids != {29, 30}
+        or order_1.order_number != "CAT0001"
+        or order_2.order_number != "CAT0002"
+        or not order_1.customer or not order_2.customer
+        or order_1.customer.customer_number != "CUS-00017"
+        or order_2.customer.customer_number != "CUS-00018"
+    ):
+        print("Build 14.22 customer cleanup NOT run: expected only CAT0001/CUS-00017 and CAT0002/CUS-00018 were not found exactly.")
+        return False
+
+    keep_customer_ids = {order_1.customer_id, order_2.customer_id}
+    for customer in db.scalars(select(Customer)).all():
+        if customer.id not in keep_customer_ids:
+            db.delete(customer)
+    # Flush deletions so legacy CUS-00001 / CUS-00002 rows cannot conflict.
+    db.flush()
+
+    order_1.customer.customer_number = "CUS-00001"
+    order_2.customer.customer_number = "CUS-00002"
+    biz.live_customer_cleanup_v1422_completed = True
+    db.commit()
+    print("Build 14.22 customer cleanup completed: retained customers renumbered to CUS-00001 / CUS-00002.")
+    return True
+
+
+def customer_number_for_order(order_number: str) -> str:
+    match = re.fullmatch(r"CAT(\d+)", str(order_number or "").strip().upper())
+    if not match:
+        raise ValueError("Order number is not in CAT#### format")
+    return f"CUS-{int(match.group(1)):05d}"
+
 
 def business(db: Session) -> BusinessSettings:
     obj = db.get(BusinessSettings, 1)
@@ -1323,7 +1374,8 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "Choose a biryani style for: " + ", ".join(missing_biryani_style)}, status_code=422)
 
     customer = db.scalar(select(Customer).where(Customer.phone == phone).order_by(Customer.id.asc()).limit(1))
-    if not customer:
+    is_new_customer = customer is None
+    if is_new_customer:
         customer = Customer(
             customer_number=f"TMP-{secrets.token_hex(8)}",
             name=name,
@@ -1335,7 +1387,6 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         )
         db.add(customer)
         db.flush()
-        customer.customer_number = f"CUS-{customer.id:05d}"
     else:
         customer.name = name
         customer.whatsapp = whatsapp
@@ -1363,6 +1414,8 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     db.add(order)
     db.flush()
     order.order_number = allocate_order_number(db)
+    if is_new_customer:
+        customer.customer_number = customer_number_for_order(order.order_number)
 
     item_by_id = {i.id: i for i in items}
     for sort_index, item_id in enumerate(unique_ids):

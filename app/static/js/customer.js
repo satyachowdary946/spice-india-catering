@@ -353,7 +353,7 @@ function initMenu(){
       content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
         const id=Number(btn.dataset.addItem);handleAddItem(itemMap.get(id));
       }));
-      bindItemDetails();updateBasketBar();
+      bindMenuCardSelection();bindItemDetails();updateBasketBar();
       return;
     }
     if(!activeCategory||!cats.some(c=>c.id===activeCategory))activeCategory=cats[0]?.id||null;
@@ -416,14 +416,21 @@ function initMenu(){
     content.querySelectorAll('[data-add-item]').forEach(btn=>btn.addEventListener('click',()=>{
       const id=Number(btn.dataset.addItem);handleAddItem(itemMap.get(id));
     }));
-    bindItemDetails();updateBasketBar();
+    bindMenuCardSelection();bindItemDetails();updateBasketBar();
   }
   function itemCard(i,selected){
     const neutral=['welcome drink','desserts','add ons'].includes(String(i.category||'').trim().toLowerCase());
     const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';
     const dietary=neutral?'':`<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div>`;
     const comment=DraftStore.load().item_comments?.[String(i.id)]||'';
-    return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} ${neutral?'dietary-card-neutral':'dietary-card-'+escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${comment?`<div class="item-comment-preview">Note: ${escapeHtml(comment)}</div>`:''}${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${dietary}</div><div class="menu-item-actions"><div class="menu-item-action-top"><button type="button" class="item-details-btn" data-item-details="${i.id}" aria-label="View details for ${escapeHtml(i.name)}">Details</button><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></div><button type="button" class="item-comment-btn ${comment?'has-comment':''}" data-item-comment="${i.id}" aria-label="Add comment for ${escapeHtml(i.name)}">${comment?'Comment ✓':'Comment'}</button></div></article>`;
+    return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} ${neutral?'dietary-card-neutral':'dietary-card-'+escapeHtml(i.dietary)}" data-item-card="${i.id}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${comment?`<div class="item-comment-preview">Note: ${escapeHtml(comment)}</div>`:''}${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${dietary}</div><div class="menu-item-actions"><div class="menu-item-action-top"><button type="button" class="item-details-btn" data-item-details="${i.id}" aria-label="View details for ${escapeHtml(i.name)}">Details</button><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></div><button type="button" class="item-comment-btn ${comment?'has-comment':''}" data-item-comment="${i.id}" aria-label="Add comment for ${escapeHtml(i.name)}">${comment?'Comment ✓':'Comment'}</button></div></article>`;
+  }
+  function bindMenuCardSelection(){
+    content.querySelectorAll('[data-item-card]').forEach(card=>card.addEventListener('click',e=>{
+      if(e.target.closest('button,a,input,textarea,select,label,[role="button"]'))return;
+      const item=itemMap.get(Number(card.dataset.itemCard));
+      handleAddItem(item);
+    }));
   }
   function bindItemDetails(){
     content.querySelectorAll('[data-item-details]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemDetails));if(!i)return;const d=document.querySelector('[data-item-details-dialog]');if(!d)return;d.querySelector('[data-item-details-title]').textContent=i.name;d.querySelector('[data-item-details-copy]').textContent=i.description||'Food description will be added soon.';d.showModal();}));

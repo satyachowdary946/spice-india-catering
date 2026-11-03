@@ -2045,3 +2045,7 @@ body.menu-page{overflow-x:clip}
 .report-record-note{margin:12px 0 16px;padding:10px 12px;border:1px solid #38534c;border-radius:10px;background:#101b18;color:#b8c7c2;font-size:.78rem}
 .report-kpi-grid{gap:10px!important}.report-kpi{padding:14px 16px!important;border-radius:12px!important;min-height:108px!important}.report-kpi strong{font-size:1.65rem!important}.expense-breakdown-kpis .report-kpi{min-height:92px!important;padding:12px 14px!important}.report-insight-card{border-radius:12px!important}
 @media(max-width:699px){.report-kpi{min-height:92px!important;padding:12px 13px!important}.report-kpi strong{font-size:1.4rem!important}.report-record-note{font-size:.72rem}}
+
+/* Build 14.22 — whole food card selection */
+.menu-item[data-item-card]{cursor:pointer;}
+.menu-item[data-item-card]:active{transform:scale(.997);}

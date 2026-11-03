@@ -45,6 +45,7 @@ class BusinessSettings(Base):
     kitchen_whatsapp_group_url: Mapped[str] = mapped_column(String(500), default="")
     orders_reset_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     live_order_cleanup_v1421_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    live_customer_cleanup_v1422_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     next_order_sequence: Mapped[int] = mapped_column(Integer, default=1)
     menu_workbook_blob: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
     menu_workbook_filename: Mapped[str] = mapped_column(String(255), default="")
