@@ -4466,6 +4466,7 @@ def admin_order_payment_summary(order_id: int, request: Request, db: Session = D
                 "date": payment.payment_date.isoformat(),
                 "display_date": payment.payment_date.strftime("%d %b %Y"),
                 "method": payment.method or "",
+                "note": payment.note or "",
             }
             for payment in payments
         ],

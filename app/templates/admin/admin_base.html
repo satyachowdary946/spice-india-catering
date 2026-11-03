@@ -92,7 +92,9 @@ window.initAdminPaymentModal=function(){
       const left=document.createElement('div');
       const amount=document.createElement('strong');amount.textContent=money(item.amount);
       const meta=document.createElement('span');meta.textContent=[item.display_date,item.method||'Method not recorded'].filter(Boolean).join(' · ');
-      left.append(amount,meta);row.append(left);history.appendChild(row);
+      left.append(amount,meta);
+      if(item.note){const note=document.createElement('span');note.className='payment-history-note';note.textContent=item.note;left.append(note);}
+      row.append(left);history.appendChild(row);
     });
   };
   document.querySelectorAll('[data-open-payment]').forEach(btn=>btn.addEventListener('click',async e=>{

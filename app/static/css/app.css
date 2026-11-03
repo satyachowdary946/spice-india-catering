@@ -2027,3 +2027,6 @@ body.menu-page{overflow-x:clip}
   .report-payment-row{display:grid;gap:7px}.report-payment-row>div:last-child{text-align:left;display:flex;flex-wrap:wrap;gap:10px}
   .expense-state-btn{min-height:28px;padding:0 8px;font-size:.66rem}
 }
+
+/* BUILD 14.19 PAYMENT COMMENT HOTFIX */
+.payment-comment-field textarea{min-height:72px!important;max-height:100px;resize:vertical}.payment-history-note{color:#d8e4df!important;font-size:.72rem!important;line-height:1.35;white-space:pre-wrap}
