@@ -1,15 +1,16 @@
 const DraftStore = (() => {
   const KEY = 'cateringDraftV1';
-  const blank = () => ({details:{}, item_ids:[], requested_dishes:[], customer_notes:'', last_updated:null});
-  const load = () => { try { const d=JSON.parse(localStorage.getItem(KEY))||blank(); d.details=d.details||{}; d.item_ids=Array.isArray(d.item_ids)?d.item_ids:[]; d.requested_dishes=Array.isArray(d.requested_dishes)?d.requested_dishes:[]; d.customer_notes=String(d.customer_notes||''); return d; } catch { return blank(); } };
+  const blank = () => ({details:{}, item_ids:[], item_comments:{}, requested_dishes:[], customer_notes:'', last_updated:null});
+  const load = () => { try { const d=JSON.parse(localStorage.getItem(KEY))||blank(); d.details=d.details||{}; d.item_ids=Array.isArray(d.item_ids)?d.item_ids:[]; d.item_comments=(d.item_comments&&typeof d.item_comments==='object'&&!Array.isArray(d.item_comments))?d.item_comments:{}; d.requested_dishes=Array.isArray(d.requested_dishes)?d.requested_dishes:[]; d.customer_notes=String(d.customer_notes||''); return d; } catch { return blank(); } };
   const save = (draft) => { draft.last_updated=new Date().toISOString(); localStorage.setItem(KEY,JSON.stringify(draft)); window.dispatchEvent(new CustomEvent('draftchange',{detail:draft})); };
   const clear = () => { localStorage.removeItem(KEY); window.dispatchEvent(new CustomEvent('draftchange',{detail:blank()})); };
   const setDetails = (details) => { const d=load(); d.details=details; save(d); return d; };
-  const toggleItem = (id) => { const d=load(); const n=Number(id); d.item_ids=d.item_ids.includes(n)?d.item_ids.filter(x=>x!==n):[...d.item_ids,n]; save(d); return d; };
-  const removeItem = (id) => { const d=load(); d.item_ids=d.item_ids.filter(x=>x!==Number(id)); save(d); return d; };
+  const toggleItem = (id) => { const d=load(); const n=Number(id); if(d.item_ids.includes(n)){d.item_ids=d.item_ids.filter(x=>x!==n);delete d.item_comments[String(n)];}else{d.item_ids=[...d.item_ids,n];} save(d); return d; };
+  const removeItem = (id) => { const d=load(); const n=Number(id); d.item_ids=d.item_ids.filter(x=>x!==n);delete d.item_comments[String(n)];save(d);return d; };
+  const setItemComment = (id,comment) => { const d=load(); const n=Number(id),key=String(n),value=String(comment||'').replace(/\s+/g,' ').trim().slice(0,300);if(value)d.item_comments[key]=value;else delete d.item_comments[key];if(value&&!d.item_ids.includes(n))d.item_ids=[...d.item_ids,n];save(d);return d; };
   const setRequestedDishes = (dishes) => { const d=load(); d.requested_dishes=dishes; save(d); return d; };
   const setCustomerNotes = (notes) => { const d=load(); d.customer_notes=String(notes||''); save(d); return d; };
-  return {load,save,clear,setDetails,toggleItem,removeItem,setRequestedDishes,setCustomerNotes};
+  return {load,save,clear,setDetails,toggleItem,removeItem,setItemComment,setRequestedDishes,setCustomerNotes};
 })();
 window.DraftStore=DraftStore;
 
@@ -95,7 +96,7 @@ async function submitCurrentDraft(button,errorBox){
   if(!current.item_ids.length&&!current.requested_dishes.length)throw new Error('Please choose at least one menu item or requested dish.');
   const editToken=localStorage.getItem('cateringEditOrderToken');
   const endpoint=editToken?'/api/orders/'+encodeURIComponent(editToken)+'/menu-update':'/api/quotes';
-  const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});
+  const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({details:current.details,item_ids:current.item_ids,item_comments:current.item_comments,requested_dishes:current.requested_dishes,customer_notes:current.customer_notes})});
   const raw=await res.text();let body={};
   try{body=raw?JSON.parse(raw):{};}catch{body={ok:false,error:'We could not send your quote request. Please try again.'};}
   if(!res.ok||!body.ok){const errors=body.errors&&typeof body.errors==='object'?Object.values(body.errors):[];throw new Error(errors.length?errors.join(' '):(body.error||'Could not send quote.'));}
@@ -400,9 +401,13 @@ function initMenu(){
     const neutral=['welcome drink','desserts','add ons'].includes(String(i.category||'').trim().toLowerCase());
     const label=i.dietary==='veg'?'Veg':i.dietary==='nonveg'?'Non Veg':'Both';
     const dietary=neutral?'':`<div class="diet-dot ${escapeHtml(i.dietary)}">${label}</div>`;
-    return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} ${neutral?'dietary-card-neutral':'dietary-card-'+escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${dietary}</div><div class="menu-item-actions"><button type="button" class="item-details-btn" data-item-details="${i.id}" aria-label="View details for ${escapeHtml(i.name)}">Details</button><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></div></article>`;
+    const comment=DraftStore.load().item_comments?.[String(i.id)]||'';
+    return `<article class="menu-item ${selected?'selected':''} ${i.image_url?'has-image':''} ${neutral?'dietary-card-neutral':'dietary-card-'+escapeHtml(i.dietary)}">${i.image_url?`<img class="menu-item-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy">`:''}<div class="menu-item-copy"><div class="menu-item-name">${escapeHtml(i.name)}</div>${comment?`<div class="item-comment-preview">Note: ${escapeHtml(comment)}</div>`:''}${i.price!=null?`<div class="menu-item-price">${formatMenuPrice(i.price)}</div>`:''}${dietary}</div><div class="menu-item-actions"><button type="button" class="item-comment-btn ${comment?'has-comment':''}" data-item-comment="${i.id}" aria-label="Add comment for ${escapeHtml(i.name)}">${comment?'Comment ✓':'Comment'}</button><button type="button" class="item-details-btn" data-item-details="${i.id}" aria-label="View details for ${escapeHtml(i.name)}">Details</button><button type="button" class="add-btn ${selected?'active':''}" aria-label="${selected?'Remove':'Add'} ${escapeHtml(i.name)}" data-add-item="${i.id}">${selected?'✓':'+'}</button></div></article>`;
   }
-  function bindItemDetails(){content.querySelectorAll('[data-item-details]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemDetails));if(!i)return;const d=document.querySelector('[data-item-details-dialog]');if(!d)return;d.querySelector('[data-item-details-title]').textContent=i.name;d.querySelector('[data-item-details-copy]').textContent=i.description||'Food description will be added soon.';d.showModal();}));}
+  function bindItemDetails(){
+    content.querySelectorAll('[data-item-details]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemDetails));if(!i)return;const d=document.querySelector('[data-item-details-dialog]');if(!d)return;d.querySelector('[data-item-details-title]').textContent=i.name;d.querySelector('[data-item-details-copy]').textContent=i.description||'Food description will be added soon.';d.showModal();}));
+    content.querySelectorAll('[data-item-comment]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemComment));const d=document.querySelector('[data-item-comment-dialog]');if(!i||!d)return;d.dataset.itemId=String(i.id);d.querySelector('[data-item-comment-title]').textContent=i.name;const input=d.querySelector('[data-item-comment-input]');input.value=DraftStore.load().item_comments?.[String(i.id)]||'';d.showModal();setTimeout(()=>input.focus(),80);}));
+  }
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));
   dietBtns.forEach(b=>b.addEventListener('click',()=>{selectedDiet=b.dataset.dietChoice;activeCategory=null;render();if(b.closest('[data-menu-filter-dialog]'))filterDialog?.close();}));
   searchInput?.addEventListener('focus',enterSearchMode);
@@ -429,10 +434,30 @@ function initReview(){
 async function renderReviewItems(ids,box,submit,requestedCount=0){
   if(!ids.length){box.innerHTML='<div class="empty">No standard menu items selected. <a href="/menu"><strong>Choose Menu Items</strong></a></div>';if(submit)submit.disabled=requestedCount===0;return;}
   try{const res=await fetch('/api/menu-items?ids='+encodeURIComponent(ids.join(','))),items=await res.json(),groups={};items.forEach(i=>{(((groups[i.menu]??={})[i.category]??={})[i.subcategory]??=[]).push(i)});
-    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;const catCount=Object.values(subs).reduce((n,arr)=>n+arr.length,0);return `<div class="review-category review-category-highlight">${escapeHtml(c)} <span>× ${catCount}</span></div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list review-basket-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item review-basket-item ${escapeHtml(i.dietary)}">${i.image_url?`<img class="review-basket-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="review-basket-image review-basket-placeholder" aria-hidden="true">SI</div>`}<span class="review-basket-copy"><strong>${escapeHtml(i.name)}</strong>${i.description?`<small>${escapeHtml(i.description)}</small>`:''}${i.price!=null?`<strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
+    box.innerHTML=Object.entries(groups).map(([m,cats])=>`<div class="review-group"><h3>${escapeHtml(m)}</h3>${Object.entries(cats).map(([c,subs])=>{let counter=1;const catCount=Object.values(subs).reduce((n,arr)=>n+arr.length,0);return `<div class="review-category review-category-highlight">${escapeHtml(c)} <span>× ${catCount}</span></div>${Object.entries(subs).map(([s,arr])=>`${s!=='Main Selection'?`<div class="help">${escapeHtml(s)}</div>`:''}<ol class="review-numbered-list review-basket-list" start="${counter}">${arr.map(i=>`<li class="dietary-list-item review-basket-item ${escapeHtml(i.dietary)}">${i.image_url?`<img class="review-basket-image" src="${escapeHtml(i.image_url)}" alt="${escapeHtml(i.name)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="review-basket-image review-basket-placeholder" aria-hidden="true">SI</div>`}<span class="review-basket-copy"><strong>${escapeHtml(i.name)}</strong>${DraftStore.load().item_comments?.[String(i.id)]?`<small class="review-item-comment">Your comment: ${escapeHtml(DraftStore.load().item_comments[String(i.id)])}</small>`:''}${i.description?`<small>${escapeHtml(i.description)}</small>`:''}${i.price!=null?`<strong class="review-item-price">${formatMenuPrice(i.price)}</strong>`:''}</span><button type="button" data-remove="${i.id}">Remove</button></li>`).join('')}</ol>${(()=>{counter+=arr.length;return ''})()}`).join('')}`}).join('')}</div>`).join('');
     box.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>DraftStore.removeItem(Number(b.dataset.remove))));if(submit)submit.disabled=false;
   }catch{box.innerHTML='<div class="notice error">Could not load your selected items. Return to the menu and try again.</div>';if(submit)submit.disabled=true;}
 }
 
+function initItemCommentDialog(){
+  const d=document.querySelector('[data-item-comment-dialog]');if(!d)return;
+  const input=d.querySelector('[data-item-comment-input]');
+  d.querySelectorAll('[data-close-item-comment]').forEach(b=>b.addEventListener('click',()=>d.close()));
+  d.querySelector('[data-save-item-comment]')?.addEventListener('click',()=>{
+    const id=Number(d.dataset.itemId);if(!id)return;
+    const state=DraftStore.setItemComment(id,input.value);const comment=state.item_comments?.[String(id)]||'';d.close();
+    document.querySelectorAll(`[data-item-comment="${id}"]`).forEach(btn=>{btn.textContent=comment?'Comment ✓':'Comment';btn.classList.toggle('has-comment',Boolean(comment));const card=btn.closest('.menu-item');if(card){card.classList.add('selected');let preview=card.querySelector('.item-comment-preview');if(comment){if(!preview){preview=document.createElement('div');preview.className='item-comment-preview';card.querySelector('.menu-item-name')?.insertAdjacentElement('afterend',preview);}preview.textContent='Note: '+comment;}else preview?.remove();const add=card.querySelector(`[data-add-item="${id}"]`);if(add){add.textContent='✓';add.classList.add('active');add.setAttribute('aria-label','Remove '+(card.querySelector('.menu-item-name')?.textContent||'item'));}}});
+    updateBasketBar();
+  });
+  d.addEventListener('click',e=>{if(e.target===d)d.close();});
+}
+
+function initAllergyInfo(){
+  const d=document.querySelector('[data-allergy-info-dialog]');if(!d)return;
+  document.querySelectorAll('[data-open-allergy-info]').forEach(btn=>btn.addEventListener('click',()=>d.showModal()));
+  d.querySelectorAll('[data-close-allergy-info]').forEach(btn=>btn.addEventListener('click',()=>d.close()));
+  d.addEventListener('click',e=>{if(e.target===d)d.close();});
+}
+
 function initDraftControls(){document.querySelectorAll('[data-clear-draft]').forEach(btn=>btn.addEventListener('click',()=>{if(confirm('Clear your saved catering draft?')){DraftStore.clear();location.href='/';}}));const recent=document.querySelector('[data-recent-order]');if(recent){const t=localStorage.getItem('lastCateringOrderToken');if(t){recent.href='/orders/'+t;recent.hidden=false;}}}
-document.addEventListener('DOMContentLoaded',()=>{initDetailsForm();initMenu();initReview();initDraftControls();updateBasketBar();});
+document.addEventListener('DOMContentLoaded',()=>{initDetailsForm();initMenu();initReview();initItemCommentDialog();initAllergyInfo();initDraftControls();updateBasketBar();});

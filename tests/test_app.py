@@ -41,6 +41,7 @@ def quote_payload(phone="0891234567", event_name="Test Event", days=10):
             "eircode": "N37K5P3",
         },
         "item_ids": [1, 2],
+        "item_comments": {"1": "Less spicy"},
         "requested_dishes": ["Special Paneer Dish"],
         "customer_notes": "Please keep one section mild for children.",
     }
@@ -71,6 +72,9 @@ def test_build8_mobile_workflow():
         assert 'data-menu-basket hidden' in menu_page.text
         assert 'Review Basket' in menu_page.text
         assert 'data-item-details-dialog' in menu_page.text
+        assert 'data-item-comment-dialog' in menu_page.text
+        assert 'data-open-allergy-info' in menu_page.text
+        assert 'Cereals containing gluten' in menu_page.text
         details_page = client.get('/order?next=/submit')
         assert details_page.status_code == 200
         assert 'data-quarter-time-dialog' in details_page.text
@@ -154,6 +158,11 @@ def test_build8_mobile_workflow():
         assert q1.status_code == 200, q1.text
         b1 = q1.json()
         assert b1["order_number"] == "CAT0001"
+        from app.models import QuoteItem
+        with SessionLocal() as db:
+            first_item = db.scalar(select(QuoteItem).where(QuoteItem.order_id == 1, QuoteItem.item_id == 1))
+            assert first_item is not None
+            assert first_item.customer_comment == "Less spicy"
 
         q2 = client.post("/api/quotes", json=quote_payload(event_name="Birthday", days=12))
         assert q2.status_code == 200, q2.text
@@ -203,6 +212,7 @@ def test_build8_mobile_workflow():
         assert "Web Order Charge" not in detail.text
         assert 'Send Quote To Customer' in detail.text
         assert '✓ Approve' in detail.text and '✕ Reject' in detail.text
+        assert 'Customer comment:' in detail.text and 'Less spicy' in detail.text
         assert 'approve-request' in detail.text and 'reject-request' in detail.text
         assert 'data-finance-dialog' not in detail.text and 'id="payments"' not in detail.text
         assert 'Change the order status to Confirmed' in detail.text

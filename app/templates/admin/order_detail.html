@@ -85,7 +85,7 @@
         {% if sub_name and sub_name != 'Main Selection' %}<div class="help admin-menu-subheading">{{ sub_name }}</div>{% endif %}
         {% for item in items %}
         <div class="admin-order-menu-item dietary-list-item {{ item.dietary }}">
-          <div><strong>{{ item.item_name }}</strong><small>{{ sub_name }}{% if item.internal_cost_per_guest is not none %} · Internal €{{ '%.2f'|format(item.internal_cost_per_guest) }}/guest{% else %} · Internal price not set{% endif %}</small></div>
+          <div><strong>{{ item.item_name }}</strong><small>{{ sub_name }}{% if item.internal_cost_per_guest is not none %} · Internal €{{ '%.2f'|format(item.internal_cost_per_guest) }}/guest{% else %} · Internal price not set{% endif %}</small>{% if item.customer_comment %}<div class="help" style="margin-top:5px;color:#7fe8d9"><strong>Customer comment:</strong> {{ item.customer_comment }}</div>{% endif %}</div>
           {% if order.status != 'voided' %}
           <details class="order-item-editor">
             <summary>Edit</summary>

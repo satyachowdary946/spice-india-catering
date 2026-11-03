@@ -190,6 +190,7 @@ class QuoteItem(Base):
     subcategory_name: Mapped[str] = mapped_column(String(120))
     dietary: Mapped[str] = mapped_column(String(20))
     internal_cost_per_guest: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2), nullable=True)
+    customer_comment: Mapped[str] = mapped_column(Text, default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     order: Mapped[QuoteRequest] = relationship(back_populates="items")
 

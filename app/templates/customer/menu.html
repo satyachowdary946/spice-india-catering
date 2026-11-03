@@ -40,6 +40,10 @@
   </div>
 
   <div class="container">
+    <div class="public-allergy-strip no-print">
+      <div><strong>Allergy Information</strong><span>For allergen information about any dish, contact us before ordering.</span></div>
+      <button type="button" class="allergy-info-btn" data-open-allergy-info>View Allergy Info</button>
+    </div>
     <div data-menu-content></div>
   </div>
 
@@ -89,6 +93,15 @@
     </div>
   </dialog>
 
+
+  <dialog class="request-dialog item-comment-dialog" data-item-comment-dialog aria-labelledby="item-comment-title">
+    <div class="request-dialog-card item-comment-dialog-card">
+      <div class="admin-title"><div><div class="eyebrow">Dish Comment</div><h2 id="item-comment-title" data-item-comment-title>Dish Comment</h2></div><button class="icon-close" type="button" data-close-item-comment aria-label="Close">×</button></div>
+      <p class="muted">Add a short note for this dish, for example “less spicy”, “no onion” or “mild”. Saving a comment also adds the dish to your basket.</p>
+      <div class="field"><label for="item-comment-input">Comment</label><textarea id="item-comment-input" data-item-comment-input rows="4" maxlength="300" placeholder="Example: Less spicy"></textarea><span class="help">Maximum 300 characters.</span></div>
+      <div class="request-dialog-actions"><button class="btn secondary" type="button" data-close-item-comment>Cancel</button><button class="btn" type="button" data-save-item-comment>Save Comment</button></div>
+    </div>
+  </dialog>
 
   <dialog class="request-dialog item-details-dialog" data-item-details-dialog aria-labelledby="item-details-title">
     <div class="request-dialog-card">

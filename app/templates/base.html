@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/app.css?v=build14_15">
+  <link rel="stylesheet" href="/static/css/app.css?v=build14_17">
   {% block head %}{% endblock %}
 </head>
 <body class="public-site{% if request.url.path == '/' %} home-page{% endif %}{% if request.url.path == '/menu' %} menu-page{% endif %}">
@@ -38,8 +38,25 @@
   <aside class="site-announcement no-print" aria-label="Catering announcement"><div class="container announcement-row">{% if business.announcement_title %}<span class="announcement-label">{{ business.announcement_title }}</span>{% endif %}<strong>{{ business.announcement_text }}</strong></div></aside>
   {% endif %}
   {% block body %}{% endblock %}
-  {% if request.url.path != "/menu" %}<footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>{% endif %}
-  <script src="/static/js/customer.js?v=build14_15" defer></script>
+  {% if request.url.path != "/menu" %}
+  <div class="container no-print"><div class="public-allergy-strip public-allergy-strip-footer"><div><strong>Allergy Information</strong><span>For allergen information about any dish, contact us before ordering.</span></div><button type="button" class="allergy-info-btn" data-open-allergy-info>View Allergy Info</button></div></div>
+  <footer class="footer no-print"><div class="container"><strong>{{ business.company_name or 'Catering Service' }}</strong>{% if business.phone %}<span> · {{ business.phone }}</span>{% endif %}{% if business.footer_note %}<p>{{ business.footer_note }}</p>{% endif %}</div></footer>{% endif %}
+  <dialog class="request-dialog allergy-info-dialog no-print" data-allergy-info-dialog aria-labelledby="allergy-info-title">
+    <div class="request-dialog-card allergy-info-card">
+      <div class="admin-title"><div><div class="eyebrow">Food Allergy Information</div><h2 id="allergy-info-title">Allergy Information</h2></div><button class="icon-close" type="button" data-close-allergy-info aria-label="Close">×</button></div>
+      <p>If you have a food allergy or intolerance, please contact us before ordering so we can provide written allergen information for the dishes you are considering.</p>
+      <p class="muted">The 14 regulated allergens in Ireland/EU are:</p>
+      <div class="allergen-chip-list" aria-label="14 regulated food allergens">
+        <span>Cereals containing gluten</span><span>Crustaceans</span><span>Eggs</span><span>Fish</span><span>Peanuts</span><span>Soybeans</span><span>Milk</span><span>Nuts</span><span>Celery</span><span>Mustard</span><span>Sesame</span><span>Sulphur dioxide & sulphites</span><span>Lupin</span><span>Molluscs</span>
+      </div>
+      <div class="allergy-contact-actions">
+        {% if business.email %}<a class="btn" href="mailto:{{ business.email }}?subject=Allergy%20Information%20Request">Email Us</a>{% endif %}
+        {% if business_whatsapp_url %}<a class="btn secondary" href="{{ business_whatsapp_url }}?text=Hi%20Spice%20India%2C%20I%20need%20allergy%20information%20for%20a%20catering%20dish." target="_blank" rel="noopener">WhatsApp Us</a>{% endif %}
+      </div>
+      <p class="help">Please tell us the exact dishes and allergy/intolerance involved. Do not rely on general menu names alone.</p>
+    </div>
+  </dialog>
+  <script src="/static/js/customer.js?v=build14_17" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

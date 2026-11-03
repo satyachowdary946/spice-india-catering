@@ -171,9 +171,14 @@ def ensure_schema_compatibility() -> None:
 
     if "quote_items" in tables:
         columns = {c["name"] for c in inspector.get_columns("quote_items")}
-        if "internal_cost_per_guest" not in columns:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE quote_items ADD COLUMN internal_cost_per_guest NUMERIC(10,2)"))
+        quote_item_additions = {
+            "internal_cost_per_guest": "NUMERIC(10,2)",
+            "customer_comment": "TEXT DEFAULT ''",
+        }
+        for name, ddl in quote_item_additions.items():
+            if name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE quote_items ADD COLUMN {name} {ddl}"))
 
     if "expenses" in tables:
         columns = {c["name"] for c in inspector.get_columns("expenses")}
@@ -620,7 +625,10 @@ def build_kitchen_share_text(order: QuoteRequest, pdf_url: str = "") -> str:
                 if sub_name and sub_name != "Main Selection":
                     lines.append(f"• {sub_name}")
                 for item in items:
-                    lines.append(f"{counter}. {item.item_name}")
+                    line = f"{counter}. {item.item_name}"
+                    if (getattr(item, "customer_comment", "") or "").strip():
+                        line += f" — Note: {item.customer_comment.strip()}"
+                    lines.append(line)
                     counter += 1
 
     approved = [dish for dish in (order.requested_dishes or []) if dish.status == "approved"]
@@ -637,9 +645,12 @@ def build_kitchen_share_text(order: QuoteRequest, pdf_url: str = "") -> str:
 
 
 def render(request: Request, db: Session, template: str, **context: Any):
+    biz = business(db)
+    whatsapp_number = normalise_whatsapp_number(biz.whatsapp or biz.phone)
     context.update({
         "request": request,
-        "business": business(db),
+        "business": biz,
+        "business_whatsapp_url": f"https://wa.me/{whatsapp_number}" if whatsapp_number else "",
         "admin_logged_in": bool(request.session.get("admin_id")),
         "csrf_token": ensure_csrf(request.session),
         "status_labels": {s: s.replace("_", " ").title() for s in ALLOWED_STATUSES},
@@ -1116,6 +1127,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
 
     details = payload.get("details") or {}
     item_ids = payload.get("item_ids") or []
+    raw_item_comments = payload.get("item_comments") or {}
     raw_requested_dishes = payload.get("requested_dishes") or []
     customer_notes = str(payload.get("customer_notes") or "").strip()
     errors: dict[str, str] = {}
@@ -1190,6 +1202,16 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         unique_ids = list(dict.fromkeys(int(i) for i in item_ids))
     except Exception:
         unique_ids = []
+    item_comments: dict[int, str] = {}
+    if isinstance(raw_item_comments, dict):
+        for raw_id, raw_comment in raw_item_comments.items():
+            try:
+                item_id = int(raw_id)
+            except Exception:
+                continue
+            comment = re.sub(r"\s+", " ", str(raw_comment or "")).strip()[:300]
+            if comment:
+                item_comments[item_id] = comment
     if not unique_ids and not requested_dishes:
         errors["items"] = "Add at least one menu item or request a dish."
 
@@ -1261,6 +1283,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
             subcategory_name=sub.name,
             dietary=item.dietary,
             internal_cost_per_guest=item.internal_cost_per_guest,
+            customer_comment=item_comments.get(item.id, ""),
             sort_order=sort_index,
         ))
     for dish_name in requested_dishes:
@@ -1428,6 +1451,7 @@ def customer_add_dishes(token: str, request: Request, db: Session = Depends(get_
             "eircode": order.eircode,
         },
         "item_ids": [item.item_id for item in order.items if item.item_id],
+        "item_comments": {str(item.item_id): item.customer_comment for item in order.items if item.item_id and (item.customer_comment or "").strip()},
         "requested_dishes": [dish.name for dish in order.requested_dishes],
         "customer_notes": order.customer_notes or "",
         "last_updated": datetime.utcnow().isoformat(),
@@ -1454,6 +1478,17 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
         unique_ids = list(dict.fromkeys(int(i) for i in (payload.get("item_ids") or [])))
     except Exception:
         unique_ids = []
+    raw_item_comments = payload.get("item_comments") or {}
+    item_comments: dict[int, str] = {}
+    if isinstance(raw_item_comments, dict):
+        for raw_id, raw_comment in raw_item_comments.items():
+            try:
+                item_id = int(raw_id)
+            except Exception:
+                continue
+            comment = re.sub(r"\s+", " ", str(raw_comment or "")).strip()[:300]
+            if comment:
+                item_comments[item_id] = comment
     requested_names = []
     seen = set()
     for raw in payload.get("requested_dishes") or []:
@@ -1474,7 +1509,7 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     item_by_id = {item.id: item for item in items}
     for sort_index, item_id in enumerate(unique_ids):
         item = item_by_id[item_id]; sub = item.subcategory; cat = sub.category; menu = cat.menu
-        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item.name, menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, internal_cost_per_guest=item.internal_cost_per_guest, sort_order=sort_index))
+        db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item.name, menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, internal_cost_per_guest=item.internal_cost_per_guest, customer_comment=item_comments.get(item.id, ""), sort_order=sort_index))
     existing = {dish.name.casefold(): dish for dish in order.requested_dishes}
     for name in requested_names:
         if name.casefold() not in existing:
@@ -3595,7 +3630,12 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         for cat_name, subs in categories.items():
             names: list[str] = []
             for _, menu_items in subs.items():
-                names.extend(_pdf_text(getattr(menu_item, "item_name", "")) for menu_item in menu_items)
+                for menu_item in menu_items:
+                    name = _pdf_text(getattr(menu_item, "item_name", ""))
+                    comment = (getattr(menu_item, "customer_comment", "") or "").strip()
+                    if comment:
+                        name += f" — Note: {_pdf_text(comment)}"
+                    names.append(name)
             if not names:
                 continue
             chunks = [names[i:i + 12] for i in range(0, len(names), 12)]
@@ -3783,7 +3823,7 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
     for menu_name, categories in order_groups(order).items():
         menu_lines.append(Paragraph(f"<b>{menu_name}</b>", body))
         for cat_name, subs in categories.items():
-            items = [item.item_name for sub_items in subs.values() for item in sub_items]
+            items = [item.item_name + ((" — " + item.customer_comment) if (getattr(item, "customer_comment", "") or "").strip() else "") for sub_items in subs.values() for item in sub_items]
             if items:
                 menu_lines.append(Paragraph(f"<b>{cat_name}:</b> " + ", ".join(items), body))
     approved = [dish.name for dish in order.requested_dishes if dish.status == "approved"]

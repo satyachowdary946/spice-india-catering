@@ -1964,3 +1964,17 @@ body.menu-page{overflow-x:clip}
 .public-site h1,.public-site h2,.public-site h3,.public-site .brand,.public-site .btn,.public-site .category-tabs button,.public-site .dietary-primary button{font-family:"Plus Jakarta Sans",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:-.015em}
 .public-site h1,.public-site h2,.public-site h3{font-weight:800}
 .public-site .menu-item strong,.public-site .review-basket-copy strong{font-weight:800;letter-spacing:-.01em}
+
+
+/* BUILD 14.17 — dish comments + public allergy information */
+.item-comment-btn{min-height:38px;padding:0 10px;border-radius:10px;border:1px solid #3b7d70;background:#102923;color:#8ce5d5;font-weight:900;font-size:.74rem;cursor:pointer}
+.item-comment-btn:hover,.item-comment-btn.has-comment{background:#17473e;border-color:#2dd4bf;color:#d9fff8}
+.item-comment-preview{margin-top:5px;font-size:.76rem;line-height:1.3;color:#8ce5d5;font-weight:700}
+.review-item-comment{display:block;margin-top:5px;padding:5px 7px;border-radius:7px;background:#10352e;color:#8ce5d5;font-weight:700}
+.item-comment-dialog-card{max-width:520px}
+.public-allergy-strip{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:14px 0 18px;padding:12px 14px;border:1px solid #625b31;border-radius:13px;background:#1d1b11;color:#f5f3dd}
+.public-allergy-strip>div{display:grid;gap:2px}.public-allergy-strip span{font-size:.82rem;color:#c9c5a6}
+.allergy-info-btn{border:1px solid #e0b94f;border-radius:10px;background:#2e260e;color:#ffe499;font-weight:900;padding:9px 12px;white-space:nowrap;cursor:pointer}
+.allergy-info-card{max-width:680px}.allergen-chip-list{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0 16px}.allergen-chip-list span{padding:7px 9px;border:1px solid #46524f;border-radius:999px;background:#111a18;color:#dce8e4;font-size:.8rem;font-weight:700}.allergy-contact-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.public-allergy-strip-footer{margin-top:22px;margin-bottom:22px}
+@media(max-width:699px){.menu-item-actions{gap:5px}.item-comment-btn,.item-details-btn{min-height:32px;padding:0 7px;font-size:.62rem}.public-allergy-strip{align-items:flex-start}.public-allergy-strip span{font-size:.74rem}.allergy-info-btn{padding:8px 9px;font-size:.72rem}}
