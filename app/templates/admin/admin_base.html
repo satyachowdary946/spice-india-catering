@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#0b1513">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/app.css?v=build14_22">
+  <link rel="stylesheet" href="/static/css/app.css?v=build14_23">
 </head>
 <body class="admin-body">
 <header class="admin-header no-print">
@@ -18,6 +18,9 @@
         <span class="brand-mark admin-brand-mark">A</span>
         <span class="admin-brand-copy"><strong>{{ business.company_name or 'Spice India' }}</strong><small>Admin</small></span>
       </a>
+    </div>
+    <div class="admin-session-timer" data-admin-session-timer data-timeout-seconds="600" title="Admin session time remaining" aria-live="polite">
+      <span>Session</span><strong data-admin-session-countdown>10:00</strong>
     </div>
     <button class="admin-mobile-menu-trigger" type="button" data-open-admin-menu aria-label="Open admin menu">☰</button>
     <div class="admin-nav">
@@ -128,6 +131,45 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelector('[data-open-admin-menu]')?.addEventListener('click',()=>menu?.showModal());
   menu?.querySelectorAll('[data-close-admin-menu]').forEach(btn=>btn.addEventListener('click',()=>menu.close()));
   menu?.addEventListener('click',e=>{if(e.target===menu)menu.close();});
+
+  // Build 14.23: live countdown mirrors the real 10-minute server inactivity window.
+  const sessionTimer=document.querySelector('[data-admin-session-timer]');
+  const sessionCountdown=document.querySelector('[data-admin-session-countdown]');
+  if(sessionTimer&&sessionCountdown){
+    const timeoutSeconds=Number(sessionTimer.dataset.timeoutSeconds||600);
+    let expiresAt=Date.now()+(timeoutSeconds*1000);
+    let lastKeepalive=0;
+    let keepaliveBusy=false;
+    const csrf='{{ csrf_token }}';
+    const formatRemaining=(seconds)=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
+    const renderCountdown=()=>{
+      const remaining=Math.max(0,Math.ceil((expiresAt-Date.now())/1000));
+      sessionCountdown.textContent=formatRemaining(remaining);
+      sessionTimer.classList.toggle('is-warning',remaining<=120&&remaining>60);
+      sessionTimer.classList.toggle('is-danger',remaining<=60);
+      if(remaining<=0){window.location.assign('/admin/login?expired=1');}
+    };
+    const keepalive=async()=>{
+      const now=Date.now();
+      if(keepaliveBusy||now-lastKeepalive<15000)return;
+      keepaliveBusy=true;lastKeepalive=now;
+      try{
+        const response=await fetch('/admin/session/keepalive',{
+          method:'POST',
+          headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},
+          body:new URLSearchParams({csrf_token:csrf}),
+          credentials:'same-origin'
+        });
+        if(response.status===401){window.location.assign('/admin/login?expired=1');return;}
+        if(response.ok){expiresAt=Date.now()+(timeoutSeconds*1000);renderCountdown();}
+      }catch(err){/* Keep the visible timer running; server remains authoritative. */}
+      finally{keepaliveBusy=false;}
+    };
+    const registerActivity=()=>{expiresAt=Date.now()+(timeoutSeconds*1000);renderCountdown();keepalive();};
+    ['pointerdown','keydown','input','touchstart','wheel'].forEach(type=>document.addEventListener(type,registerActivity,{passive:true}));
+    setInterval(renderCountdown,1000);
+    renderCountdown();
+  }
 });
 </script>
 {% block scripts %}{% endblock %}

@@ -2049,3 +2049,12 @@ body.menu-page{overflow-x:clip}
 /* Build 14.22 — whole food card selection */
 .menu-item[data-item-card]{cursor:pointer;}
 .menu-item[data-item-card]:active{transform:scale(.997);}
+
+
+/* BUILD 14.23 — visible admin inactivity countdown */
+.admin-session-timer{display:flex;align-items:center;gap:7px;flex:0 0 auto;padding:7px 10px;border:1px solid #35514a;border-radius:11px;background:#11201c;color:#a6b8b2;font-size:.66rem;font-weight:900;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.admin-session-timer strong{min-width:38px;color:#6ee7d4;font-size:.8rem;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.admin-session-timer.is-warning{border-color:#7b6429;background:#241f10}.admin-session-timer.is-warning strong{color:#f5c451}
+.admin-session-timer.is-danger{border-color:#8a423d;background:#2a1716}.admin-session-timer.is-danger strong{color:#ff938c}
+@media(max-width:760px){.admin-header-row{gap:8px}.admin-session-timer{margin-left:auto;padding:6px 8px;gap:5px}.admin-session-timer span{display:none}.admin-session-timer strong{min-width:40px;text-align:center;font-size:.76rem}.admin-mobile-menu-trigger{flex:0 0 42px}.admin-brand-row{min-width:0;flex:1}.admin-brand{max-width:100%}}
+@media(max-width:390px){.admin-session-timer{padding:6px}.admin-session-timer strong{min-width:36px;font-size:.72rem}}

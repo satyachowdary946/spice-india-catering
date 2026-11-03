@@ -1788,6 +1788,20 @@ def admin_logout(request: Request, csrf_token: str = Form(...)):
     return RedirectResponse("/admin/login", status_code=303)
 
 
+@app.post("/admin/session/keepalive")
+def admin_session_keepalive(
+    request: Request,
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    check_csrf(request, csrf_token)
+    try:
+        require_admin(request, db)
+    except HTTPException:
+        return JSONResponse({"ok": False, "expired": True}, status_code=401)
+    return JSONResponse({"ok": True, "remaining_seconds": ADMIN_IDLE_TIMEOUT_SECONDS})
+
+
 # ---------- Admin dashboard ----------
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, db: Session = Depends(get_db)):
