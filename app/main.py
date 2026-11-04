@@ -1197,7 +1197,7 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
                         "import_item_id": item.import_item_id,
                         "name": item.name,
                         "description": item.description or "",
-                        "allergens": item.allergens or "Contact Spice India to confirm recipe allergens before ordering.",
+                        "allergens": item.allergens or "Likely allergens: Not listed",
                         "dietary": item.dietary,
                         "sort_order": item.sort_order,
                         "price": float(item.display_price) if item.display_price is not None else None,
@@ -1239,7 +1239,7 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
         diet_group = "Veg Cuisine" if i.dietary == "veg" else ("Non Veg Cuisine" if i.dietary == "nonveg" else "Shared Menu")
         image_url = menu_image_url(i, i.id)
         result.append({
-            "id": i.id, "name": i.name, "description": i.description or "", "allergens": i.allergens or "Contact Spice India to confirm recipe allergens before ordering.", "dietary": i.dietary,
+            "id": i.id, "name": i.name, "description": i.description or "", "allergens": i.allergens or "Likely allergens: Not listed", "dietary": i.dietary,
             "menu": diet_group, "category": c.name, "subcategory": s.name,
             "price": float(i.display_price) if i.display_price is not None else None,
             "heading_color": i.section_heading_color or "#94A3B8",

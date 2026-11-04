@@ -2092,3 +2092,86 @@ body.menu-page{overflow-x:clip}
   .allergen-detail-panel small{font-size:.72rem;line-height:1.4}
   .item-details-info .request-dialog-actions .btn{min-height:40px;padding:8px 12px;font-size:.82rem}
 }
+
+
+/* =========================================================
+   BUILD 14.26 — FOOD DETAILS IMAGE + ONLINE LIKELY ALLERGENS
+   Photo stays centered; details remain split photo/info on all devices.
+   ========================================================= */
+.item-details-dialog{
+  width:min(96vw,920px)!important;
+  max-width:920px!important;
+  max-height:88vh!important;
+  overflow:hidden!important;
+}
+.item-details-dialog-card{height:auto;max-height:88vh!important;overflow:hidden!important}
+.item-details-layout{
+  display:grid!important;
+  grid-template-columns:minmax(150px,44%) minmax(0,56%)!important;
+  align-items:stretch!important;
+  min-height:360px!important;
+  max-height:88vh!important;
+}
+.item-details-media{
+  position:relative!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  min-width:0!important;
+  min-height:360px!important;
+  padding:12px!important;
+  background:#08110f!important;
+  border-right:1px solid #30443f!important;
+  overflow:hidden!important;
+}
+.item-details-image{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:100%!important;
+  max-height:calc(88vh - 24px)!important;
+  min-height:0!important;
+  object-fit:contain!important;
+  object-position:center center!important;
+  margin:auto!important;
+  border-radius:14px!important;
+  background:#08110f!important;
+}
+.item-details-image[hidden]{display:none!important}
+.item-details-image-placeholder{
+  width:100%!important;
+  height:100%!important;
+  min-height:336px!important;
+  display:grid!important;
+  place-items:center!important;
+}
+.item-details-image-placeholder[hidden]{display:none!important}
+.item-details-info{
+  padding:28px 26px 24px!important;
+  max-height:88vh!important;
+  overflow-y:auto!important;
+}
+.item-details-info h2{margin:5px 48px 18px 0!important}
+.item-details-section{padding:16px 0!important}
+.allergen-detail-panel p{
+  margin:0!important;
+  color:#ffd47a!important;
+  font-weight:850!important;
+  line-height:1.5!important;
+}
+@media(max-width:640px){
+  .item-details-dialog{width:96vw!important;max-width:96vw!important;border-radius:18px!important}
+  .item-details-layout{grid-template-columns:minmax(125px,42%) minmax(0,58%)!important;min-height:330px!important}
+  .item-details-media{min-height:330px!important;padding:8px!important}
+  .item-details-image{max-height:calc(88vh - 16px)!important;border-radius:11px!important}
+  .item-details-info{padding:20px 14px 18px!important}
+  .item-details-info h2{font-size:1.25rem!important;line-height:1.1!important;margin-right:38px!important;margin-bottom:10px!important}
+  .item-details-section{padding:11px 0!important}
+  .item-details-section h3{font-size:.72rem!important;margin-bottom:6px!important}
+  .item-details-copy,.allergen-detail-panel p{font-size:.84rem!important;line-height:1.42!important}
+}
+@media(max-width:410px){
+  .item-details-layout{grid-template-columns:minmax(112px,40%) minmax(0,60%)!important}
+  .item-details-media{padding:6px!important}
+  .item-details-info{padding:18px 11px 16px!important}
+}
