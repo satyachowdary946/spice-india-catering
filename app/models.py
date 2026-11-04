@@ -93,6 +93,7 @@ class MenuItem(Base):
     subcategory_id: Mapped[int] = mapped_column(ForeignKey("subcategories.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(180))
     description: Mapped[str] = mapped_column(Text, default="")
+    allergens: Mapped[str] = mapped_column(Text, default="")
     dietary: Mapped[str] = mapped_column(String(20), default="veg")  # veg | nonveg
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

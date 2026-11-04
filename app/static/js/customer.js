@@ -433,7 +433,17 @@ function initMenu(){
     }));
   }
   function bindItemDetails(){
-    content.querySelectorAll('[data-item-details]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemDetails));if(!i)return;const d=document.querySelector('[data-item-details-dialog]');if(!d)return;d.querySelector('[data-item-details-title]').textContent=i.name;d.querySelector('[data-item-details-copy]').textContent=i.description||'Food description will be added soon.';d.showModal();}));
+    content.querySelectorAll('[data-item-details]').forEach(btn=>btn.addEventListener('click',()=>{
+      const i=itemMap.get(Number(btn.dataset.itemDetails));if(!i)return;
+      const d=document.querySelector('[data-item-details-dialog]');if(!d)return;
+      d.querySelector('[data-item-details-title]').textContent=i.name;
+      d.querySelector('[data-item-details-copy]').textContent=i.description||'Food description will be added soon.';
+      d.querySelector('[data-item-details-allergens]').textContent=i.allergens||'Contact Spice India to confirm recipe allergens before ordering.';
+      const img=d.querySelector('[data-item-details-image]');
+      const placeholder=d.querySelector('[data-item-details-image-placeholder]');
+      if(i.image_url){img.src=i.image_url;img.alt=i.name;img.hidden=false;placeholder.hidden=true;}else{img.removeAttribute('src');img.alt='';img.hidden=true;placeholder.hidden=false;}
+      d.showModal();
+    }));
     content.querySelectorAll('[data-item-comment]').forEach(btn=>btn.addEventListener('click',()=>{const i=itemMap.get(Number(btn.dataset.itemComment));const d=document.querySelector('[data-item-comment-dialog]');if(!i||!d)return;d.dataset.itemId=String(i.id);d.querySelector('[data-item-comment-title]').textContent=i.name;const input=d.querySelector('[data-item-comment-input]');input.value=DraftStore.load().item_comments?.[String(i.id)]||'';d.showModal();}));
   }
   regionBtns.forEach(b=>b.addEventListener('click',()=>{selectedMenu=b.dataset.menuChoice==='all'?null:Number(b.dataset.menuChoice);activeCategory=null;render();}));

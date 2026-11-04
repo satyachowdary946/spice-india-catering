@@ -2058,3 +2058,37 @@ body.menu-page{overflow-x:clip}
 .admin-session-timer.is-danger{border-color:#8a423d;background:#2a1716}.admin-session-timer.is-danger strong{color:#ff938c}
 @media(max-width:760px){.admin-header-row{gap:8px}.admin-session-timer{margin-left:auto;padding:6px 8px;gap:5px}.admin-session-timer span{display:none}.admin-session-timer strong{min-width:40px;text-align:center;font-size:.76rem}.admin-mobile-menu-trigger{flex:0 0 42px}.admin-brand-row{min-width:0;flex:1}.admin-brand{max-width:100%}}
 @media(max-width:390px){.admin-session-timer{padding:6px}.admin-session-timer strong{min-width:36px;font-size:.72rem}}
+
+
+/* =========================================================
+   BUILD 14.25 — RESPONSIVE FOOD DETAILS + ALLERGEN PANEL
+   ========================================================= */
+.item-details-dialog{width:min(96vw,940px)!important;max-width:940px!important;padding:0!important;border:1px solid #46615b!important;border-radius:22px!important;background:#0c1513!important;color:#f5faf8!important;overflow:hidden!important}
+.item-details-dialog::backdrop{background:rgba(0,0,0,.78)!important;backdrop-filter:blur(2px)}
+.item-details-dialog-card{position:relative;padding:0!important;overflow:hidden}
+.item-details-close{position:absolute!important;top:14px;right:14px;z-index:3;background:rgba(8,18,16,.88)!important;backdrop-filter:blur(4px)}
+.item-details-layout{display:grid;grid-template-columns:minmax(0,48%) minmax(0,52%);min-height:440px}
+.item-details-media{min-width:0;background:#07100e;display:flex;align-items:center;justify-content:center;overflow:hidden;border-right:1px solid #30443f}
+.item-details-image{width:100%;height:100%;min-height:440px;object-fit:contain;display:block;background:#07100e}
+.item-details-image-placeholder{display:grid;place-items:center;width:100%;min-height:440px;color:#6d8580;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.item-details-info{padding:34px 30px 26px;display:flex;flex-direction:column;min-width:0;overflow:auto;max-height:min(82vh,720px)}
+.item-details-info h2{font-size:clamp(1.65rem,3vw,2.35rem);line-height:1.08;margin:5px 54px 22px 0}
+.item-details-section{padding:18px 0;border-top:1px solid #2e403c}
+.item-details-section h3{margin:0 0 8px;font-size:.82rem;letter-spacing:.08em;text-transform:uppercase;color:#79e5d4}
+.item-details-copy{margin:0!important;font-size:1rem!important;line-height:1.65!important;color:#e8f1ef!important;white-space:pre-wrap}
+.allergen-detail-panel p{margin:0 0 10px;font-weight:850;color:#ffd47a;line-height:1.55}
+.allergen-detail-panel small{display:block;color:#aebfba;line-height:1.5}
+.item-details-info .request-dialog-actions{margin-top:auto;padding-top:18px}
+@media(max-width:620px){
+  .item-details-dialog{width:96vw!important;max-height:88vh!important;border-radius:18px!important}
+  .item-details-layout{grid-template-columns:42% 58%;min-height:360px;max-height:86vh}
+  .item-details-media{border-right:1px solid #30443f}
+  .item-details-image,.item-details-image-placeholder{min-height:360px;height:100%;max-height:86vh}
+  .item-details-info{padding:22px 16px 18px;max-height:86vh}
+  .item-details-info h2{font-size:1.35rem;margin-right:40px;margin-bottom:14px}
+  .item-details-section{padding:13px 0}
+  .item-details-copy{font-size:.9rem!important;line-height:1.52!important}
+  .allergen-detail-panel p{font-size:.88rem;line-height:1.45}
+  .allergen-detail-panel small{font-size:.72rem;line-height:1.4}
+  .item-details-info .request-dialog-actions .btn{min-height:40px;padding:8px 12px;font-size:.82rem}
+}

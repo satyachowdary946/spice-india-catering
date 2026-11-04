@@ -186,6 +186,7 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
             "section": _text(ws.cell(row, headers["Menu Section"]).value) or "Main Selection",
             "name": name,
             "description": _text(ws.cell(row, headers.get("Food Description", 0)).value) if headers.get("Food Description") else (_text(ws.cell(row, headers.get("Notes", 0)).value) if headers.get("Notes") else ""),
+            "allergens": _text(ws.cell(row, headers.get("Allergens", 0)).value) if headers.get("Allergens") else "",
             "image_reference": _text(ws.cell(row, image_col).value) if image_col else "",
             "image_bytes": embedded[0] if embedded else None,
             "image_content_type": embedded[1] if embedded else None,

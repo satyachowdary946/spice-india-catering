@@ -163,6 +163,7 @@ def ensure_schema_compatibility() -> None:
             "display_price": "NUMERIC(10,2)",
             "internal_cost_per_guest": "NUMERIC(10,2)",
             "section_heading_color": "VARCHAR(20) DEFAULT '#94A3B8'",
+            "allergens": "TEXT DEFAULT ''",
         }
         for name, ddl in additions.items():
             if name not in columns:
@@ -680,8 +681,8 @@ def build_customer_share_text(order: QuoteRequest, biz: BusinessSettings, public
         f"Event: {order.event_name}",
         f"Date: {order.event_date.strftime('%d %b %Y')}",
         f"Day: {event_day(order)}",
-        f"Event time: {order.event_time.strftime('%H:%M')}",
-        f"Delivery time: {order.delivery_time.strftime('%H:%M') if order.delivery_time else '—'}",
+        f"Event time: {order.event_time.strftime('%I:%M %p').lstrip('0')}",
+        f"Delivery time: {order.delivery_time.strftime('%I:%M %p').lstrip('0') if order.delivery_time else '—'}",
         f"Guests: {order.adults} adults + {order.kids} kids",
         "",
     ]
@@ -1071,8 +1072,8 @@ async def send_customer_status_email_for_order(
         order.event_name,
         order.event_date.strftime("%d %b %Y"),
         event_day(order),
-        order.event_time.strftime("%H:%M"),
-        order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+        order.event_time.strftime("%I:%M %p").lstrip("0"),
+        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
         order.adults,
         order.kids,
         public_order_url(request, order.public_token),
@@ -1196,6 +1197,7 @@ def public_menu(request: Request, db: Session = Depends(get_db)):
                         "import_item_id": item.import_item_id,
                         "name": item.name,
                         "description": item.description or "",
+                        "allergens": item.allergens or "Contact Spice India to confirm recipe allergens before ordering.",
                         "dietary": item.dietary,
                         "sort_order": item.sort_order,
                         "price": float(item.display_price) if item.display_price is not None else None,
@@ -1223,7 +1225,7 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
         select(MenuItem)
         .where(MenuItem.id.in_(item_ids))
         .options(
-            load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.dietary, MenuItem.image_content_type, MenuItem.image_reference, MenuItem.display_price, MenuItem.section_heading_color),
+            load_only(MenuItem.id, MenuItem.subcategory_id, MenuItem.name, MenuItem.description, MenuItem.allergens, MenuItem.dietary, MenuItem.image_content_type, MenuItem.image_reference, MenuItem.display_price, MenuItem.section_heading_color),
             selectinload(MenuItem.subcategory).selectinload(Subcategory.category).selectinload(Category.menu),
         )
     ).all()
@@ -1237,7 +1239,7 @@ def api_menu_items(ids: str = "", db: Session = Depends(get_db)):
         diet_group = "Veg Cuisine" if i.dietary == "veg" else ("Non Veg Cuisine" if i.dietary == "nonveg" else "Shared Menu")
         image_url = menu_image_url(i, i.id)
         result.append({
-            "id": i.id, "name": i.name, "description": i.description or "", "dietary": i.dietary,
+            "id": i.id, "name": i.name, "description": i.description or "", "allergens": i.allergens or "Contact Spice India to confirm recipe allergens before ordering.", "dietary": i.dietary,
             "menu": diet_group, "category": c.name, "subcategory": s.name,
             "price": float(i.display_price) if i.display_price is not None else None,
             "heading_color": i.section_heading_color or "#94A3B8",
@@ -1475,8 +1477,8 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         order.event_name,
         order.event_date.strftime("%d %b %Y"),
         event_day(order),
-        order.event_time.strftime("%H:%M"),
-        order.delivery_time.strftime("%H:%M") if order.delivery_time else "",
+        order.event_time.strftime("%I:%M %p").lstrip("0"),
+        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "",
         adults + kids,
         admin_order_url(request, order.id),
         admin_notification_emails(db),
@@ -1490,8 +1492,8 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         order.event_name,
         order.event_date.strftime("%d %b %Y"),
         event_day(order),
-        order.event_time.strftime("%H:%M"),
-        order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+        order.event_time.strftime("%I:%M %p").lstrip("0"),
+        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
         adults,
         kids,
         selected_names + requested_dishes,
@@ -1693,8 +1695,8 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     db.commit()
     await notify_admin_new_quote_email(
         order.order_number, order.customer.name, order.customer.phone, order.event_name,
-        order.event_date.strftime("%d %b %Y"), event_day(order), order.event_time.strftime("%H:%M"),
-        order.delivery_time.strftime("%H:%M") if order.delivery_time else "", order.adults + order.kids,
+        order.event_date.strftime("%d %b %Y"), event_day(order), order.event_time.strftime("%I:%M %p").lstrip("0"),
+        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "", order.adults + order.kids,
         admin_order_url(request, order.id), admin_notification_emails(db),
     )
     return {"ok": True, "token": order.public_token, "order_number": order.order_number}
@@ -2331,6 +2333,7 @@ def apply_menu_workbook(db: Session, parsed: dict[str, Any]) -> dict[str, int]:
 
             item.name = item_data["name"]
             item.description = item_data.get("description") or ""
+            item.allergens = item_data.get("allergens") or ""
             item.dietary = item_data["dietary"]
             item.active = bool(item_data["active"]) and section_active
             item.sort_order = int(item_data["sort_order"] or 0)
@@ -3051,8 +3054,8 @@ async def admin_order_update(
                 order.event_name,
                 order.event_date.strftime("%d %b %Y"),
                 event_day(order),
-                order.event_time.strftime("%H:%M"),
-                order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+                order.event_time.strftime("%I:%M %p").lstrip("0"),
+                order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
                 order.adults,
                 order.kids,
                 f"{p['adult_charge']:.2f}",
@@ -3399,8 +3402,8 @@ async def admin_send_quote_email(
         order.event_name,
         order.event_date.strftime("%d %b %Y"),
         event_day(order),
-        order.event_time.strftime("%H:%M"),
-        order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+        order.event_time.strftime("%I:%M %p").lstrip("0"),
+        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
         order.adults,
         order.kids,
         f"{p['adult_charge']:.2f}",
@@ -3552,8 +3555,8 @@ async def customer_confirm_order(token: str, request: Request, db: Session = Dep
             order.event_name,
             order.event_date.strftime("%d %b %Y"),
             event_day(order),
-            order.event_time.strftime("%H:%M"),
-            order.delivery_time.strftime("%H:%M") if order.delivery_time else "—",
+            order.event_time.strftime("%I:%M %p").lstrip("0"),
+            order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
             f"€{p['total']:.2f}",
             admin_order_url(request, order.id),
         )
@@ -3748,8 +3751,8 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
     event_time = getattr(order, "event_time", None)
     delivery_time = getattr(order, "delivery_time", None)
     # Match the existing printable sheet's compact 24-hour display.
-    event_time_text = event_time.strftime("%H:%M") if event_time else "-"
-    delivery_time_text = delivery_time.strftime("%H:%M") if delivery_time else "-"
+    event_time_text = event_time.strftime("%I:%M %p").lstrip("0") if event_time else "-"
+    delivery_time_text = delivery_time.strftime("%I:%M %p").lstrip("0") if delivery_time else "-"
     timing = Table([[info_cell("Date", event_date_text), info_cell("Day", _pdf_text(event_day(order), "-")), info_cell("Event", event_time_text), info_cell("Delivery", delivery_time_text)]], colWidths=[138.75] * 4)
     timing.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.45, colors.HexColor("#8A8A8A")),
@@ -3899,7 +3902,7 @@ def build_order_pdf_fallback(order: QuoteRequest, biz: BusinessSettings) -> byte
     delivery_time = getattr(order, "delivery_time", None)
     adults = int(getattr(order, "adults", 0) or 0); kids = int(getattr(order, "kids", 0) or 0)
     info = [
-        [Paragraph("<b>DATE</b><br/>" + (event_date.strftime("%d/%m/%Y") if event_date else "-"), small), Paragraph("<b>DAY</b><br/>" + _pdf_text(event_day(order), "-"), small), Paragraph("<b>EVENT</b><br/>" + (event_time.strftime("%H:%M") if event_time else "-"), small), Paragraph("<b>DELIVERY</b><br/>" + (delivery_time.strftime("%H:%M") if delivery_time else "-"), small)],
+        [Paragraph("<b>DATE</b><br/>" + (event_date.strftime("%d/%m/%Y") if event_date else "-"), small), Paragraph("<b>DAY</b><br/>" + _pdf_text(event_day(order), "-"), small), Paragraph("<b>EVENT</b><br/>" + (event_time.strftime("%I:%M %p").lstrip("0") if event_time else "-"), small), Paragraph("<b>DELIVERY</b><br/>" + (delivery_time.strftime("%I:%M %p").lstrip("0") if delivery_time else "-"), small)],
         [Paragraph("<b>CUSTOMER</b><br/>" + _pdf_text(getattr(customer, "name", ""), "-"), small), Paragraph("<b>PHONE</b><br/>" + _pdf_text(getattr(customer, "phone", ""), "-"), small), Paragraph(f"<b>GUESTS</b><br/>{adults} + {kids} = {adults + kids}", small), Paragraph("<b>EVENT</b><br/>" + _pdf_text(getattr(order, "event_name", ""), "-"), small)],
     ]
     table = Table(info, colWidths=[137.5]*4)
@@ -3983,8 +3986,8 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         ["Event", order.event_name],
         ["Event date", order.event_date.strftime("%d %b %Y")],
         ["Day", event_day(order)],
-        ["Event time", order.event_time.strftime("%H:%M")],
-        ["Delivery time", order.delivery_time.strftime("%H:%M") if order.delivery_time else "—"],
+        ["Event time", order.event_time.strftime("%I:%M %p").lstrip("0")],
+        ["Delivery time", order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—"],
         ["Event address", f"{order.address}, {order.eircode}"],
     ]
     customer_table = Table(customer_rows, colWidths=[95, 425])
