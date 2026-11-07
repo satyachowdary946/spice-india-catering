@@ -558,3 +558,15 @@ def test_excel_menu_import_and_combination_rules():
         response = client.get("/api/menu-combinations", params={"item_id": curry_id})
         assert response.status_code == 200
         assert response.json()["items"][0]["name"] == "Test Appam"
+
+
+def test_build_1428_menu_search_ignores_veg_nonveg_tab():
+    from pathlib import Path
+    js = Path("app/static/js/customer.js").read_text(encoding="utf-8")
+    start = js.index("const buildSearchItems=()=>")
+    end = js.index("function isBiryaniItem", start)
+    search_block = js[start:end]
+    assert "Search is global across Veg + Non Veg" in search_block
+    assert "matchesDiet" not in search_block
+    assert "if(searchTerm&&haystack.includes(searchTerm)" in search_block
+

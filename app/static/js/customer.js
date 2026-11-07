@@ -320,10 +320,10 @@ function initMenu(){
     const results=new Map();
     visibleMenus().forEach(menu=>menu.categories.forEach(category=>category.subcategories.forEach(sub=>sub.items.forEach(item=>{
       const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name+' '+menu.name).toLowerCase();
-      const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
+      // Search is global across Veg + Non Veg. The cuisine tab only filters normal browsing.
       const isBiryani=String(category.name||'').trim().toLowerCase()==="biryani's";
       const resultKey=isBiryani?`biryani:${String(item.name||'').trim().toLowerCase()}`:`id:${item.id}`;
-      if(matchesDiet&&searchTerm&&haystack.includes(searchTerm)&&!results.has(resultKey))results.set(resultKey,{...item,menu:menu.name,category:category.name,subcategory:isBiryani?'Biryani':sub.name});
+      if(searchTerm&&haystack.includes(searchTerm)&&!results.has(resultKey))results.set(resultKey,{...item,menu:menu.name,category:category.name,subcategory:isBiryani?'Biryani':sub.name});
     }))));
     return [...results.values()];
   };
