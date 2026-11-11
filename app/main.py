@@ -89,6 +89,7 @@ ALLOWED_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "voi
 EDITABLE_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled"]
 FILTER_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "voided"]
 VOID_REASON_OPTIONS = {"test": "Test order", "duplicate": "Duplicate order", "customer_mistake": "Customer mistake", "admin_mistake": "Admin mistake", "spam": "Spam", "other": "Other"}
+VOIDABLE_STATUSES = {"new", "quoted", "contacted", "negotiating"}
 DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non Veg"}
 REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
 DUBLIN_TZ = ZoneInfo("Europe/Dublin")
@@ -1810,7 +1811,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     admin, redirect = admin_or_redirect(request, db)
     if redirect: return redirect
     status_counts = dict(db.execute(select(QuoteRequest.status, func.count(QuoteRequest.id)).group_by(QuoteRequest.status)).all())
-    upcoming = db.scalar(select(func.count(QuoteRequest.id)).where(QuoteRequest.event_date >= date.today(), QuoteRequest.status.not_in(["cancelled", "completed"]))) or 0
+    upcoming = db.scalar(select(func.count(QuoteRequest.id)).where(QuoteRequest.event_date >= date.today(), QuoteRequest.status.not_in(["cancelled", "completed", "voided"]))) or 0
     recent = db.scalars(
         select(QuoteRequest)
         .options(selectinload(QuoteRequest.customer), selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses), selectinload(QuoteRequest.items))
@@ -2808,7 +2809,17 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
     mail_subject = quote(f"Catering quote {order.order_number}")
     mail_body = quote(customer_share_text)
     mailto_url = f"mailto:?subject={mail_subject}&body={mail_body}"
-    can_void = not order.payments and not order.expenses and not order.invoice_sent_at and order.status != "voided"
+    void_status_allowed = order.status in VOIDABLE_STATUSES
+    void_has_financial_history = bool(order.payments or order.expenses or order.invoice_sent_at)
+    can_void = void_status_allowed and not void_has_financial_history
+    if order.status == "voided":
+        void_block_reason = ""
+    elif not void_status_allowed:
+        void_block_reason = "Only unconfirmed active orders can be voided. Confirmed, Completed and Cancelled orders are protected."
+    elif void_has_financial_history:
+        void_block_reason = "This order has payments, expenses or invoice history and cannot be voided. Use Cancelled instead."
+    else:
+        void_block_reason = ""
     can_delete = not order.payments and not order.expenses and not order.invoice_sent_at
     catalog_items = [item for item in canonical_import_items(db) if item.active]
     return render(
@@ -2817,6 +2828,7 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         customer_whatsapp_url=customer_whatsapp_url, mailto_url=mailto_url,
         finance=finance_summary(order), pricing=pricing_breakdown(order),
         can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
+        void_block_reason=void_block_reason,
         catalog_items=catalog_items,
         can_share_quote=(order.status != "new" and order.final_price is not None),
         can_send_kitchen=(order.status == "confirmed"), today=date.today(),
@@ -3594,6 +3606,11 @@ def admin_order_void(
         raise HTTPException(status_code=404)
     if order.status == "voided":
         return RedirectResponse(f"/admin/orders/{order_id}?error=Order+is+already+voided", status_code=303)
+    if order.status not in VOIDABLE_STATUSES:
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?error=Only+unconfirmed+active+orders+can+be+voided.+Confirmed,+Completed+and+Cancelled+orders+are+protected",
+            status_code=303,
+        )
     if order.payments or order.expenses or order.invoice_sent_at:
         return RedirectResponse(
             f"/admin/orders/{order_id}?error=Orders+with+payments,+expenses+or+a+sent+invoice+cannot+be+voided.+Use+Cancelled+instead",
@@ -4541,6 +4558,11 @@ def admin_transaction_detail(order_id: int, request: Request, db: Session = Depe
     )
     if not order:
         raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(
+            f"/admin/orders/{order.id}?error=Voided+orders+are+excluded+from+Transactions+and+Reports",
+            status_code=303,
+        )
     return render(
         request,
         db,
@@ -4575,6 +4597,11 @@ def admin_transaction_price(
     order = db.get(QuoteRequest, order_id)
     if not order:
         raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?error=Voided+orders+are+excluded+from+Transactions+and+Reports",
+            status_code=303,
+        )
     try:
         adult = money(adult_charge)
         kid = money(kid_charge)
@@ -4608,6 +4635,8 @@ def admin_order_payment_summary(order_id: int, request: Request, db: Session = D
     )
     if not order:
         raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return JSONResponse({"error": "voided_order", "message": "Voided orders are excluded from Transactions and Reports."}, status_code=409)
     payments = sorted(order.payments or [], key=lambda p: (p.payment_date, p.id), reverse=True)
     return JSONResponse({
         "order_id": order.id,
@@ -4646,6 +4675,11 @@ def admin_payment_add(
     order = db.get(QuoteRequest, order_id)
     if not order:
         raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?error=Voided+orders+are+excluded+from+Transactions+and+Reports",
+            status_code=303,
+        )
     try:
         amount_value = Decimal(amount.strip()).quantize(Decimal("0.01"))
         if amount_value <= 0:
@@ -4715,6 +4749,11 @@ def admin_expense_add(
     order = db.get(QuoteRequest, order_id)
     if not order:
         raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return RedirectResponse(
+            f"/admin/orders/{order_id}?error=Voided+orders+are+excluded+from+Transactions+and+Reports",
+            status_code=303,
+        )
     try:
         amount_value = Decimal(amount.strip()).quantize(Decimal("0.01"))
         if amount_value <= 0:
@@ -4749,6 +4788,8 @@ def admin_expense_payment_summary_api(order_id: int, request: Request, db: Sessi
     )
     if not order:
         raise HTTPException(status_code=404)
+    if order.status == "voided":
+        return JSONResponse({"error": "voided_order", "message": "Voided orders are excluded from Transactions and Reports."}, status_code=409)
     rows = []
     total = Decimal("0.00")
     paid_total = Decimal("0.00")
@@ -4806,6 +4847,11 @@ def admin_expense_payment_status(
     )
     if not expense:
         raise HTTPException(status_code=404)
+    parent_order = db.get(QuoteRequest, order_id)
+    if parent_order and parent_order.status == "voided":
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JSONResponse({"ok": False, "error": "Voided orders are excluded from Transactions and Reports."}, status_code=409)
+        return RedirectResponse(f"/admin/orders/{order_id}?error=Voided+orders+are+excluded+from+Transactions+and+Reports", status_code=303)
     try:
         paid_on = date.fromisoformat(payment_date) if payment_date else date.today()
     except Exception:

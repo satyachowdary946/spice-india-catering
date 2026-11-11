@@ -393,6 +393,67 @@ def test_build8_mobile_workflow():
         assert admin_pdf.status_code == 200
         assert admin_pdf.content.startswith(b"%PDF")
 
+        # Build 14.29: only unconfirmed active orders may be voided.
+        # Make CAT0002 reportable today so we can prove it disappears after voiding.
+        from app.models import QuoteRequest as QRVoid
+        with SessionLocal() as db:
+            void_candidate = db.get(QRVoid, 2)
+            void_candidate.event_date = date.today()
+            db.commit()
+
+        before_void_transactions = client.get("/admin/transactions")
+        assert "CAT0002" in before_void_transactions.text
+        before_void_report = client.get("/admin/reports?period=all")
+        assert "CAT0002" in before_void_report.text
+
+        void_page = client.get("/admin/orders/2")
+        assert "Void Order" in void_page.text
+        void_result = client.post("/admin/orders/2/void", data={
+            "csrf_token": csrf_from(void_page.text),
+            "reason": "duplicate",
+            "other_reason": "",
+        }, follow_redirects=False)
+        assert void_result.status_code == 303
+        voided_page = client.get("/admin/orders/2")
+        assert "Voided Order" in voided_page.text
+        assert "Duplicate order" in voided_page.text
+
+        after_void_transactions = client.get("/admin/transactions")
+        assert "CAT0002" not in after_void_transactions.text
+        after_void_report = client.get("/admin/reports?period=all")
+        assert "CAT0002" not in after_void_report.text
+        direct_voided_transaction = client.get("/admin/transactions/2", follow_redirects=False)
+        assert direct_voided_transaction.status_code == 303
+        assert direct_voided_transaction.headers["location"].startswith("/admin/orders/2?error=Voided")
+        assert client.get("/admin/orders/2/payment-summary").status_code == 409
+        assert client.get("/admin/orders/2/expense-payment-summary").status_code == 409
+
+        # Confirmed orders are protected from accidental voiding.
+        confirmed_page = client.get("/admin/orders/1")
+        assert "Confirmed, Completed and Cancelled orders are protected" in confirmed_page.text
+        confirmed_void = client.post("/admin/orders/1/void", data={
+            "csrf_token": csrf_from(confirmed_page.text),
+            "reason": "other",
+            "other_reason": "Should not be allowed",
+        }, follow_redirects=False)
+        assert confirmed_void.status_code == 303
+        assert "Only+unconfirmed+active+orders+can+be+voided" in confirmed_void.headers["location"]
+        with SessionLocal() as db:
+            assert db.get(QRVoid, 1).status == "confirmed"
+            cancelled = db.get(QRVoid, 3)
+            cancelled.status = "cancelled"
+            db.commit()
+        cancelled_page = client.get("/admin/orders/3")
+        assert "Confirmed, Completed and Cancelled orders are protected" in cancelled_page.text
+        cancelled_void = client.post("/admin/orders/3/void", data={
+            "csrf_token": csrf_from(cancelled_page.text),
+            "reason": "duplicate",
+            "other_reason": "",
+        }, follow_redirects=False)
+        assert cancelled_void.status_code == 303
+        with SessionLocal() as db:
+            assert db.get(QRVoid, 3).status == "cancelled"
+
         # Menu administration is Excel-only.
         menus = client.get("/admin/menus", follow_redirects=False)
         assert menus.status_code == 303
