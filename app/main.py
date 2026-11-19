@@ -32,7 +32,6 @@ from .auth import ensure_csrf, hash_password, valid_csrf, verify_password
 from .db import Base, SessionLocal, engine, get_db
 from .models import (
     Admin,
-    AdminDataResetAudit,
     BusinessSettings,
     Category,
     Customer,
@@ -62,7 +61,6 @@ from .notifications import (
     whatsapp_cloud_configured,
     whatsapp_confirmation_configured,
 )
-from .data_management import RESET_PHRASE, consume_preview, new_preview, reset_enabled, safe_counts, delete_customer_orders
 from .seed import ensure_seed_data
 from .menu_excel import parse_menu_workbook, update_workbook_category_setup, update_workbook_image_references, parse_internal_price_workbook, build_internal_price_workbook
 from .storage import extension_for_content_type, get_bytes as storage_get_bytes, key_from_reference, put_bytes as storage_put_bytes, r2_configured
@@ -100,14 +98,19 @@ async def prevent_html_cache(request: Request, call_next):
 
 
 @app.middleware("http")
-async def block_public_writes_during_data_reset(request: Request, call_next):
-    """Protect maintenance reset from new or updated public orders."""
+async def block_writes_during_maintenance(request: Request, call_next):
+    """Freeze writes while the separate one-time database reset is performed."""
     if os.getenv("CATERING_MAINTENANCE_MODE", "") == "1" and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        path = request.url.path
-        if not (path == "/admin" or path.startswith("/admin/")):
-            if path.startswith("/api/"):
-                return JSONResponse({"ok": False, "error": "Ordering is temporarily unavailable for maintenance."}, status_code=503)
-            return Response("Ordering temporarily unavailable for maintenance.", status_code=503, media_type="text/plain")
+        if request.url.path.startswith("/api/"):
+            return JSONResponse(
+                {"ok": False, "error": "Ordering is temporarily unavailable for maintenance."},
+                status_code=503,
+            )
+        return Response(
+            "Website temporarily unavailable for maintenance.",
+            status_code=503,
+            media_type="text/plain",
+        )
     return await call_next(request)
 
 
@@ -2058,76 +2061,6 @@ def admin_settings(request: Request, db: Session = Depends(get_db)):
     if redirect: return redirect
     admins = db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all()
     return render(request, db, "admin/settings.html", admin=admin, admins=admins)
-
-
-def is_primary_admin(db: Session, admin: Admin) -> bool:
-    primary_id = db.scalar(select(Admin.id).order_by(Admin.created_at.asc(), Admin.id.asc()).limit(1))
-    return primary_id == admin.id
-
-
-@app.get("/admin/settings/data-management", response_class=HTMLResponse)
-def admin_data_management(request: Request, db: Session = Depends(get_db)):
-    admin, redirect = admin_or_redirect(request, db)
-    if redirect:
-        return redirect
-    counts, safe = safe_counts(db)
-    enabled = reset_enabled()
-    owner = is_primary_admin(db, admin)
-    token = new_preview(request.session, counts, admin.id) if enabled and safe and owner else ""
-    reset_result = request.session.pop("data_reset_result", None)
-    return render(request, db, "admin/data_management.html", admin=admin, counts=counts,
-                  reset_allowed=safe, reset_enabled=enabled, is_primary_admin=owner,
-                  preview_token=token, reset_phrase=RESET_PHRASE, reset_result=reset_result)
-
-
-@app.post("/admin/settings/data-management/reset")
-def admin_data_management_reset(
-    request: Request,
-    csrf_token: str = Form(...),
-    preview_token: str = Form(...),
-    confirmation: str = Form(...),
-    password: str = Form(...),
-    backup_reference: str = Form(...),
-    backup_confirmed: bool = Form(False),
-    db: Session = Depends(get_db),
-):
-    admin, redirect = admin_or_redirect(request, db)
-    if redirect:
-        return redirect
-    check_csrf(request, csrf_token)
-    if not is_primary_admin(db, admin):
-        raise HTTPException(status_code=403, detail="Only the original primary admin account may reset customer/order records.")
-    if not reset_enabled():
-        raise HTTPException(status_code=403, detail="Customer/order reset is disabled. Enable maintenance mode and the explicit reset switch in Render.")
-    counts, safe = safe_counts(db)
-    if not consume_preview(request.session, preview_token, counts, admin.id):
-        raise HTTPException(status_code=409, detail="Preview expired or records changed. Return to Data Management and review counts again.")
-    if not safe:
-        raise HTTPException(status_code=409, detail="Reset blocked: financial, invoice, deposit or completed-order history exists.")
-    if confirmation != RESET_PHRASE:
-        raise HTTPException(status_code=400, detail="Exact confirmation phrase required.")
-    if not backup_confirmed or not 8 <= len(backup_reference.strip()) <= 200:
-        raise HTTPException(status_code=400, detail="Verify an independently restorable production database backup and enter its backup identifier.")
-    # Password re-entry is required regardless of an active admin login session.
-    fingerprint = _security_fingerprint(request, "admin-data-reset", str(admin.id))
-    if _attempt_limited(db, fingerprint, max_attempts=5):
-        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Try again after 15 minutes.")
-    if not verify_password(password, admin.password_hash):
-        _record_failed_attempt(db, fingerprint)
-        raise HTTPException(status_code=403, detail="Admin password incorrect.")
-    _clear_attempts(db, fingerprint)
-    # Audit and deletions are committed in a single transaction.  The reset
-    # utility re-checks the financial blockers immediately before deletion.
-    db.add(AdminDataResetAudit(admin_id=admin.id, counts_json=json.dumps(
-        {"counts": counts, "backup_reference": backup_reference.strip()}, sort_keys=True)))
-    try:
-        removed = delete_customer_orders(db, expected_counts=counts)
-    except Exception:
-        db.rollback()
-        raise
-    request.session.pop("data_reset_preview", None)
-    request.session["data_reset_result"] = {"orders": removed["orders"], "customers": removed["customers"]}
-    return RedirectResponse("/admin/settings/data-management?reset_complete=1", status_code=303)
 
 
 @app.post("/admin/settings")

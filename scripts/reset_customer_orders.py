@@ -4,7 +4,8 @@ Preview: python -m scripts.reset_customer_orders --preview
 Execute only during maintenance, AFTER verifying a recent, recoverable database backup:
   python -m scripts.reset_customer_orders --execute \
     --confirm DELETE-ALL-CUSTOMERS-AND-ORDERS \
-    --maintenance-mode-confirmed --backup-file /secure/backup.dump
+    --maintenance-mode-confirmed --backup-file /secure/backup.dump \
+    --expected-orders 12 --expected-customers 8 --expected-host your-db-host
 
 Never use this script to delete payment, expense, completed-order or invoiced records.
 Preserve legally required business/accounting records and verify backups before proceeding.
@@ -96,6 +97,9 @@ def main() -> None:
     parser.add_argument('--confirm', default='')
     parser.add_argument('--maintenance-mode-confirmed', action='store_true')
     parser.add_argument('--backup-file', default='')
+    parser.add_argument('--expected-orders', type=int, default=None)
+    parser.add_argument('--expected-customers', type=int, default=None)
+    parser.add_argument('--expected-host', default='')
     args = parser.parse_args()
 
     with SessionLocal() as db:
@@ -117,8 +121,14 @@ def main() -> None:
             raise SystemExit('STOP: This production reset utility only supports PostgreSQL.')
         if args.confirm != CONFIRMATION:
             raise SystemExit('STOP: Exact --confirm phrase required.')
-        if not args.maintenance_mode_confirmed:
-            raise SystemExit('STOP: Put the site into maintenance mode before resetting.')
+        if not args.maintenance_mode_confirmed or os.getenv('CATERING_MAINTENANCE_MODE') != '1':
+            raise SystemExit('STOP: Set CATERING_MAINTENANCE_MODE=1 on all website instances and pass --maintenance-mode-confirmed.')
+        if args.expected_orders is None or args.expected_customers is None or not args.expected_host:
+            raise SystemExit('STOP: Require --expected-orders, --expected-customers, and --expected-host from preview.')
+        if counts['orders'] != args.expected_orders or counts['customers'] != args.expected_customers:
+            raise SystemExit('STOP: Database counts differ from the approved preview.')
+        if (engine.url.host or '') != args.expected_host:
+            raise SystemExit('STOP: Connected database host differs from preview.')
         if not args.backup_file:
             raise SystemExit('STOP: Provide the path to a verified production DATABASE backup.')
         backup = Path(args.backup_file).expanduser().resolve()
@@ -128,7 +138,10 @@ def main() -> None:
             raise SystemExit('STOP: Backup is over 24 hours old. Take a new verified database backup.')
         if not reset_allowed(counts):
             raise SystemExit('STOP: Financial/accounting history exists; reset refused.')
-        old = delete_customer_orders(db)
+        old = delete_customer_orders(db, expected_counts=counts)
+        remaining = reset_counts(db)
+        if remaining['orders'] or remaining['customers']:
+            raise SystemExit('ERROR: Records remain after attempted reset; investigate database before restoring service.')
         print(f'RESET COMPLETED: removed {old["orders"]} orders and {old["customers"]} customers.')
         print('Menus, settings, pricing and admins were not modified.')
 
