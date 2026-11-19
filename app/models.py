@@ -9,6 +9,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 
+class AdminDataResetAudit(Base):
+    """Minimal audit trail retained separately from deleted customer/order records."""
+    __tablename__ = "admin_data_reset_audit"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    admin_id: Mapped[int] = mapped_column(Integer)
+    counts_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class SecurityAttempt(Base):
     __tablename__ = "security_attempts"
     id: Mapped[int] = mapped_column(primary_key=True)

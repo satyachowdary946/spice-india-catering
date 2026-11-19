@@ -56,7 +56,7 @@ def reset_allowed(counts: dict[str,int]) -> bool:
     ))
 
 
-def delete_customer_orders(db: Session) -> dict[str, int]:
+def delete_customer_orders(db: Session, expected_counts: dict[str, int] | None = None) -> dict[str, int]:
     """Delete exclusively order-linked rows and customers in one DB transaction.
 
     Caller must have verified maintenance mode, backup and confirmation first.
@@ -66,6 +66,8 @@ def delete_customer_orders(db: Session) -> dict[str, int]:
         # Serializes with create_quote's order-number allocator.
         db.scalar(select(BusinessSettings).where(BusinessSettings.id == 1).with_for_update())
     counts = reset_counts(db)
+    if expected_counts is not None and counts != expected_counts:
+        raise RuntimeError('RESET REFUSED: record counts changed after preview. Refresh and review again.')
     if not reset_allowed(counts):
         raise RuntimeError(
             'REFUSED: payments, expenses, completed orders, deposits or sent invoices '
