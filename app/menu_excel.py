@@ -167,6 +167,14 @@ def parse_menu_workbook(data: bytes) -> dict[str, Any]:
         else:
             dietary = "veg"
 
+        # Breads & Staples are shared across both cuisine tabs. Older master
+        # workbooks leave Main Category blank (previously interpreted as Veg),
+        # and a mistaken Veg-only label must not hide breads in Non Veg.
+        # This changes visibility only; Item IDs and image references stay intact.
+        section_name = _text(ws.cell(row, headers["Menu Section"]).value)
+        if section_name.casefold() == "breads & staples":
+            dietary = "both"
+
         regions = [region_name for region_name, col in region_columns if _yes(ws.cell(row, col).value, False)]
         if not regions:
             regions = [region_name for region_name, _ in region_columns]
