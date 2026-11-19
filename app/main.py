@@ -256,8 +256,8 @@ def startup() -> None:
     ensure_schema_compatibility()
     with SessionLocal() as db:
         ensure_seed_data(db)
-        apply_live_order_cleanup_v1421(db)
-        apply_live_customer_cleanup_v1422(db)
+        # Historical v14.21/v14.22 destructive cleanups are intentionally NOT
+        # run at application startup. Data resets require a separate operator action.
         initialise_order_sequence(db)
 
 
@@ -895,6 +895,12 @@ def clean_phone(value: str) -> str:
 
 
 def valid_phone(value: str) -> bool:
+    """Event contact numbers must be exactly 10 ASCII digits (no +353)."""
+    return bool(re.fullmatch(r"[0-9]{10}", value or ""))
+
+
+def valid_legacy_tracking_phone(value: str) -> bool:
+    """Keep old 7-9 digit order-tracking details usable until manually reset."""
     return bool(re.fullmatch(r"[0-9]{7,10}", value or ""))
 
 
@@ -1294,7 +1300,8 @@ def homepage_food_image(db: Session = Depends(get_db)):
 
 @app.get("/order", response_class=HTMLResponse)
 def order_details(request: Request, next: str = "/menu", db: Session = Depends(get_db)):
-    if not next.startswith("/"):
+    # Whitelist exact internal destinations. An untrusted //host target is an open redirect.
+    if next not in {"/menu", "/submit"}:
         next = "/menu"
     return render(request, db, "customer/details.html", next_url=next)
 
@@ -1402,13 +1409,25 @@ def review(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/quotes")
 async def create_quote(request: Request, db: Session = Depends(get_db)):
+    if len(await request.body()) > 65536:
+        return JSONResponse({"ok": False, "error": "Quote request is too large."}, status_code=413)
+    fingerprint = _security_fingerprint(request, "public-quote", "create")
+    if _attempt_limited(db, fingerprint, max_attempts=12):
+        return JSONResponse({"ok": False, "error": "Too many quote requests. Please try again in 15 minutes."}, status_code=429)
+    _record_failed_attempt(db, fingerprint)
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({"ok": False, "error": "Invalid request data."}, status_code=400)
 
-    details = payload.get("details") or {}
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "error": "Quote request must be a JSON object."}, status_code=400)
+    details = payload.get("details")
     item_ids = payload.get("item_ids") or []
+    if not isinstance(details, dict) or not isinstance(item_ids, list) or len(item_ids) > 200:
+        return JSONResponse({"ok": False, "error": "Invalid customer or item data."}, status_code=400)
+    if "requested_dishes" in payload and not isinstance(payload["requested_dishes"], list):
+        return JSONResponse({"ok": False, "error": "Invalid requested dish data."}, status_code=400)
     raw_item_comments = payload.get("item_comments") or {}
     raw_item_variants = payload.get("item_variants") or {}
     raw_requested_dishes = payload.get("requested_dishes") or []
@@ -1445,8 +1464,8 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
     eircode = clean_eircode(str(details.get("eircode", "")))
 
     if len(name) < 2: errors["name"] = "Enter the customer's name."
-    if not re.fullmatch(r"[0-9]{7,10}", phone_raw): errors["phone"] = "Phone number must contain digits only and be no more than 10 digits."
-    if not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw): errors["whatsapp"] = "WhatsApp number must contain digits only and be no more than 10 digits."
+    if not valid_phone(phone_raw): errors["phone"] = "Phone number must contain exactly 10 digits (no spaces or country code)."
+    if not valid_phone(whatsapp_raw): errors["whatsapp"] = "WhatsApp number must contain exactly 10 digits (no spaces or country code)."
     if not valid_email(email): errors["email"] = "Enter a valid email address for the catering quote."
     if not event_name: errors["event_name"] = "Enter the type of event."
     if not address: errors["address"] = "Enter the event address."
@@ -1674,10 +1693,11 @@ def track_order_submit(
 ):
     order_number = (order_number or "").strip().upper()
     phone_clean = clean_phone(phone)
-    if not order_number or not valid_phone(phone_clean):
+    if not order_number or not valid_legacy_tracking_phone(phone_clean):
         return render(request, db, "customer/track.html", matches=[], error="For privacy, enter BOTH your Order ID and the phone / WhatsApp number used for the booking.", order_number=order_number, phone=phone)
     fingerprint = _security_fingerprint(request, "order-track", order_number)
-    if _attempt_limited(db, fingerprint):
+    source_fingerprint = _security_fingerprint(request, "order-track-ip", "all")
+    if _attempt_limited(db, fingerprint) or _attempt_limited(db, source_fingerprint, max_attempts=25):
         return render(request, db, "customer/track.html", matches=[], error="Too many attempts. Please try again in 15 minutes.", order_number=order_number, phone=phone)
     stmt = (select(QuoteRequest).join(Customer)
             .where(func.upper(QuoteRequest.order_number) == order_number)
@@ -1686,6 +1706,7 @@ def track_order_submit(
     matches = list(db.scalars(stmt).unique().all())
     if not matches:
         _record_failed_attempt(db, fingerprint)
+        _record_failed_attempt(db, source_fingerprint)
         return render(request, db, "customer/track.html", matches=[], error="We could not verify that order ID and phone number.", order_number=order_number, phone=phone)
     _clear_attempts(db, fingerprint)
     if len(matches) == 1:
@@ -1761,6 +1782,11 @@ def customer_add_dishes(token: str, request: Request, db: Session = Depends(get_
 
 @app.post("/api/orders/{token}/menu-update")
 async def customer_menu_update(token: str, request: Request, db: Session = Depends(get_db)):
+    if len(await request.body()) > 65536:
+        return JSONResponse({"ok": False, "error": "Menu update is too large."}, status_code=413)
+    fingerprint = _security_fingerprint(request, "menu-update", token)
+    if _attempt_limited(db, fingerprint, max_attempts=15):
+        return JSONResponse({"ok": False, "error": "Too many updates. Please try again in 15 minutes."}, status_code=429)
     order = db.scalar(
         select(QuoteRequest)
         .where(QuoteRequest.public_token == token)
@@ -1774,6 +1800,11 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
         payload = await request.json()
     except Exception:
         return JSONResponse({"ok": False, "error": "Invalid request data."}, status_code=400)
+    if not isinstance(payload, dict) or not isinstance(payload.get("item_ids") or [], list):
+        return JSONResponse({"ok": False, "error": "Invalid menu update data."}, status_code=400)
+    if ("requested_dishes" in payload and not isinstance(payload["requested_dishes"], list)) or len(payload.get("requested_dishes") or []) > 20:
+        return JSONResponse({"ok": False, "error": "Invalid requested dish data."}, status_code=400)
+    _record_failed_attempt(db, fingerprint)
     try:
         unique_ids = list(dict.fromkeys(int(i) for i in (payload.get("item_ids") or [])))
     except Exception:
@@ -1964,11 +1995,13 @@ def admin_login_post(
 ):
     check_csrf(request, csrf_token)
     fingerprint = _security_fingerprint(request, "admin-login", email)
-    if _attempt_limited(db, fingerprint):
+    source_fingerprint = _security_fingerprint(request, "admin-login-ip", "all")
+    if _attempt_limited(db, fingerprint) or _attempt_limited(db, source_fingerprint, max_attempts=30):
         return render(request, db, "admin/login.html", error="Too many login attempts. Try again after 15 minutes.")
     admin = db.scalar(select(Admin).where(Admin.email == email.strip().lower()))
     if not admin or not verify_password(password, admin.password_hash):
         _record_failed_attempt(db, fingerprint)
+        _record_failed_attempt(db, source_fingerprint)
         return render(request, db, "admin/login.html", error="Email or password is incorrect.")
     _clear_attempts(db, fingerprint)
     request.session.clear()  # Rotate the signed session and CSRF token after authentication.
@@ -3061,9 +3094,9 @@ def admin_order_details_update(
         if len(clean_name) < 2:
             raise ValueError("Enter the customer name")
         if not valid_phone(phone_raw):
-            raise ValueError("Phone number must contain 7 to 10 digits")
+            raise ValueError("Phone number must contain exactly 10 digits")
         if whatsapp_raw and not valid_phone(whatsapp_raw):
-            raise ValueError("WhatsApp number must contain 7 to 10 digits")
+            raise ValueError("WhatsApp number must contain exactly 10 digits")
         if clean_email and not valid_email(clean_email):
             raise ValueError("Enter a valid email address")
         if not clean_event:
@@ -4514,10 +4547,10 @@ def admin_customer_edit(
 
     if len(clean_name) < 2:
         return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+customer+name", status_code=303)
-    if not re.fullmatch(r"[0-9]{7,10}", phone_raw):
-        return RedirectResponse(f"/admin/customers/{customer_id}?error=Phone+must+contain+digits+only+and+be+no+more+than+10+digits", status_code=303)
-    if whatsapp_raw and not re.fullmatch(r"[0-9]{7,10}", whatsapp_raw):
-        return RedirectResponse(f"/admin/customers/{customer_id}?error=WhatsApp+must+contain+digits+only+and+be+no+more+than+10+digits", status_code=303)
+    if not valid_phone(phone_raw):
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=Phone+must+contain+exactly+10+digits", status_code=303)
+    if whatsapp_raw and not valid_phone(whatsapp_raw):
+        return RedirectResponse(f"/admin/customers/{customer_id}?error=WhatsApp+must+contain+exactly+10+digits", status_code=303)
     if clean_email and not valid_email(clean_email):
         return RedirectResponse(f"/admin/customers/{customer_id}?error=Enter+a+valid+email+address", status_code=303)
     if normalized_eircode and not valid_eircode(normalized_eircode):

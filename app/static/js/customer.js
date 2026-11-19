@@ -118,7 +118,7 @@ function initDetailsForm(){
   if(dateInput) dateInput.min=toDateInput(earliestEventDate());
   const syncDay=()=>{if(dayInput)dayInput.value=dayFromDate(dateInput?.value||'');}; syncDay(); dateInput?.addEventListener('change',syncDay);
   document.querySelectorAll('[data-native-picker]').forEach(input=>input.addEventListener('click',()=>{if(typeof input.showPicker==='function'){try{input.showPicker();}catch{}}}));
-  const digitsOnly=el=>{if(!el)return;el.value=String(el.value||'').replace(/\D/g,'').slice(0,10);};
+  const digitsOnly=el=>{if(!el)return;el.value=String(el.value||'').replace(/\D/g,'');};
   phone?.addEventListener('input',()=>{digitsOnly(phone);if(same?.checked){wa.value=phone.value;}});
   wa?.addEventListener('input',()=>digitsOnly(wa));
   eircode?.addEventListener('input',()=>{eircode.value=String(eircode.value||'').replace(/[^a-z0-9]/gi,'').toUpperCase().slice(0,7);});
@@ -139,8 +139,8 @@ function initDetailsForm(){
     ['name','phone','whatsapp','email','event_date','event_day','event_name','event_time','delivery_time','adults','kids','address','eircode'].forEach(k=>details[k]=String(fd.get(k)||'').trim());
     if(!details.event_time){fail('Choose the event time.','event_time');return;}
     if(!details.delivery_time){fail('Choose the delivery time.','delivery_time');return;}
-    if(!/^[0-9]{7,10}$/.test(details.phone)){fail('Phone number must contain digits only and be no more than 10 digits.','phone');return;}
-    if(!/^[0-9]{7,10}$/.test(details.whatsapp)){fail('WhatsApp number must contain digits only and be no more than 10 digits.','whatsapp');return;}
+    if(!/^[0-9]{10}$/.test(details.phone)){fail('Phone number must contain exactly 10 digits (no country code).','phone');return;}
+    if(!/^[0-9]{10}$/.test(details.whatsapp)){fail('WhatsApp number must contain exactly 10 digits (no country code).','whatsapp');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email)){fail('Enter a valid email address for your catering quote.','email');return;}
     details.eircode=details.eircode.replace(/\s/g,'').toUpperCase();
     if(!/^[A-Z0-9]{7}$/.test(details.eircode)){fail('Eircode must be exactly 7 letters and numbers.','eircode');return;}

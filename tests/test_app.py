@@ -147,7 +147,7 @@ def test_build8_mobile_workflow():
         bad = quote_payload(phone="08912abc67")
         response = client.post("/api/quotes", json=bad)
         assert response.status_code == 422
-        assert "digits only" in response.text
+        assert "exactly 10 digits" in response.text
         bad = quote_payload()
         bad["details"]["eircode"] = "N37BAD"
         response = client.post("/api/quotes", json=bad)
@@ -771,3 +771,87 @@ def test_build_1428_menu_search_ignores_veg_nonveg_tab():
     assert "matchesDiet" not in search_block
     assert "if(searchTerm&&haystack.includes(searchTerm)" in search_block
 
+
+
+def test_build1432_exact_mobile_and_security_guards():
+    from app.main import valid_phone
+    from app.models import SecurityAttempt
+    assert valid_phone('0891234567')
+    for number in ('089123456', '08912345678', '+353891234567', '089 1234567', 'abcdefghij'):
+        assert not valid_phone(number)
+
+    with SessionLocal() as db:
+        # Clear rate-limit state left by other test methods.
+        db.query(SecurityAttempt).delete()
+        db.commit()
+
+    with TestClient(app) as client:
+        html = client.get('/order?next=/submit').text
+        assert 'pattern="[0-9]{10}"' in html
+        assert 'Exactly 10 digits' in html
+        # Open-redirect test: the destination must be kept on-site.
+        external = client.get('/order?next=//example.com')
+        assert 'data-next="/menu"' in external.text
+
+        for invalid in ('089123456', '08912345678', '+353891234567', '089 1234567'):
+            bad = quote_payload(phone=invalid)
+            result = client.post('/api/quotes', json=bad)
+            assert result.status_code == 422
+            assert 'exactly 10 digits' in result.text
+
+        assert client.post('/api/quotes', json=[]).status_code == 400
+        assert client.post('/api/quotes', json={'details': [], 'item_ids': []}).status_code == 400
+        assert client.post('/api/quotes', json={'details': {}, 'item_ids': [], 'requested_dishes': {}}).status_code == 400
+        assert client.post('/api/quotes', content=b'{' + b' ' * 70000, headers={'content-type':'application/json'}).status_code == 413
+
+        # 12 submissions per 15 minutes on the public creation endpoint.
+        statuses = [client.post('/api/quotes', json={}).status_code for _ in range(12)]
+        assert 429 in statuses
+
+
+def test_build1432_reset_is_manual_and_protects_financial_history():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.db import Base
+    from app.models import Customer, QuoteRequest, Payment, BusinessSettings
+    from scripts.reset_customer_orders import delete_customer_orders, reset_counts, reset_allowed
+    from datetime import date, time
+    import pytest
+
+    isolated_engine = create_engine('sqlite://')
+    Base.metadata.create_all(isolated_engine)
+    with Session(isolated_engine, expire_on_commit=False) as db:
+        db.add(BusinessSettings(id=1, next_order_sequence=3))
+        customer = Customer(customer_number='CUS-00001', name='Temporary Test', phone='0891234567')
+        db.add(customer); db.flush()
+        order = QuoteRequest(
+            order_number='CAT0001', public_token='test-reset-1', customer_id=customer.id,
+            event_name='Test', event_date=date.today(), event_time=time(12),
+            address='Somewhere', eircode='N37K5P3', status='new',
+        )
+        db.add(order); db.commit()
+        counts = reset_counts(db)
+        assert counts['customers'] == 1 and counts['orders'] == 1
+        assert reset_allowed(counts)
+        result = delete_customer_orders(db)
+        assert result['orders'] == 1
+        assert reset_counts(db)['orders'] == 0
+        assert reset_counts(db)['customers'] == 0
+        assert db.get(BusinessSettings, 1).next_order_sequence == 1
+
+        customer = Customer(customer_number='CUS-00002', name='Paid Test', phone='0891234567')
+        db.add(customer); db.flush()
+        order = QuoteRequest(
+            order_number='CAT0002', public_token='test-reset-2', customer_id=customer.id,
+            event_name='Test', event_date=date.today(), event_time=time(12),
+            address='Somewhere', eircode='N37K5P3', status='confirmed',
+        )
+        db.add(order); db.flush()
+        db.add(Payment(order_id=order.id, amount=10, payment_date=date.today()))
+        db.commit()
+        assert not reset_allowed(reset_counts(db))
+        with pytest.raises(RuntimeError, match='REFUSED'):
+            delete_customer_orders(db)
+        db.rollback()
+        assert reset_counts(db)['orders'] == 1
+    isolated_engine.dispose()

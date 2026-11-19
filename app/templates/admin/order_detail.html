@@ -55,8 +55,8 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="admin-form-grid two">
         <div class="field"><label>Customer Name</label><input name="customer_name" value="{{ order.customer.name }}" required maxlength="160"></div>
-        <div class="field"><label>Phone</label><input name="phone" value="{{ order.customer.phone }}" required inputmode="numeric" maxlength="10"></div>
-        <div class="field"><label>WhatsApp</label><input name="whatsapp" value="{{ order.customer.whatsapp }}" inputmode="numeric" maxlength="10"></div>
+        <div class="field"><label>Phone</label><input name="phone" type="tel" value="{{ order.customer.phone }}" required inputmode="numeric" pattern="[0-9]{10}" maxlength="20" title="Exactly 10 digits"></div>
+        <div class="field"><label>WhatsApp</label><input name="whatsapp" type="tel" value="{{ order.customer.whatsapp }}" inputmode="numeric" pattern="[0-9]{10}" maxlength="20" title="Exactly 10 digits"></div>
         <div class="field"><label>Email</label><input name="email" type="email" value="{{ order.customer.email }}" maxlength="255"></div>
         <div class="field"><label>Event Name</label><input name="event_name" value="{{ order.event_name }}" required maxlength="180"></div>
         <div class="field"><label>Event Date</label><input name="event_date" type="date" value="{{ order.event_date.isoformat() }}" required></div>
