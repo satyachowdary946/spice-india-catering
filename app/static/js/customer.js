@@ -254,7 +254,7 @@ function initMenu(){
           const matchesDiet=selectedDiet==='combo'||item.dietary===selectedDiet||item.dietary==='both';
           const haystack=(item.name+' '+(item.description||'')+' '+category.name+' '+sub.name).toLowerCase();
           const matchesSearch=!searchTerm||haystack.includes(searchTerm);
-          if(!matchesDiet||!matchesSearch)return;
+          if((!searchTerm && !matchesDiet)||!matchesSearch)return;
           const itemKey=isBiryaniCategory?String(item.name||'').trim().toLowerCase():item.id;
           if(!targetSub.items.has(itemKey)){targetSub.items.set(itemKey,{...item,menu:menu.name,category:category.name,subcategory:subKey});if(item.heading_color)targetSub.heading_color=item.heading_color;}
         });

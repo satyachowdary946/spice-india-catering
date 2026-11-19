@@ -11,6 +11,26 @@
 </div>
 {% if request.query_params.get('error') %}<div class="notice error">{{ request.query_params.get('error').replace('+',' ') }}</div>{% endif %}
 {% if order.status == 'voided' %}<div class="notice voided-notice"><strong>Voided Order.</strong> Excluded from Transactions and Reports.{% if order.void_reason %}<br>Reason: {{ order.void_reason }}{% endif %}</div>{% endif %}
+{% if customer_changes %}
+<section class="card customer-update-review" style="margin-top:14px" id="customer-changes">
+  <div class="eyebrow">Customer revised a previously quoted order</div>
+  <h2 style="font-size:1.25rem">Customer Updated the Order · Review Before Requoting</h2>
+  <p class="muted">Compared with the last emailed quote. These figures are internal estimates; they have not been approved or sent as a new quote.</p>
+  <div class="customer-update-prices">
+    <div class="customer-update-old"><small>Old quoted price</small><strong>€{{ customer_changes.old_total }}</strong></div>
+    <div class="customer-update-new"><small>New estimated price</small><strong>€{{ customer_changes.estimated_total }}</strong></div>
+    <div><small>Cost-based recommended total</small><strong>€{{ customer_changes.recommended_total }}</strong></div>
+  </div>
+  <p class="help">Estimated total = old quote + change in food cost × (1 + {{ customer_changes.profit_percent }}% target profit). Recommended total uses current food and internal expense costs. Recommended adult €{{ customer_changes.recommended_adult }}/head · kid €{{ customer_changes.recommended_kid }}/head. Admin must approve final prices.</p>
+  {% if customer_changes.missing_cost %}<div class="notice error">Missing internal costs: {{ customer_changes.missing_cost|join(', ') }}. Verify these before quoting.</div>{% endif %}
+  {% if customer_changes.added %}<h3>Newly Added Dishes</h3><div class="customer-changes-new">{% for item in customer_changes.added %}<div><strong>{{ item.name }} — NEW</strong><small>Estimated added amount: +€{{ item.estimated_effect }}</small>{% if item.comment %}<small>Customer note: {{ item.comment }}</small>{% endif %}</div>{% endfor %}</div>{% endif %}
+  {% if customer_changes.edited %}<h3>Customer Edited These Dishes</h3><div class="customer-changes-new">{% for item in customer_changes.edited %}<div><strong>{{ item.after.name }} — EDITED</strong><small>Estimated price impact: €{{ item.estimated_effect }}</small><small>Previously: {{ item.before.name }}{% if item.before.comment %} · {{ item.before.comment }}{% endif %}</small>{% if item.after.comment %}<small>New note: {{ item.after.comment }}</small>{% endif %}</div>{% endfor %}</div>{% endif %}
+  {% if customer_changes.removed %}<h3>Customer Removed These Items From the Previous Order</h3><div class="customer-changes-removed">{% for item in customer_changes.removed %}<div>{{ item.name }} — REMOVED <small>Estimated price reduction: −€{{ item.estimated_effect }}</small></div>{% endfor %}</div>{% endif %}
+  {% if customer_changes.added_requests %}<p><strong>New special requests:</strong> {{ customer_changes.added_requests|join(', ') }}</p>{% endif %}
+  {% if customer_changes.removed_requests %}<p><strong>Removed special requests:</strong> {{ customer_changes.removed_requests|join(', ') }}</p>{% endif %}
+  {% if customer_changes.notes_changed %}<p><strong>Customer notes changed:</strong> {{ customer_changes.customer_notes_before or 'None' }} → {{ customer_changes.customer_notes_after or 'None' }}</p>{% endif %}
+</section>
+{% endif %}
 
 <section class="card" id="customer-event-details">
   <div class="admin-title"><div><div class="eyebrow">Request</div><h2 style="font-size:1.25rem">Customer & Event Details</h2><p class="muted">Admin can correct customer, event and guest details on the existing order.</p></div></div>
@@ -85,7 +105,7 @@
         {% if sub_name and sub_name != 'Main Selection' %}<div class="help admin-menu-subheading">{{ sub_name }}</div>{% endif %}
         {% for item in items %}
         <div class="admin-order-menu-item dietary-list-item {{ item.dietary }}">
-          <div><strong>{{ item.item_name }}</strong><small>{{ sub_name }}{% if item.internal_cost_per_guest is not none %} · Internal €{{ '%.2f'|format(item.internal_cost_per_guest) }}/guest{% else %} · Internal price not set{% endif %}</small>{% if item.customer_comment %}<div class="help" style="margin-top:5px;color:#7fe8d9"><strong>Customer comment:</strong> {{ item.customer_comment }}</div>{% endif %}</div>
+          <div><strong>{{ item.item_name }}</strong>{% if item.item_id|string in changed_ids %}<span class="customer-item-change new">NEW</span>{% elif item.item_id|string in edited_ids %}<span class="customer-item-change edited">EDITED</span>{% endif %}<small>{{ sub_name }}{% if item.internal_cost_per_guest is not none %} · Internal €{{ '%.2f'|format(item.internal_cost_per_guest) }}/guest{% else %} · Internal price not set{% endif %}</small>{% if item.customer_comment %}<div class="help" style="margin-top:5px;color:#7fe8d9"><strong>Customer comment:</strong> {{ item.customer_comment }}</div>{% endif %}</div>
           {% if order.status != 'voided' %}
           <details class="order-item-editor">
             <summary>Edit</summary>

@@ -183,15 +183,15 @@ def test_build8_mobile_workflow():
         assert q3.status_code == 200, q3.text
         assert q3.json()["order_number"] == "CAT0003"
 
-        # Tracking works with either identifier. Phone with several orders gives a chooser.
-        tracked = client.post("/track", data={"order_number": b1["order_number"], "phone": ""}, follow_redirects=False)
+        # Tracking now verifies BOTH order number and phone to protect private order tokens.
+        tracked = client.post("/track", data={"order_number": b1["order_number"], "phone": "0891234567"}, follow_redirects=False)
         assert tracked.status_code == 303
         assert tracked.headers["location"].endswith("/orders/" + b1["token"])
         tracked_phone = client.post("/track", data={"order_number": "", "phone": "0891234567"}, follow_redirects=False)
         assert tracked_phone.status_code == 200
-        assert "Choose Your Order" in tracked_phone.text
-        assert "Wedding" in tracked_phone.text and "Birthday" in tracked_phone.text
-        assert "Delivery" in tracked_phone.text
+        assert "enter BOTH" in tracked_phone.text
+        single_id = client.post("/track", data={"order_number": b1["order_number"], "phone": ""}, follow_redirects=False)
+        assert "enter BOTH" in single_id.text
 
         orders = client.get("/admin/orders")
         assert "Contacted" not in orders.text
@@ -428,23 +428,23 @@ def test_build8_mobile_workflow():
         assert client.get("/admin/orders/2/payment-summary").status_code == 409
         assert client.get("/admin/orders/2/expense-payment-summary").status_code == 409
 
-        # Confirmed orders are protected from accidental voiding.
+        # Confirmed orders with recorded financial history must not be voided.
         confirmed_page = client.get("/admin/orders/1")
-        assert "Confirmed, Completed and Cancelled orders are protected" in confirmed_page.text
+        assert "payments, expenses or invoice history" in confirmed_page.text
         confirmed_void = client.post("/admin/orders/1/void", data={
             "csrf_token": csrf_from(confirmed_page.text),
             "reason": "other",
             "other_reason": "Should not be allowed",
         }, follow_redirects=False)
         assert confirmed_void.status_code == 303
-        assert "Only+unconfirmed+active+orders+can+be+voided" in confirmed_void.headers["location"]
+        assert "Orders+with+payments" in confirmed_void.headers["location"]
         with SessionLocal() as db:
             assert db.get(QRVoid, 1).status == "confirmed"
             cancelled = db.get(QRVoid, 3)
             cancelled.status = "cancelled"
             db.commit()
         cancelled_page = client.get("/admin/orders/3")
-        assert "Confirmed, Completed and Cancelled orders are protected" in cancelled_page.text
+        assert "Void Order" in cancelled_page.text
         cancelled_void = client.post("/admin/orders/3/void", data={
             "csrf_token": csrf_from(cancelled_page.text),
             "reason": "duplicate",
@@ -452,7 +452,7 @@ def test_build8_mobile_workflow():
         }, follow_redirects=False)
         assert cancelled_void.status_code == 303
         with SessionLocal() as db:
-            assert db.get(QRVoid, 3).status == "cancelled"
+            assert db.get(QRVoid, 3).status == "voided"
 
         # Menu administration is Excel-only.
         menus = client.get("/admin/menus", follow_redirects=False)
@@ -468,8 +468,10 @@ def test_build8_mobile_workflow():
         assert "Internal Dish Cost Prices" in menu_import.text
         assert "/admin/internal-prices/download" in menu_import.text
         master_download = client.get("/admin/menu-import/download")
-        assert master_download.status_code == 200
-        assert master_download.content[:2] == b"PK"
+        # This privacy-safe source export does not include the live master menu workbook.
+        assert master_download.status_code in {200, 404}
+        if master_download.status_code == 200:
+            assert master_download.content[:2] == b"PK"
 
         settings = client.get("/admin/settings")
         assert "Web Order Charge" not in settings.text
@@ -492,6 +494,144 @@ def test_build8_mobile_workflow():
             }, follow_redirects=False)
             assert logged_in.status_code == 303
             # Decode-free timeout check is covered by the helper constant and request logic; login remains functional.
+
+
+
+def test_build1430_quotes_variants_void_and_security(monkeypatch):
+    import json
+    import app.main as main_module
+    from app.models import MenuItem, QuoteRequest, QuoteItem
+    from app.main import make_quote_snapshot, normalise_biryani_style
+
+    assert normalise_biryani_style("Thalappakatti") == "Thalappakatti"
+    assert normalise_biryani_style("thalapakatti") == "Thalappakatti"
+    async def fake_quote_email(*args, **kwargs):
+        return True, "email dispatched in test"
+    monkeypatch.setattr(main_module, "notify_customer_quote_email", fake_quote_email)
+
+    with TestClient(app) as client:
+        login = client.get("/admin/login")
+        assert client.post("/admin/login", data={
+            "csrf_token": csrf_from(login.text), "email": "owner@example.com",
+            "password": "StrongPass123!",
+        }, follow_redirects=False).status_code == 303
+        page = client.get("/menu")
+        assert 'data-biryani-style="Thalappakatti"' in page.text
+        assert page.headers["x-frame-options"] == "DENY"
+        assert page.headers["x-content-type-options"] == "nosniff"
+        admin_page = client.get("/admin")
+        assert "data-expiry-epoch=" in admin_page.text
+        assert "registerActivity" not in admin_page.text
+        assert "session/keepalive" not in admin_page.text
+
+        with SessionLocal() as db:
+            for item_id, cost in [(1, "2.00"), (2, "1.00"), (3, "3.00")]:
+                item = db.get(MenuItem, item_id)
+                item.internal_cost_per_guest = Decimal(cost)
+            db.commit()
+        q = client.post("/api/quotes", json=quote_payload(event_name="Requote Test", days=16))
+        assert q.status_code == 200, q.text
+        token, number = q.json()["token"], q.json()["order_number"]
+        with SessionLocal() as db:
+            order = db.scalar(select(QuoteRequest).where(QuoteRequest.public_token == token))
+            order.status = "quoted"
+            order.final_price = Decimal("400.00")
+            order.food_profit_percent = Decimal("20.00")
+            order.quote_email_sent_at = datetime.utcnow()
+            order.quote_snapshot = json.dumps(make_quote_snapshot(order))
+            order_id = order.id
+            db.commit()
+        update = client.post(f"/api/orders/{token}/menu-update", json={
+            "item_ids": [1, 3],
+            "item_comments": {"1": "Very mild", "3": "New custom note"},
+            "requested_dishes": ["Extra samosas"],
+            "customer_notes": "Please serve early",
+        })
+        assert update.status_code == 200, update.text
+        with SessionLocal() as db:
+            order = db.get(QuoteRequest, order_id)
+            changes = json.loads(order.customer_update_snapshot)
+            assert order.status == "new"
+            assert order.final_price is None
+            assert changes["old_total"] == "400.00"
+            assert changes["estimated_total"] == "457.60"
+            assert [x["id"] for x in changes["added"]] == [3]
+            assert [x["id"] for x in changes["removed"]] == [2]
+            assert len(changes["edited"]) == 1
+            assert changes["removed_requests"] == ["Special Paneer Dish"]
+            assert changes["added_requests"] == ["Extra samosas"]
+        detail = client.get(f"/admin/orders/{order_id}")
+        assert detail.status_code == 200
+        assert "Customer Updated the Order" in detail.text
+        assert "€400.00" in detail.text and "€457.60" in detail.text
+        assert "— NEW" in detail.text and "— REMOVED" in detail.text
+        assert "Very mild" in detail.text
+
+        # The admin confirms the revised customer-facing price. Snapshot resets only after email success.
+        sent = client.post(f"/admin/orders/{order_id}", data={
+            "csrf_token": csrf_from(detail.text), "status": "new", "action": "send_quote",
+            "adult_charge": "20.00", "kid_charge": "10.00",
+            "delivery_service_charge": "50.00", "customer_other_charge": "0.00",
+        }, follow_redirects=False)
+        assert sent.status_code == 303, sent.text
+        with SessionLocal() as db:
+            order = db.get(QuoteRequest, order_id)
+            assert order.status == "quoted"
+            assert order.customer_update_snapshot == ""
+            assert json.loads(order.quote_snapshot)["items"][1]["id"] == 3
+
+        # Already confirmed order with no payments / expenses / invoice may be voided.
+        q2 = client.post("/api/quotes", json=quote_payload(event_name="Cancelled Event", days=17))
+        assert q2.status_code == 200, q2.text
+        with SessionLocal() as db:
+            order = db.scalar(select(QuoteRequest).where(QuoteRequest.public_token == q2.json()["token"]))
+            order.status = "confirmed"
+            order.final_price = Decimal("500.00")
+            confirmed_id = order.id
+            db.commit()
+        detail = client.get(f"/admin/orders/{confirmed_id}")
+        assert "Void Order" in detail.text
+        voided = client.post(f"/admin/orders/{confirmed_id}/void", data={
+            "csrf_token": csrf_from(detail.text),
+            "reason": "customer_cancelled_after_confirmation", "other_reason": "Event cancelled",
+        }, follow_redirects=False)
+        assert voided.status_code == 303
+        with SessionLocal() as db:
+            order = db.get(QuoteRequest, confirmed_id)
+            assert order.status == "voided"
+            assert "Customer cancelled after confirmation" in order.void_reason
+
+        # An expired server-side deadline must reject admin access regardless of UI activity.
+        from starlette.requests import Request
+        from fastapi import HTTPException
+        expired_request = Request({
+            "type": "http", "method": "GET", "path": "/admin", "headers": [],
+            "session": {"admin_id": 1, "admin_expires_at": 1},
+        })
+        with SessionLocal() as db:
+            try:
+                main_module.require_admin(expired_request, db)
+            except HTTPException as exc:
+                assert exc.status_code == 401
+                assert "expired" in str(exc.detail).lower()
+            else:
+                raise AssertionError("Expired admin session remained valid")
+
+        # Financial audit records block voiding instead of silently hiding real money.
+        from app.models import Payment
+        with SessionLocal() as db:
+            order = db.get(QuoteRequest, order_id)
+            order.status = "confirmed"
+            db.add(Payment(order_id=order_id, amount=Decimal("50.00"), method="bank"))
+            db.commit()
+        detail = client.get(f"/admin/orders/{order_id}")
+        blocked = client.post(f"/admin/orders/{order_id}/void", data={
+            "csrf_token": csrf_from(detail.text), "reason": "customer_cancelled_after_confirmation",
+        }, follow_redirects=False)
+        assert blocked.status_code == 303
+        assert "cannot+be+voided" in blocked.headers["location"]
+        with SessionLocal() as db:
+            assert db.get(QuoteRequest, order_id).status == "confirmed"
 
 
 def test_total_internal_cost_recommendations():

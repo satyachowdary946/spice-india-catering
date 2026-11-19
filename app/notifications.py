@@ -224,6 +224,56 @@ async def notify_admin_new_quote_email(
     return await _send_email(recipients, f"New Catering Quote — {order_number} — {customer_name}", html_body)
 
 
+async def notify_admin_customer_updated_order_email(
+    order_number: str, customer_name: str, admin_url: str,
+    changes: dict, recipient_emails: Iterable[str] | None = None,
+) -> tuple[bool, str]:
+    """Alert admins when a customer revises an order that was already quoted."""
+    if not resend_email_configured():
+        return False, "Resend email notification is not configured."
+    safe = lambda value: html.escape(str(value or ""))
+    def item_list(rows):
+        return "".join(f'<li style="margin:5px 0">{safe(row.get("name"))}</li>' for row in rows)
+    edited = "".join(
+        f'<li>{safe(row["before"].get("name"))} → {safe(row["after"].get("name"))}'
+        f' (notes: {safe(row["before"].get("comment"))} → {safe(row["after"].get("comment"))})</li>'
+        for row in changes.get("edited", [])
+    )
+    details = "".join([
+        f'<p><strong>Added dishes:</strong></p><ul>{item_list(changes.get("added", [])) or "<li>None</li>"}</ul>',
+        f'<p><strong>Edited dishes:</strong></p><ul>{edited or "<li>None</li>"}</ul>',
+        f'<p><strong>Customer removed these dishes:</strong></p><ul>{item_list(changes.get("removed", [])) or "<li>None</li>"}</ul>',
+        f'<p><strong>New requested dishes:</strong> {safe(", ".join(changes.get("added_requests", [])) or "None")}</p>',
+        f'<p><strong>Removed requested dishes:</strong> {safe(", ".join(changes.get("removed_requests", [])) or "None")}</p>',
+        f'<p><strong>Updated customer notes:</strong> {safe(changes.get("customer_notes_after"))}</p>' if changes.get("notes_changed") else "",
+    ])
+    figures = (
+        f'<p><strong style="color:#b91c1c">Old quoted total: €{safe(changes.get("old_total"))}</strong><br>'
+        f'<strong style="color:#087f5b">New estimated total: €{safe(changes.get("estimated_total"))}</strong><br>'
+        f'<strong>Recommended cost-based price: €{safe(changes.get("recommended_total"))}</strong></p>'
+    )
+    caution = '<p><strong>Admin approval required:</strong> these are estimates, not a new customer quote.</p>'
+    if changes.get("missing_cost"):
+        caution += '<p style="color:#b91c1c">Missing internal costs: ' + safe(", ".join(changes["missing_cost"])) + '</p>'
+    body = f'<p>{safe(customer_name)} updated order {safe(order_number)}.</p>{details}{figures}{caution}{_cta(admin_url, "REVIEW CHANGES")}'
+    recipients = list(recipient_emails or []) or [os.getenv("ADMIN_NOTIFICATION_EMAIL", "")]
+    return await _send_email(recipients, f"Customer Updated the Order — {order_number}",
+                             _email_shell("Customer Updated the Order", order_number, body))
+
+
+async def notify_customer_menu_update_received_email(
+    to_email: str, customer_name: str, order_number: str, order_url: str,
+) -> tuple[bool, str]:
+    """Acknowledgement only; deliberately does not promise an unapproved new price."""
+    safe = lambda value: html.escape(str(value or ""))
+    body = (f'<p>Hello {safe(customer_name)},</p>'
+            '<p>We received your updated menu selections. The previous quoted price no longer applies. '
+            'Our catering team will review the changes and send you an updated quoted order with approved prices.</p>'
+            + _cta(order_url, "VIEW YOUR ORDER"))
+    return await _send_email(to_email, f"Menu Changes Received — {order_number}",
+                             _email_shell("Menu changes received", "A revised quote will follow", body))
+
+
 # =========================================================
 # CUSTOMER EMAILS
 # =========================================================
@@ -285,6 +335,7 @@ async def notify_customer_quote_email(
     address: str = "",
     requested_dishes: list[dict[str, str]] | None = None,
     updated: bool = False,
+    previous_price: str = "",
 ) -> tuple[bool, str]:
     if not _customer_email_configured():
         return False, "Resend is not configured."
@@ -307,6 +358,7 @@ async def notify_customer_quote_email(
       {_details_table(order_number, event_name, event_date, event_day, event_time, delivery_time, adults, kids, address=address)}
       <div style="margin:20px 0"><strong>Selected menu</strong>{_menu_html(menu_items)}</div>
       {requested_html}
+      {f'<p><strong style="color:#bd3030">Old quoted price: €{safe(previous_price)}</strong><br><strong style="color:#087f5b">New approved quote: €{safe(total_price)}</strong></p>' if updated and previous_price else ''}
       <div style="background:#f2f7f5;border:1px solid #d8e4e0;border-radius:14px;padding:18px;margin:20px 0">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
           <tr><td style="padding:6px 0">Adult charge · {adults} guests</td><td align="right" style="font-weight:800">€{safe(adult_charge)} / head</td></tr>
@@ -322,8 +374,8 @@ async def notify_customer_quote_email(
       {f'<p style="color:#5f6c68">Questions? Contact our catering team on {safe(business_phone)}.</p>' if business_phone else ''}
       <p style="margin-top:22px">We look forward to making your event delicious.<br><strong>Spice India Catering Team</strong></p>
     """
-    title = "Your catering quote is updated ✨" if updated else "Your catering quote is ready ✨"
-    subject = f"✨ Your Spice India Catering quote is updated — {order_number}" if updated else f"✨ Your Spice India Catering quote is ready — {order_number}"
+    title = "Updated Quoted Order" if updated else "Your catering quote is ready ✨"
+    subject = f"Updated Quoted Order — {order_number} — Spice India Catering" if updated else f"✨ Your Spice India Catering quote is ready — {order_number}"
     email_html = _email_shell(title, f"Review and confirm {order_number}", body)
     return await _send_email(to_email, subject, email_html)
 

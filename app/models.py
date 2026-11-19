@@ -9,6 +9,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 
+class SecurityAttempt(Base):
+    __tablename__ = "security_attempts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    first_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Admin(Base):
     __tablename__ = "admins"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -172,6 +180,8 @@ class QuoteRequest(Base):
     deposit_status: Mapped[str] = mapped_column(String(20), default="not_paid")
     deposit_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     kitchen_shared_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    quote_snapshot: Mapped[str] = mapped_column(Text, default="")
+    customer_update_snapshot: Mapped[str] = mapped_column(Text, default="")
     void_reason: Mapped[str] = mapped_column(Text, default="")
     voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     customer: Mapped[Customer] = relationship(back_populates="orders")

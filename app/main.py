@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import html
+import hashlib
 import json
 import os
 import re
@@ -43,12 +44,15 @@ from .models import (
     QuoteItem,
     QuoteRequest,
     RequestedDish,
+    SecurityAttempt,
     StatusHistory,
     Subcategory,
 )
 from .notifications import (
     notify_admin_new_quote,
     notify_admin_new_quote_email,
+    notify_admin_customer_updated_order_email,
+    notify_customer_menu_update_received_email,
     notify_admin_order_confirmed,
     notify_admin_order_confirmed_email,
     notify_customer_request_received_email,
@@ -63,11 +67,13 @@ from .storage import extension_for_content_type, get_bytes as storage_get_bytes,
 
 BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="Catering Quote Portal", version="1.0.0")
+if os.getenv("RENDER") and not os.getenv("SESSION_SECRET"):
+    raise RuntimeError("SESSION_SECRET must be configured for the deployed website.")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(32)),
     same_site="lax",
-    https_only=os.getenv("COOKIE_SECURE", "0") == "1",
+    https_only=os.getenv("COOKIE_SECURE", "1" if os.getenv("RENDER") else "0") == "1",
     max_age=60 * 60 * 12,
 )
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -82,14 +88,20 @@ async def prevent_html_cache(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.scheme == "https" or os.getenv("RENDER"):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
     return response
 
 
 ALLOWED_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "voided", "contacted", "negotiating"]
 EDITABLE_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled"]
 FILTER_STATUSES = ["new", "quoted", "confirmed", "completed", "cancelled", "voided"]
-VOID_REASON_OPTIONS = {"test": "Test order", "duplicate": "Duplicate order", "customer_mistake": "Customer mistake", "admin_mistake": "Admin mistake", "spam": "Spam", "other": "Other"}
-VOIDABLE_STATUSES = {"new", "quoted", "contacted", "negotiating"}
+VOID_REASON_OPTIONS = {"test": "Test order", "duplicate": "Duplicate order", "customer_mistake": "Customer mistake", "admin_mistake": "Admin mistake", "spam": "Spam", "customer_cancelled_after_confirmation": "Customer cancelled after confirmation", "other": "Other"}
+VOIDABLE_STATUSES = {"new", "quoted", "confirmed", "cancelled", "contacted", "negotiating"}
 DIET_LABELS = {"veg": "Veg Only", "nonveg": "Non Veg Only", "combo": "Veg & Non Veg"}
 REQUESTED_DISH_STATUSES = {"pending", "approved", "rejected"}
 DUBLIN_TZ = ZoneInfo("Europe/Dublin")
@@ -109,6 +121,12 @@ def ensure_schema_compatibility() -> None:
         if "invoice_sent_at" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE quote_requests ADD COLUMN invoice_sent_at TIMESTAMP"))
+        if "quote_snapshot" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_requests ADD COLUMN quote_snapshot TEXT DEFAULT ''"))
+        if "customer_update_snapshot" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE quote_requests ADD COLUMN customer_update_snapshot TEXT DEFAULT ''"))
         if "void_reason" not in columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE quote_requests ADD COLUMN void_reason TEXT DEFAULT ''"))
@@ -636,11 +654,11 @@ def event_day(order_or_date: Any) -> str:
     return event_date.strftime("%A")
 
 
-BIRYANI_STYLES = ("Malabar", "Hyderabadi", "North Indian")
+BIRYANI_STYLES = ("Malabar", "Hyderabadi", "North Indian", "Thalappakatti")
 
 def normalise_biryani_style(value: Any) -> str:
     raw = re.sub(r"\s+", " ", str(value or "")).strip()
-    aliases = {"hyderabad": "Hyderabadi", "hyderbadi": "Hyderabadi", "north india": "North Indian"}
+    aliases = {"hyderabad": "Hyderabadi", "hyderbadi": "Hyderabadi", "north india": "North Indian", "thalapakatti": "Thalappakatti", "dindigul": "Thalappakatti"}
     raw = aliases.get(raw.casefold(), raw)
     for style in BIRYANI_STYLES:
         if raw.casefold() == style.casefold():
@@ -788,25 +806,26 @@ def require_admin(request: Request, db: Session) -> Admin:
         raise HTTPException(status_code=401, detail="Admin login required")
 
     now_ts = int(datetime.now(UTC_TZ).timestamp())
-    last_activity = request.session.get("admin_last_activity")
-    if last_activity is not None:
-        try:
-            if now_ts - int(last_activity) > ADMIN_IDLE_TIMEOUT_SECONDS:
-                request.session.clear()
-                request.state.admin_session_expired = True
-                raise HTTPException(status_code=401, detail="Admin session expired")
-        except (TypeError, ValueError):
-            request.session.clear()
-            request.state.admin_session_expired = True
-            raise HTTPException(status_code=401, detail="Admin session expired")
+    # Fixed expiry after login. No pointer/keyboard activity or page reload renews it.
+    # Legacy sessions receive a deadline based on their existing last activity value.
+    try:
+        expires_at = int(request.session.get("admin_expires_at") or 0)
+        if not expires_at:
+            previous = int(request.session.get("admin_last_activity") or 0)
+            expires_at = previous + ADMIN_IDLE_TIMEOUT_SECONDS
+            request.session["admin_expires_at"] = expires_at
+        if now_ts >= expires_at:
+            raise ValueError("Session expired")
+    except (TypeError, ValueError):
+        request.session.clear()
+        request.state.admin_session_expired = True
+        raise HTTPException(status_code=401, detail="Admin session expired")
 
     admin = db.get(Admin, int(admin_id))
     if not admin:
         request.session.clear()
         raise HTTPException(status_code=401, detail="Admin login required")
 
-    # Rolling 10-minute inactivity window: each authenticated admin request refreshes it.
-    request.session["admin_last_activity"] = now_ts
     return admin
 
 
@@ -816,6 +835,44 @@ def admin_or_redirect(request: Request, db: Session):
     except HTTPException:
         suffix = "?expired=1" if getattr(request.state, "admin_session_expired", False) else ""
         return None, RedirectResponse(f"/admin/login{suffix}", status_code=303)
+
+
+# IP + account/order fingerprint avoids storing raw submitted credentials.
+# Throttling is persistent in PostgreSQL and covers the login and public order finder.
+def _security_fingerprint(request: Request, route: str, identifier: str) -> str:
+    client_ip = request.client.host if request.client else "unknown"
+    secret = os.getenv("SESSION_SECRET", "local-only")
+    return hashlib.sha256(f"{secret}|{route}|{client_ip}|{identifier.strip().casefold()}".encode()).hexdigest()
+
+
+def _attempt_limited(db: Session, fingerprint: str, max_attempts: int = 8) -> bool:
+    record = db.scalar(select(SecurityAttempt).where(SecurityAttempt.fingerprint == fingerprint))
+    if not record:
+        return False
+    if datetime.utcnow() - record.first_at > timedelta(minutes=15):
+        db.delete(record)
+        db.commit()
+        return False
+    return record.attempts >= max_attempts
+
+
+def _record_failed_attempt(db: Session, fingerprint: str) -> None:
+    record = db.scalar(select(SecurityAttempt).where(SecurityAttempt.fingerprint == fingerprint))
+    if record is None:
+        record = SecurityAttempt(fingerprint=fingerprint, attempts=0, first_at=datetime.utcnow())
+        db.add(record)
+    if datetime.utcnow() - record.first_at > timedelta(minutes=15):
+        record.attempts = 0
+        record.first_at = datetime.utcnow()
+    record.attempts += 1
+    db.commit()
+
+
+def _clear_attempts(db: Session, fingerprint: str) -> None:
+    record = db.scalar(select(SecurityAttempt).where(SecurityAttempt.fingerprint == fingerprint))
+    if record is not None:
+        db.delete(record)
+        db.commit()
 
 
 def check_csrf(request: Request, token: str | None) -> None:
@@ -867,6 +924,95 @@ INTERNAL_EXPENSE_NAMES = {
     "misc": "Miscellaneous",
     "other": "Other Expenses",
 }
+
+
+# The previous emailed quote is immutable until the next successfully sent quote.
+# All amounts are estimates until an admin approves a revised quote.
+def make_quote_snapshot(order: QuoteRequest) -> dict[str, Any]:
+    return {
+        "items": [
+            {"id": item.item_id, "name": item.item_name, "comment": item.customer_comment or "",
+             "unit_cost": str(money(item.internal_cost_per_guest)),
+             "cost_missing": item.internal_cost_per_guest is None}
+            for item in sorted(order.items, key=lambda row: row.sort_order)
+        ],
+        "requested_dishes": sorted([d.name for d in order.requested_dishes], key=str.casefold),
+        "customer_notes": order.customer_notes or "",
+        "total": str(money(order.final_price)),
+        "profit_percent": str(money(order.food_profit_percent)),
+        "guests": int(order.adults or 0) + int(order.kids or 0),
+        "saved_at": datetime.utcnow().isoformat(),
+    }
+
+
+def _item_snapshot_from_menu(item: MenuItem, style: str, comment: str) -> dict[str, Any]:
+    return {
+        "id": item.id, "name": item_display_name(item, style), "comment": comment,
+        "unit_cost": str(money(item.internal_cost_per_guest)),
+        "cost_missing": item.internal_cost_per_guest is None,
+    }
+
+
+def customer_quote_changes(
+    original: dict[str, Any], current_items: list[dict[str, Any]],
+    requested_names: list[str], customer_notes: str, order: QuoteRequest,
+) -> dict[str, Any]:
+    previous_items = {str(row.get("id")): row for row in original.get("items", [])}
+    current_map = {str(row.get("id")): row for row in current_items}
+    added = [row for key, row in current_map.items() if key not in previous_items]
+    removed = [row for key, row in previous_items.items() if key not in current_map]
+    edited = [
+        {"before": previous_items[key], "after": row}
+        for key, row in current_map.items() if key in previous_items
+        and (row["name"] != previous_items[key].get("name")
+             or row["comment"] != previous_items[key].get("comment", ""))
+    ]
+    old_requests = original.get("requested_dishes", [])
+    added_requests = [value for value in requested_names if value.casefold() not in {x.casefold() for x in old_requests}]
+    removed_requests = [value for value in old_requests if value.casefold() not in {x.casefold() for x in requested_names}]
+    notes_changed = customer_notes != original.get("customer_notes", "")
+    guests = int(original.get("guests") or (int(order.adults or 0) + int(order.kids or 0)))
+    old_food = sum((money(row.get("unit_cost")) for row in original.get("items", [])), Decimal("0")) * guests
+    new_food = sum((money(row.get("unit_cost")) for row in current_items), Decimal("0")) * guests
+    delta_food = money(new_food - old_food)
+    margin = money(original.get("profit_percent"))
+    markup = Decimal("1") + margin / Decimal("100")
+    old_total = money(original.get("total"))
+    estimated_total = max(Decimal("0"), money(old_total + delta_food * markup))
+    operating_cost = sum((money(e.amount) for e in order.expenses), Decimal("0"))
+    new_target = money((new_food + operating_cost) * markup)
+    for row in added:
+        row["estimated_effect"] = str(money(money(row["unit_cost"]) * guests * markup))
+    for row in removed:
+        row["estimated_effect"] = str(money(money(row["unit_cost"]) * guests * markup))
+    for row in edited:
+        row["estimated_effect"] = str(money(
+            (money(row["after"]["unit_cost"]) - money(row["before"]["unit_cost"])) * guests * markup
+        ))
+    adults_equivalent = Decimal(int(order.adults or 0)) + Decimal(int(order.kids or 0)) * Decimal("0.5")
+    adult = money(new_target / adults_equivalent) if adults_equivalent else Decimal("0")
+    missing_cost = [row["name"] for row in current_items if row.get("cost_missing")]
+    return {
+        "added": added, "removed": removed, "edited": edited,
+        "added_requests": added_requests, "removed_requests": removed_requests,
+        "notes_changed": notes_changed,
+        "changed": bool(added or removed or edited or added_requests or removed_requests or notes_changed),
+        "old_total": str(old_total), "estimated_total": str(estimated_total),
+        "delta_food_cost": str(delta_food), "recommended_total": str(new_target),
+        "recommended_adult": str(adult), "recommended_kid": str(money(adult * Decimal("0.5"))),
+        "missing_cost": missing_cost, "profit_percent": str(margin),
+        "customer_notes_before": original.get("customer_notes", ""),
+        "customer_notes_after": customer_notes,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
+def read_customer_quote_changes(order: QuoteRequest) -> dict[str, Any] | None:
+    try:
+        data = json.loads(order.customer_update_snapshot or "null")
+        return data if isinstance(data, dict) and data.get("changed") else None
+    except (ValueError, TypeError):
+        return None
 
 
 def order_food_cost(order: QuoteRequest) -> Decimal:
@@ -1086,11 +1232,11 @@ async def send_customer_status_email_for_order(
 
 
 def public_order_url(request: Request, token: str) -> str:
-    return str(request.base_url).rstrip("/") + f"/orders/{token}"
+    return (os.getenv("PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/") + f"/orders/{token}"
 
 
 def admin_order_url(request: Request, order_id: int) -> str:
-    return str(request.base_url).rstrip("/") + f"/admin/orders/{order_id}"
+    return (os.getenv("PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/") + f"/admin/orders/{order_id}"
 
 
 @app.exception_handler(401)
@@ -1528,19 +1674,20 @@ def track_order_submit(
 ):
     order_number = (order_number or "").strip().upper()
     phone_clean = clean_phone(phone)
-    if not order_number and not phone_clean:
-        return render(request, db, "customer/track.html", matches=[], error="Enter an Order ID or phone / WhatsApp number.", order_number=order_number, phone=phone)
-
-    stmt = select(QuoteRequest).join(Customer).options(selectinload(QuoteRequest.customer)).order_by(QuoteRequest.event_date.desc(), QuoteRequest.event_time.desc())
-    if order_number:
-        stmt = stmt.where(func.upper(QuoteRequest.order_number) == order_number)
-    if phone_clean:
-        if not valid_phone(phone_clean):
-            return render(request, db, "customer/track.html", matches=[], error="Enter a valid phone or WhatsApp number.", order_number=order_number, phone=phone)
-        stmt = stmt.where(or_(Customer.phone == phone_clean, Customer.whatsapp == phone_clean))
+    if not order_number or not valid_phone(phone_clean):
+        return render(request, db, "customer/track.html", matches=[], error="For privacy, enter BOTH your Order ID and the phone / WhatsApp number used for the booking.", order_number=order_number, phone=phone)
+    fingerprint = _security_fingerprint(request, "order-track", order_number)
+    if _attempt_limited(db, fingerprint):
+        return render(request, db, "customer/track.html", matches=[], error="Too many attempts. Please try again in 15 minutes.", order_number=order_number, phone=phone)
+    stmt = (select(QuoteRequest).join(Customer)
+            .where(func.upper(QuoteRequest.order_number) == order_number)
+            .where(or_(Customer.phone == phone_clean, Customer.whatsapp == phone_clean))
+            .options(selectinload(QuoteRequest.customer)))
     matches = list(db.scalars(stmt).unique().all())
     if not matches:
-        return render(request, db, "customer/track.html", matches=[], error="We could not find a matching catering order.", order_number=order_number, phone=phone)
+        _record_failed_attempt(db, fingerprint)
+        return render(request, db, "customer/track.html", matches=[], error="We could not verify that order ID and phone number.", order_number=order_number, phone=phone)
+    _clear_attempts(db, fingerprint)
     if len(matches) == 1:
         return RedirectResponse(f"/orders/{matches[0].public_token}", status_code=303)
     return render(request, db, "customer/track.html", matches=matches, order_number=order_number, phone=phone)
@@ -1671,17 +1818,37 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     missing_biryani_style = [item.name for item in items if (item.subcategory.category.name or "").strip().casefold() == "biryani's" and not item_variants.get(item.id)]
     if missing_biryani_style:
         return JSONResponse({"ok": False, "error": "Choose a biryani style for: " + ", ".join(missing_biryani_style)}, status_code=422)
+    # Compare against the last customer-facing quote, never against the latest editable cart.
+    base_snapshot = None
+    try:
+        base_snapshot = json.loads(order.quote_snapshot or "null")
+    except ValueError:
+        pass
+    if not isinstance(base_snapshot, dict) and (order.quote_email_sent_at or order.quote_whatsapp_sent_at):
+        base_snapshot = make_quote_snapshot(order)  # Migrates orders quoted before this build.
+        order.quote_snapshot = json.dumps(base_snapshot)
+    item_by_id = {item.id: item for item in items}
+    new_items = [_item_snapshot_from_menu(item_by_id[item_id], item_variants.get(item_id, ""), item_comments.get(item_id, "")) for item_id in unique_ids]
+    new_notes = str(payload.get("customer_notes", order.customer_notes or "") or "").strip()[:2000]
+    changes = customer_quote_changes(base_snapshot, new_items, requested_names, new_notes, order) if base_snapshot else None
+    if changes and not changes["changed"] and order.status == "quoted":
+        return {"ok": True, "token": order.public_token, "order_number": order.order_number, "unchanged": True}
     for old in list(order.items):
         db.delete(old)
-    item_by_id = {item.id: item for item in items}
     for sort_index, item_id in enumerate(unique_ids):
         item = item_by_id[item_id]; sub = item.subcategory; cat = sub.category; menu = cat.menu
         db.add(QuoteItem(order_id=order.id, item_id=item.id, item_name=item_display_name(item, item_variants.get(item.id, "")), menu_name=menu.name, category_name=cat.name, subcategory_name=sub.name, dietary=item.dietary, internal_cost_per_guest=item.internal_cost_per_guest, customer_comment=item_comments.get(item.id, ""), sort_order=sort_index))
     existing = {dish.name.casefold(): dish for dish in order.requested_dishes}
+    requested_set = {name.casefold() for name in requested_names}
+    for name_key, existing_dish in existing.items():
+        if name_key not in requested_set:
+            db.delete(existing_dish)
     for name in requested_names:
         if name.casefold() not in existing:
             db.add(RequestedDish(order_id=order.id, name=name, status="pending"))
-    order.customer_notes = str(payload.get("customer_notes") or order.customer_notes or "").strip()[:2000]
+    order.customer_notes = new_notes
+    if changes:
+        order.customer_update_snapshot = json.dumps(changes) if changes["changed"] else ""
     order.status = "new"
     order.final_price = None
     order.adult_charge = None
@@ -1692,14 +1859,28 @@ async def customer_menu_update(token: str, request: Request, db: Session = Depen
     order.web_order_charge = None
     order.confirmed_at = None
     order.customer_message = "Menu updated. A revised quote is being prepared."
-    db.add(StatusHistory(order_id=order.id, status="new", note=""))
+    db.add(StatusHistory(order_id=order.id, status="new", note=(
+        "Customer updated the order after a quote was sent; revised price approval required."
+        if changes else "Customer updated their menu before quoting."
+    )))
     db.commit()
-    await notify_admin_new_quote_email(
-        order.order_number, order.customer.name, order.customer.phone, order.event_name,
-        order.event_date.strftime("%d %b %Y"), event_day(order), order.event_time.strftime("%I:%M %p").lstrip("0"),
-        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "", order.adults + order.kids,
-        admin_order_url(request, order.id), admin_notification_emails(db),
-    )
+    if changes and changes["changed"]:
+        await notify_admin_customer_updated_order_email(
+            order.order_number, order.customer.name, admin_order_url(request, order.id),
+            changes, admin_notification_emails(db),
+        )
+        if order.customer.email:
+            await notify_customer_menu_update_received_email(
+                order.customer.email, order.customer.name, order.order_number,
+                public_order_url(request, order.public_token),
+            )
+    else:
+        await notify_admin_new_quote_email(
+            order.order_number, order.customer.name, order.customer.phone, order.event_name,
+            order.event_date.strftime("%d %b %Y"), event_day(order), order.event_time.strftime("%I:%M %p").lstrip("0"),
+            order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "", order.adults + order.kids,
+            admin_order_url(request, order.id), admin_notification_emails(db),
+        )
     return {"ok": True, "token": order.public_token, "order_number": order.order_number}
 
 
@@ -1708,7 +1889,7 @@ def customer_cancel(token: str, request: Request, db: Session = Depends(get_db))
     order = db.scalar(select(QuoteRequest).where(QuoteRequest.public_token == token))
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.status in {"completed", "cancelled"}:
+    if order.status in {"completed", "cancelled", "voided"}:
         return RedirectResponse(f"/orders/{token}", status_code=303)
     order.status = "cancelled"
     db.add(StatusHistory(order_id=order.id, status="cancelled", note="Cancelled from customer order page."))
@@ -1721,7 +1902,9 @@ def customer_cancel(token: str, request: Request, db: Session = Depends(get_db))
 def admin_setup(request: Request, db: Session = Depends(get_db)):
     if db.scalar(select(func.count(Admin.id))) > 0:
         return RedirectResponse("/admin/login", status_code=303)
-    return render(request, db, "admin/setup.html")
+    if os.getenv("RENDER") and not os.getenv("ADMIN_SETUP_KEY"):
+        raise HTTPException(status_code=503, detail="First-admin setup requires ADMIN_SETUP_KEY.")
+    return render(request, db, "admin/setup.html", setup_key_required=bool(os.getenv("RENDER")))
 
 
 @app.post("/admin/setup")
@@ -1731,9 +1914,12 @@ def admin_setup_post(
     password: str = Form(...),
     confirm_password: str = Form(...),
     csrf_token: str = Form(...),
+    setup_key: str = Form(""),
     db: Session = Depends(get_db),
 ):
     check_csrf(request, csrf_token)
+    if os.getenv("RENDER") and (not os.getenv("ADMIN_SETUP_KEY") or not secrets.compare_digest(setup_key, os.environ["ADMIN_SETUP_KEY"])):
+        raise HTTPException(status_code=403, detail="Invalid setup key")
     if db.scalar(select(func.count(Admin.id))) > 0:
         return RedirectResponse("/admin/login", status_code=303)
     email = email.strip().lower()
@@ -1749,8 +1935,9 @@ def admin_setup_post(
     db.add(admin)
     db.commit()
     db.refresh(admin)
+    request.session.clear()  # Rotate the signed session and CSRF token after authentication.
     request.session["admin_id"] = admin.id
-    request.session["admin_last_activity"] = int(datetime.now(UTC_TZ).timestamp())
+    request.session["admin_expires_at"] = int(datetime.now(UTC_TZ).timestamp()) + ADMIN_IDLE_TIMEOUT_SECONDS
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -1776,11 +1963,17 @@ def admin_login_post(
     db: Session = Depends(get_db),
 ):
     check_csrf(request, csrf_token)
+    fingerprint = _security_fingerprint(request, "admin-login", email)
+    if _attempt_limited(db, fingerprint):
+        return render(request, db, "admin/login.html", error="Too many login attempts. Try again after 15 minutes.")
     admin = db.scalar(select(Admin).where(Admin.email == email.strip().lower()))
     if not admin or not verify_password(password, admin.password_hash):
+        _record_failed_attempt(db, fingerprint)
         return render(request, db, "admin/login.html", error="Email or password is incorrect.")
+    _clear_attempts(db, fingerprint)
+    request.session.clear()  # Rotate the signed session and CSRF token after authentication.
     request.session["admin_id"] = admin.id
-    request.session["admin_last_activity"] = int(datetime.now(UTC_TZ).timestamp())
+    request.session["admin_expires_at"] = int(datetime.now(UTC_TZ).timestamp()) + ADMIN_IDLE_TIMEOUT_SECONDS
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -1789,20 +1982,6 @@ def admin_logout(request: Request, csrf_token: str = Form(...)):
     check_csrf(request, csrf_token)
     request.session.clear()
     return RedirectResponse("/admin/login", status_code=303)
-
-
-@app.post("/admin/session/keepalive")
-def admin_session_keepalive(
-    request: Request,
-    csrf_token: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    check_csrf(request, csrf_token)
-    try:
-        require_admin(request, db)
-    except HTTPException:
-        return JSONResponse({"ok": False, "expired": True}, status_code=401)
-    return JSONResponse({"ok": True, "remaining_seconds": ADMIN_IDLE_TIMEOUT_SECONDS})
 
 
 # ---------- Admin dashboard ----------
@@ -1879,7 +2058,7 @@ async def admin_settings_post(
     if logo and logo.filename:
         if logo.content_type not in allowed:
             return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Logo must be PNG, JPEG or WebP.")
-        data = await logo.read()
+        data = await logo.read(2 * 1024 * 1024 + 1)
         if len(data) > 2 * 1024 * 1024:
             return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Logo must be smaller than 2 MB.")
         obj.logo_blob = data
@@ -1891,7 +2070,7 @@ async def admin_settings_post(
     if hero_image and hero_image.filename:
         if hero_image.content_type not in allowed:
             return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Homepage background must be PNG, JPEG or WebP.")
-        hero_data = await hero_image.read()
+        hero_data = await hero_image.read(5 * 1024 * 1024 + 1)
         if len(hero_data) > 5 * 1024 * 1024:
             return render(request, db, "admin/settings.html", admin=admin, admins=db.scalars(select(Admin).order_by(Admin.created_at.asc(), Admin.id.asc())).all(), error="Homepage background must be smaller than 5 MB.")
         obj.hero_image_blob = hero_data
@@ -2042,7 +2221,7 @@ async def read_menu_image(image: UploadFile | None) -> tuple[bytes | None, str |
         return None, None
     if image.content_type not in MENU_IMAGE_TYPES:
         raise ValueError("Menu item image must be PNG, JPEG or WebP.")
-    data = await image.read()
+    data = await image.read(MAX_MENU_IMAGE_BYTES + 1)
     if len(data) > MAX_MENU_IMAGE_BYTES:
         raise ValueError("Menu item image must be smaller than 3 MB.")
     return data, image.content_type
@@ -2485,7 +2664,7 @@ async def admin_internal_prices_import(
     check_csrf(request, csrf_token)
     if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
         return RedirectResponse("/admin/menu-import?toast=Choose+an+.xlsx+internal+price+workbook&toast_type=error#internal-prices", status_code=303)
-    data = await workbook.read()
+    data = await workbook.read(4 * 1024 * 1024 + 1)
     if len(data) > 4 * 1024 * 1024:
         return RedirectResponse("/admin/menu-import?toast=Internal+price+workbook+must+be+smaller+than+4+MB&toast_type=error#internal-prices", status_code=303)
     try:
@@ -2531,7 +2710,7 @@ async def admin_menu_import_apply(
     check_csrf(request, csrf_token)
     if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
         return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), error="Choose an .xlsx menu workbook.")
-    data = await workbook.read()
+    data = await workbook.read(8 * 1024 * 1024 + 1)
     if len(data) > 8 * 1024 * 1024:
         return render(request, db, "admin/menu_import.html", admin=admin, storage=menu_storage_stats(db), category_setup_rows=master_category_setup_rows(db), error="Workbook must be smaller than 8 MB.")
     try:
@@ -2815,7 +2994,7 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
     if order.status == "voided":
         void_block_reason = ""
     elif not void_status_allowed:
-        void_block_reason = "Only unconfirmed active orders can be voided. Confirmed, Completed and Cancelled orders are protected."
+        void_block_reason = "Completed orders cannot be voided. Orders with recorded payments, expenses or invoices require financial reconciliation before voiding."
     elif void_has_financial_history:
         void_block_reason = "This order has payments, expenses or invoice history and cannot be voided. Use Cancelled instead."
     else:
@@ -2829,6 +3008,9 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         finance=finance_summary(order), pricing=pricing_breakdown(order),
         can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
         void_block_reason=void_block_reason,
+        customer_changes=read_customer_quote_changes(order),
+        changed_ids={str(x.get("id")) for x in (read_customer_quote_changes(order) or {}).get("added", [])},
+        edited_ids={str(x.get("after", {}).get("id")) for x in (read_customer_quote_changes(order) or {}).get("edited", [])},
         catalog_items=catalog_items,
         can_share_quote=(order.status != "new" and order.final_price is not None),
         can_send_kitchen=(order.status == "confirmed"), today=date.today(),
@@ -3081,6 +3263,7 @@ async def admin_order_update(
                 f"{order.address}, {order.eircode}".strip(", "),
                 requested_dishes=[{"name": d.name, "status": d.status, "reply": d.admin_response} for d in order.requested_dishes],
                 updated=bool(order.quote_email_sent_at),
+                previous_price=(json.loads(order.quote_snapshot).get("total", "") if order.quote_snapshot else ""),
             )
         else:
             sent, message = await send_customer_status_email_for_order(order, request, db, status)
@@ -3088,6 +3271,8 @@ async def admin_order_update(
         if sent:
             if status == "quoted":
                 order.quote_email_sent_at = datetime.utcnow()
+                order.quote_snapshot = json.dumps(make_quote_snapshot(order))
+                order.customer_update_snapshot = ""
                 db.commit()
             label = "Quote email sent successfully" if status == "quoted" else f"{status.title()} email sent successfully"
             return RedirectResponse(f"/admin/orders/{order_id}?toast={quote(label)}&toast_type=success", status_code=303)
@@ -3315,6 +3500,8 @@ def admin_quote_whatsapp_mark_sent(
     if order.status == "new" or order.final_price is None:
         return RedirectResponse(f"/admin/orders/{order_id}?toast=Quote+sharing+is+not+available+while+the+order+is+New&toast_type=error", status_code=303)
     order.quote_whatsapp_sent_at = datetime.utcnow()
+    order.quote_snapshot = json.dumps(make_quote_snapshot(order))
+    order.customer_update_snapshot = ""
     db.add(StatusHistory(order_id=order.id, status=order.status, note="Admin marked the customer quote as sent on WhatsApp."))
     db.commit()
     return RedirectResponse(f"/admin/orders/{order_id}?toast=WhatsApp+quote+marked+as+sent&toast_type=success#customer-sharing", status_code=303)
@@ -3429,10 +3616,13 @@ async def admin_send_quote_email(
         f"{order.address}, {order.eircode}".strip(", "),
         requested_dishes=[{"name": d.name, "status": d.status, "reply": d.admin_response} for d in order.requested_dishes],
         updated=bool(order.quote_email_sent_at),
+        previous_price=(json.loads(order.quote_snapshot).get("total", "") if order.quote_snapshot else ""),
     )
     if not sent:
         return RedirectResponse(f"/admin/orders/{order_id}?toast={quote('Quote email was not sent: ' + message)}&toast_type=error", status_code=303)
     order.quote_email_sent_at = datetime.utcnow()
+    order.quote_snapshot = json.dumps(make_quote_snapshot(order))
+    order.customer_update_snapshot = ""
     db.commit()
     return RedirectResponse(f"/admin/orders/{order_id}?toast=Quote+emailed+to+customer+successfully&toast_type=success", status_code=303)
 
@@ -3608,7 +3798,7 @@ def admin_order_void(
         return RedirectResponse(f"/admin/orders/{order_id}?error=Order+is+already+voided", status_code=303)
     if order.status not in VOIDABLE_STATUSES:
         return RedirectResponse(
-            f"/admin/orders/{order_id}?error=Only+unconfirmed+active+orders+can+be+voided.+Confirmed,+Completed+and+Cancelled+orders+are+protected",
+            f"/admin/orders/{order_id}?error=Only+New,+Quoted,+Confirmed+or+Cancelled+orders+can+be+voided",
             status_code=303,
         )
     if order.payments or order.expenses or order.invoice_sent_at:
@@ -3736,18 +3926,18 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         title=f"Kitchen Sheet {getattr(order, 'order_number', '')}",
     )
     styles = getSampleStyleSheet()
-    eyebrow = ParagraphStyle("KitchenEyebrow14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.2, leading=8.4, textColor=colors.HexColor("#7D8683"), spaceAfter=1)
-    company_style = ParagraphStyle("KitchenCompany14_18", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=15.5, leading=16.5, spaceAfter=0, textColor=colors.black)
-    order_style = ParagraphStyle("KitchenOrder14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=9.2, leading=10.5, textColor=colors.black)
-    label_style = ParagraphStyle("KitchenLabel14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=6.5, leading=7.4, textColor=colors.HexColor("#4C5552"))
-    value_style = ParagraphStyle("KitchenValue14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.4, leading=9.5, textColor=colors.black)
-    address_style = ParagraphStyle("KitchenAddress14_18", parent=styles["BodyText"], fontSize=7.4, leading=8.6, textColor=colors.HexColor("#333333"))
-    box_title = ParagraphStyle("KitchenBoxTitle14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=9.0, leading=10.4, textColor=colors.black)
-    menu_name_style = ParagraphStyle("KitchenMenuName14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.0, leading=8.2, textColor=colors.HexColor("#7A817F"), spaceBefore=2, spaceAfter=3)
-    category_style = ParagraphStyle("KitchenCategory14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.3, leading=8.6, textColor=colors.black, spaceBefore=3, spaceAfter=1)
-    item_style = ParagraphStyle("KitchenItem14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.0, leading=8.4, leftIndent=7, firstLineIndent=-7, textColor=colors.black, spaceAfter=0.5)
-    note_label = ParagraphStyle("KitchenNoteLabel14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.4, leading=8.6, textColor=colors.black)
-    note_value = ParagraphStyle("KitchenNoteValue14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.6, leading=9.2, textColor=colors.black)
+    eyebrow = ParagraphStyle("KitchenEyebrow14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=9.2, leading=11, textColor=colors.HexColor("#4F5653"), spaceAfter=1)
+    company_style = ParagraphStyle("KitchenCompany14_18", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=20, leading=23, spaceAfter=0, textColor=colors.black)
+    order_style = ParagraphStyle("KitchenOrder14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=11.2, leading=13.5, textColor=colors.black)
+    label_style = ParagraphStyle("KitchenLabel14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.3, leading=9.8, textColor=colors.HexColor("#4C5552"))
+    value_style = ParagraphStyle("KitchenValue14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.3, leading=12.3, textColor=colors.black)
+    address_style = ParagraphStyle("KitchenAddress14_18", parent=styles["BodyText"], fontSize=10, leading=12.5, textColor=colors.HexColor("#333333"))
+    box_title = ParagraphStyle("KitchenBoxTitle14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=12.5, leading=15, textColor=colors.black)
+    menu_name_style = ParagraphStyle("KitchenMenuName14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.2, leading=12.2, textColor=colors.HexColor("#494F4D"), spaceBefore=2, spaceAfter=3)
+    category_style = ParagraphStyle("KitchenCategory14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.4, leading=12.8, textColor=colors.black, spaceBefore=3, spaceAfter=1)
+    item_style = ParagraphStyle("KitchenItem14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10, leading=12.8, leftIndent=10, firstLineIndent=-10, textColor=colors.black, spaceAfter=0.5)
+    note_label = ParagraphStyle("KitchenNoteLabel14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.3, leading=12.8, textColor=colors.black)
+    note_value = ParagraphStyle("KitchenNoteValue14_18", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.5, leading=13.2, textColor=colors.black)
 
     company = (getattr(biz, "company_name", "") or "SPICE INDIA").strip()
     order_number = _pdf_text(getattr(order, "order_number", ""), "")
@@ -3776,7 +3966,7 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B5B5B5")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
     story.extend([timing, Spacer(1, 4)])
 
@@ -3789,7 +3979,7 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
         ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B5B5B5")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
     story.extend([details, Spacer(1, 4)])
 
@@ -3851,36 +4041,50 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
             else:
                 right_keys.append(key)
 
-        def build_column(keys: list[tuple[str, str]]) -> list[Any]:
-            flows: list[Any] = []
+        def build_column_blocks(keys: list[tuple[str, str]]) -> list[list[Any]]:
+            """Keep each PDF row short so long menus can flow to another A4 page."""
+            blocks: list[list[Any]] = []
             last_menu = None
             for menu_name, category_name in keys:
-                if menu_name and menu_name != last_menu:
-                    flows.append(Paragraph(_pdf_text(menu_name), menu_name_style))
-                    last_menu = menu_name
-                flows.append(Paragraph(_pdf_text(category_name).upper(), category_style))
                 entries = section_map.get((menu_name, category_name), [])
-                for idx, entry in enumerate(entries, 1):
-                    if hasattr(entry, "item_name"):
-                        name = _pdf_text(getattr(entry, "item_name", ""), "")
-                        comment = (getattr(entry, "customer_comment", "") or "").strip()
-                        if comment:
-                            name += f" - NOTE: {_pdf_text(comment)}"
-                    else:
-                        name = _pdf_text(getattr(entry, "name", ""), "")
-                    flows.append(Paragraph(f"{idx}. {name}", item_style))
-                if not entries and category_name == "No menu items":
-                    flows.append(Paragraph("No confirmed menu items.", item_style))
-                flows.append(Spacer(1, 2))
-            return flows or [Paragraph("", item_style)]
+                # Chunk large categories to avoid an unsplittable full-height cell.
+                chunks = [entries[i:i + 9] for i in range(0, len(entries), 9)] or [[]]
+                for chunk_index, chunk in enumerate(chunks):
+                    flows: list[Any] = []
+                    if menu_name and (menu_name != last_menu or chunk_index == 0):
+                        flows.append(Paragraph(_pdf_text(menu_name), menu_name_style))
+                    last_menu = menu_name
+                    category_label = category_name + (" (continued)" if chunk_index else "")
+                    flows.append(Paragraph(_pdf_text(category_label).upper(), category_style))
+                    for item_index, entry in enumerate(chunk, 1 + chunk_index * 9):
+                        if hasattr(entry, "item_name"):
+                            name = _pdf_text(getattr(entry, "item_name", ""), "")
+                            comment = (getattr(entry, "customer_comment", "") or "").strip()
+                            if comment:
+                                name += f" - NOTE: {_pdf_text(comment)}"
+                        else:
+                            name = _pdf_text(getattr(entry, "name", ""), "")
+                        flows.append(Paragraph(f"{item_index}. {name}", item_style))
+                    if not entries and category_name == "No menu items":
+                        flows.append(Paragraph("No confirmed menu items.", item_style))
+                    blocks.append(flows)
+            return blocks
 
-        menu_table = Table([[build_column(left_keys), build_column(right_keys)]], colWidths=[277.5, 277.5])
+        left_blocks = build_column_blocks(left_keys)
+        right_blocks = build_column_blocks(right_keys)
+        row_count = max(len(left_blocks), len(right_blocks), 1)
+        menu_rows = [
+            [left_blocks[i] if i < len(left_blocks) else [Paragraph("", item_style)],
+             right_blocks[i] if i < len(right_blocks) else [Paragraph("", item_style)]]
+            for i in range(row_count)
+        ]
+        menu_table = Table(menu_rows, colWidths=[277.5, 277.5], splitByRow=1, hAlign="LEFT")
         menu_table.setStyle(TableStyle([
-            ("BOX", (0, 0), (-1, -1), 0.65, colors.HexColor("#222222")),
-            ("LINEAFTER", (0, 0), (0, -1), 0.35, colors.HexColor("#D6D6D6")),
+            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#222222")),
+            ("LINEBEFORE", (1, 0), (1, -1), 0.45, colors.HexColor("#D6D6D6")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9), ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))
         story.append(menu_table)
 
@@ -3891,13 +4095,13 @@ def build_order_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
             ("BOX", (0, 0), (-1, -1), 0.9, colors.HexColor("#333333")),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FFF2BF")),
             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))])
     if customer_notes:
         story.extend([Spacer(1, 5), Paragraph("CUSTOMER NOTES", note_label), Spacer(1, 2), Table([[Paragraph(_pdf_text(customer_notes), address_style)]], colWidths=[555], style=TableStyle([
             ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#555555")),
             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 7), ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))])
 
     doc.build(story)
@@ -3909,9 +4113,9 @@ def build_order_pdf_fallback(order: QuoteRequest, biz: BusinessSettings) -> byte
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=22, leftMargin=22, topMargin=20, bottomMargin=20, title=f"Kitchen Sheet {getattr(order, 'order_number', '')}")
     styles = getSampleStyleSheet()
-    small = ParagraphStyle("KitchenFallbackSmall14_18", parent=styles["BodyText"], fontSize=7.2, leading=8.5)
+    small = ParagraphStyle("KitchenFallbackSmall14_18", parent=styles["BodyText"], fontSize=9.5, leading=12)
     bold = ParagraphStyle("KitchenFallbackBold14_18", parent=small, fontName="Helvetica-Bold")
-    title = ParagraphStyle("KitchenFallbackTitle14_18", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=15, leading=16)
+    title = ParagraphStyle("KitchenFallbackTitle14_18", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=20, leading=23)
     story: list[Any] = [Paragraph("Kitchen / Catering Sheet", small), Paragraph(_pdf_text(getattr(biz, "company_name", "") or "SPICE INDIA"), title), Paragraph(_pdf_text(getattr(order, "order_number", "")), bold), Spacer(1, 4)]
     customer = getattr(order, "customer", None)
     event_date = getattr(order, "event_date", None)
@@ -3974,12 +4178,12 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
     invoice_date = (order.invoice_sent_at or order.confirmed_at or order.updated_at or order.created_at).date()
     status = invoice_status(order)
 
-    company_lines = [Paragraph(company, title)]
+    company_lines = [Paragraph(html.escape(company), title)]
     if biz.address:
-        company_lines.append(Paragraph(biz.address, body))
+        company_lines.append(Paragraph(html.escape(biz.address), body))
     contact = " · ".join([x for x in [biz.phone, biz.email] if x])
     if contact:
-        company_lines.append(Paragraph(contact, small))
+        company_lines.append(Paragraph(html.escape(contact), small))
 
     invoice_meta = Table([
         [Paragraph("INVOICE", small), Paragraph(invoice_no, body)],
@@ -4019,14 +4223,14 @@ def build_invoice_pdf(order: QuoteRequest, biz: BusinessSettings) -> bytes:
 
     menu_lines = []
     for menu_name, categories in order_groups(order).items():
-        menu_lines.append(Paragraph(f"<b>{menu_name}</b>", body))
+        menu_lines.append(Paragraph(f"<b>{html.escape(menu_name)}</b>", body))
         for cat_name, subs in categories.items():
             items = [item.item_name + ((" — " + item.customer_comment) if (getattr(item, "customer_comment", "") or "").strip() else "") for sub_items in subs.values() for item in sub_items]
             if items:
-                menu_lines.append(Paragraph(f"<b>{cat_name}:</b> " + ", ".join(items), body))
+                menu_lines.append(Paragraph(f"<b>{html.escape(cat_name)}:</b> " + ", ".join(html.escape(x) for x in items), body))
     approved = [dish.name for dish in order.requested_dishes if dish.status == "approved"]
     if approved:
-        menu_lines.append(Paragraph("<b>Approved special requests:</b> " + ", ".join(approved), body))
+        menu_lines.append(Paragraph("<b>Approved special requests:</b> " + ", ".join(html.escape(x) for x in approved), body))
     if not menu_lines:
         menu_lines.append(Paragraph("Confirmed catering order", body))
     story.extend(menu_lines)
