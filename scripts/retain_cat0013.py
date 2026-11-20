@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, MetaData, String, Table, Text, func, insert, select, text
+from sqlalchemy import Column, DateTime, MetaData, String, Table, Text, func, insert, inspect, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import engine, SessionLocal
@@ -22,7 +22,12 @@ from app.models import (BusinessSettings, Customer, QuoteRequest, QuoteItem,
 KEEP_NUMBER = "CAT0013"
 NEW_NUMBER = "CAT0001"  # Existing app's canonical first order; NOT CAT001.
 NEW_CUSTOMER = "CUS-00001"
-CONFIRM = "KEEP CAT0013 AS CAT0001 DELETE ALL OTHER ACTIVE DATA"
+CONFIRM = "RESET CAT0013"
+EXPECTED_DATABASE = "catering_db_l619"
+EXPECTED_HOST = "dpg-dakle5vqj5pc73bk1ne0-a"
+EXPECTED_CUSTOMER = "sruthi"
+EXPECTED_EVENT = "pooja"
+EXPECTED_EVENT_DATE = date(2026, 11, 22)
 
 TABLES = {
     "customers": Customer, "orders": QuoteRequest, "quote_items": QuoteItem,
@@ -51,8 +56,10 @@ def keeper(db: Session):
     if not order:
         raise RuntimeError("STOP: CAT0013 is not in this database. Nothing changed.")
     customer = order.customer
-    if not customer or not customer.name.strip() or not order.event_name.strip() or not order.event_date:
-        raise RuntimeError("STOP: CAT0013 has missing customer/event details.")
+    if (not customer or customer.name.strip().casefold() != EXPECTED_CUSTOMER
+            or order.event_name.strip().casefold() != EXPECTED_EVENT
+            or order.event_date != EXPECTED_EVENT_DATE):
+        raise RuntimeError("STOP: CAT0013 does not match Sruthi's Pooja booking on 2026-11-22. Nothing changed.")
     return order, customer
 
 
@@ -92,8 +99,6 @@ def reset(db: Session, expected_counts: dict, expected_keep_id: int, expected_id
     identity = f"{customer.name.strip()} | {keep.event_name.strip()} | {keep.event_date.isoformat()}"
     if identity != expected_identity:
         raise RuntimeError("STOP: kept customer/event/date changed. No reset.")
-    if db.scalar(select(QuoteRequest.id).where(QuoteRequest.order_number == NEW_NUMBER)) is None:
-        pass  # new number unused is fine
     historical = snapshot(db)
     for label in TABLES:
         if len(historical[label]) != before[label]:
@@ -158,6 +163,34 @@ def reset(db: Session, expected_counts: dict, expected_keep_id: int, expected_id
     return archive_id, after
 
 
+def reset_verified(db: Session) -> tuple[bool, dict, str]:
+    """Exact post-reset checks. Never call a pre-existing CAT0001 a successful reset."""
+    active = counts(db)
+    kept = db.scalar(select(QuoteRequest).where(QuoteRequest.order_number == NEW_NUMBER)
+                     .options(selectinload(QuoteRequest.customer)))
+    settings = db.get(BusinessSettings, 1)
+    good = (active['customers'] == 1 and active['orders'] == 1
+            and active['payments'] == active['expenses'] == active['expense_payments'] == 0
+            and kept is not None and kept.customer is not None
+            and kept.customer.name.strip().casefold() == EXPECTED_CUSTOMER
+            and kept.event_name.strip().casefold() == EXPECTED_EVENT
+            and kept.event_date == EXPECTED_EVENT_DATE
+            and kept.customer.customer_number == NEW_CUSTOMER
+            and settings is not None and settings.next_order_sequence == 2)
+    if good:
+        if not inspect(db.connection()).has_table(archive.name):
+            good = False
+        else:
+            # Verify this specific order was archived before its renumbering.
+            snapshots = db.scalars(select(archive.c.payload_json)).all()
+            good = any(
+                (payload.get('source_order') == KEEP_NUMBER and
+                 payload.get('retained_order_id') == kept.id)
+                for payload in (json.loads(v) for v in snapshots)
+            )
+    return good, active, (kept.event_name if kept else 'MISSING')
+
+
 def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -167,20 +200,18 @@ def main():
     args = parser.parse_args()
     if engine.dialect.name != "postgresql" or not os.getenv("DATABASE_URL"):
         raise SystemExit("STOP: Requires configured production PostgreSQL; no change made.")
+    if engine.url.database != EXPECTED_DATABASE or engine.url.host != EXPECTED_HOST:
+        raise SystemExit("STOP: Unexpected database host/name. Nothing changed.")
     with SessionLocal() as db:
         try:
             if args.verify:
-                after = counts(db)
-                retained = db.scalar(select(QuoteRequest).where(QuoteRequest.order_number == NEW_NUMBER))
+                success, after, event_name = reset_verified(db)
                 print("Database:", engine.url.database, "Host:", engine.url.host)
                 print("ACTIVE COUNTS:", after)
-                print("RETAINED CAT0001:",
-                      bool(retained and retained.customer),
-                      "Event:", retained.event_name if retained else None,
-                      "Date:", retained.event_date if retained else None)
-                biz = db.get(BusinessSettings, 1)
-                print("NEXT ORDER SEQUENCE:", biz.next_order_sequence if biz else "MISSING")
-                print("VERIFY ONLY: Nothing modified.")
+                print("Kept event:", event_name)
+                if not success:
+                    raise SystemExit("NOT RESET: Sruthi's booking is not the sole active order CAT0001. Nothing modified.")
+                print("VERIFIED: CAT0001 belongs to Sruthi, Pooja 2026-11-22; next is CAT0002.")
                 return
             target, target_customer = keeper(db)
             old = counts(db)
@@ -199,19 +230,18 @@ def main():
             backup = input("Type BACKUP VERIFIED to confirm: ").strip()
             if backup != "BACKUP VERIFIED":
                 raise SystemExit("Cancelled: backup not confirmed.")
-            expected_db = input("Type exact production database name shown above: ").strip()
-            if expected_db != engine.url.database:
-                raise SystemExit("Cancelled: database name mismatch.")
-            verified_identity = input("Type the CUSTOMER | EVENT | DATE text shown on KEEP line: ").strip()
-            if verified_identity != identity:
-                raise SystemExit("Cancelled: kept booking identity did not match.")
-            answer = input("Type: " + CONFIRM + "\n> ").strip()
+            # Database and booking identity are checked by code, not manually typed.
+            print("Confirmed booking:", identity)
+            answer = input("To archive other records and keep only this booking, type " + CONFIRM + ": ").strip()
             if answer != CONFIRM:
                 raise SystemExit("Cancelled: confirmation mismatch.")
             archive_id, after = reset(db, old, target.id, identity)
             db.commit()
-            print("SUCCESS - active tables reset:", after)
-            print("Kept CAT0001, next CAT0002; archived old records:", archive_id)
+            passed, verified_counts, _ = reset_verified(db)
+            if not passed:
+                raise SystemExit("RESET FINISHED BUT POST-RESET VERIFICATION FAILED: stop and review database.")
+            print("SUCCESS - active tables reset:", verified_counts)
+            print("Kept Sruthi as CAT0001, next CAT0002; archived old records:", archive_id)
         except Exception:
             db.rollback()
             raise
