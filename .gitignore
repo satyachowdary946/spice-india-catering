@@ -6,3 +6,7 @@ venv/
 catering.db
 .pytest_cache/
 .DS_Store
+
+# Disposable test database: never commit customer/test records
+/tests/test_catering.db
+/tests/test_catering.db-*

@@ -183,6 +183,18 @@ def test_build8_mobile_workflow():
         assert q3.status_code == 200, q3.text
         assert q3.json()["order_number"] == "CAT0003"
 
+        # Individual order deletion may no longer destroy customer enquiries.
+        order_page = client.get('/admin/orders/1')
+        assert 'Permanently Delete' not in order_page.text
+        denied = client.post('/admin/orders/1/delete', data={
+            'csrf_token': csrf_from(order_page.text),
+            'confirmation': b1['order_number'],
+        })
+        assert denied.status_code == 403
+        with SessionLocal() as db:
+            from app.models import QuoteRequest
+            assert db.scalar(select(QuoteRequest).where(QuoteRequest.order_number == b1['order_number'])) is not None
+
         # Tracking now verifies BOTH order number and phone to protect private order tokens.
         tracked = client.post("/track", data={"order_number": b1["order_number"], "phone": "0891234567"}, follow_redirects=False)
         assert tracked.status_code == 303
@@ -194,6 +206,10 @@ def test_build8_mobile_workflow():
         assert "enter BOTH" in single_id.text
 
         orders = client.get("/admin/orders")
+        # A committed new quote must appear on the Admin Orders screen.
+        assert b1["order_number"] in orders.text
+        assert b2["order_number"] in orders.text
+        assert q3.json()["order_number"] in orders.text
         assert "Contacted" not in orders.text
         assert "Negotiating" not in orders.text
         assert "Request From" in orders.text and "Request To" in orders.text
@@ -807,51 +823,3 @@ def test_build1432_exact_mobile_and_security_guards():
         # 12 submissions per 15 minutes on the public creation endpoint.
         statuses = [client.post('/api/quotes', json={}).status_code for _ in range(12)]
         assert 429 in statuses
-
-
-def test_build1432_reset_is_manual_and_protects_financial_history():
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-    from app.db import Base
-    from app.models import Customer, QuoteRequest, Payment, BusinessSettings
-    from scripts.reset_customer_orders import delete_customer_orders, reset_counts, reset_allowed
-    from datetime import date, time
-    import pytest
-
-    isolated_engine = create_engine('sqlite://')
-    Base.metadata.create_all(isolated_engine)
-    with Session(isolated_engine, expire_on_commit=False) as db:
-        db.add(BusinessSettings(id=1, next_order_sequence=3))
-        customer = Customer(customer_number='CUS-00001', name='Temporary Test', phone='0891234567')
-        db.add(customer); db.flush()
-        order = QuoteRequest(
-            order_number='CAT0001', public_token='test-reset-1', customer_id=customer.id,
-            event_name='Test', event_date=date.today(), event_time=time(12),
-            address='Somewhere', eircode='N37K5P3', status='new',
-        )
-        db.add(order); db.commit()
-        counts = reset_counts(db)
-        assert counts['customers'] == 1 and counts['orders'] == 1
-        assert reset_allowed(counts)
-        result = delete_customer_orders(db)
-        assert result['orders'] == 1
-        assert reset_counts(db)['orders'] == 0
-        assert reset_counts(db)['customers'] == 0
-        assert db.get(BusinessSettings, 1).next_order_sequence == 1
-
-        customer = Customer(customer_number='CUS-00002', name='Paid Test', phone='0891234567')
-        db.add(customer); db.flush()
-        order = QuoteRequest(
-            order_number='CAT0002', public_token='test-reset-2', customer_id=customer.id,
-            event_name='Test', event_date=date.today(), event_time=time(12),
-            address='Somewhere', eircode='N37K5P3', status='confirmed',
-        )
-        db.add(order); db.flush()
-        db.add(Payment(order_id=order.id, amount=10, payment_date=date.today()))
-        db.commit()
-        assert not reset_allowed(reset_counts(db))
-        with pytest.raises(RuntimeError, match='REFUSED'):
-            delete_customer_orders(db)
-        db.rollback()
-        assert reset_counts(db)['orders'] == 1
-    isolated_engine.dispose()

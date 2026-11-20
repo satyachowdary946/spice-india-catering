@@ -4,6 +4,7 @@ import io
 import html
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -273,85 +274,10 @@ def startup() -> None:
     ensure_schema_compatibility()
     with SessionLocal() as db:
         ensure_seed_data(db)
-        # Historical v14.21/v14.22 destructive cleanups are intentionally NOT
-        # run at application startup. Data resets require a separate operator action.
+        # Never delete customers, orders, or financial rows on startup/deployment.
+        # Historical cleanup functions are removed; use the operator-only CLI.
         initialise_order_sequence(db)
 
-
-
-def apply_live_order_cleanup_v1421(db: Session) -> bool:
-    """One-time production cleanup requested for Build 14.21.
-
-    Safety guard: only runs when the two specifically retained live orders are still
-    present at their known database IDs and public order numbers. If that guard does
-    not match, nothing is deleted and the migration remains pending.
-    """
-    biz = business(db)
-    if bool(getattr(biz, "live_order_cleanup_v1421_completed", False)):
-        return False
-
-    keep_1 = db.get(QuoteRequest, 29)  # CAT0019 · Roopesh Bharatwaj KR
-    keep_2 = db.get(QuoteRequest, 30)  # CAT0020 · SAJU
-    if not keep_1 or not keep_2 or keep_1.order_number != "CAT0019" or keep_2.order_number != "CAT0020":
-        print("Build 14.21 order cleanup NOT run: expected live orders 29/CAT0019 and 30/CAT0020 were not both found.")
-        return False
-
-    all_orders = db.scalars(select(QuoteRequest)).all()
-    for order in all_orders:
-        if order.id not in {29, 30}:
-            db.delete(order)
-    # Flush deletions first so old CAT0001/CAT0002 rows cannot conflict with the new numbers.
-    db.flush()
-
-    keep_1.order_number = "CAT0001"
-    keep_2.order_number = "CAT0002"
-    biz.next_order_sequence = 3
-    biz.orders_reset_completed = True
-    biz.live_order_cleanup_v1421_completed = True
-    db.commit()
-    print("Build 14.21 order cleanup completed: retained CAT0019→CAT0001 and CAT0020→CAT0002; next order CAT0003.")
-    return True
-
-def apply_live_customer_cleanup_v1422(db: Session) -> bool:
-    """One-time production customer cleanup requested for Build 14.22.
-
-    Safety guard: only runs after the Build 14.21 order cleanup and only when the
-    retained live order IDs still map to CAT0001 / CAT0002 and their known
-    customer numbers. All unrelated customer rows are removed, then the two
-    retained customers are renumbered to match their retained orders.
-    """
-    biz = business(db)
-    if bool(getattr(biz, "live_customer_cleanup_v1422_completed", False)):
-        return False
-
-    order_1 = db.get(QuoteRequest, 29)  # Roopesh -> CAT0001
-    order_2 = db.get(QuoteRequest, 30)  # SAJU -> CAT0002
-    all_order_ids = set(db.scalars(select(QuoteRequest.id)).all())
-    if (
-        not order_1 or not order_2
-        or all_order_ids != {29, 30}
-        or order_1.order_number != "CAT0001"
-        or order_2.order_number != "CAT0002"
-        or not order_1.customer or not order_2.customer
-        or order_1.customer.customer_number != "CUS-00017"
-        or order_2.customer.customer_number != "CUS-00018"
-    ):
-        print("Build 14.22 customer cleanup NOT run: expected only CAT0001/CUS-00017 and CAT0002/CUS-00018 were not found exactly.")
-        return False
-
-    keep_customer_ids = {order_1.customer_id, order_2.customer_id}
-    for customer in db.scalars(select(Customer)).all():
-        if customer.id not in keep_customer_ids:
-            db.delete(customer)
-    # Flush deletions so legacy CUS-00001 / CUS-00002 rows cannot conflict.
-    db.flush()
-
-    order_1.customer.customer_number = "CUS-00001"
-    order_2.customer.customer_number = "CUS-00002"
-    biz.live_customer_cleanup_v1422_completed = True
-    db.commit()
-    print("Build 14.22 customer cleanup completed: retained customers renumbered to CUS-00001 / CUS-00002.")
-    return True
 
 
 def customer_number_for_order(order_number: str) -> str:
@@ -1255,11 +1181,11 @@ async def send_customer_status_email_for_order(
 
 
 def public_order_url(request: Request, token: str) -> str:
-    return (os.getenv("PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/") + f"/orders/{token}"
+    return (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or str(request.base_url)).rstrip("/") + f"/orders/{token}"
 
 
 def admin_order_url(request: Request, order_id: int) -> str:
-    return (os.getenv("PUBLIC_BASE_URL") or str(request.base_url)).rstrip("/") + f"/admin/orders/{order_id}"
+    return (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or str(request.base_url)).rstrip("/") + f"/admin/orders/{order_id}"
 
 
 @app.exception_handler(401)
@@ -1428,22 +1354,30 @@ def review(request: Request, db: Session = Depends(get_db)):
 async def create_quote(request: Request, db: Session = Depends(get_db)):
     if len(await request.body()) > 65536:
         return JSONResponse({"ok": False, "error": "Quote request is too large."}, status_code=413)
-    fingerprint = _security_fingerprint(request, "public-quote", "create")
+    # Rate-limit invalid attempts without counting successfully persisted orders
+    # as failures. A shared network must not be locked out by legitimate requests.
+    fingerprint = _security_fingerprint(request, "public-quote-invalid", "create")
+    accepted_fingerprint = _security_fingerprint(request, "public-quote-accepted", "create")
     if _attempt_limited(db, fingerprint, max_attempts=12):
-        return JSONResponse({"ok": False, "error": "Too many quote requests. Please try again in 15 minutes."}, status_code=429)
-    _record_failed_attempt(db, fingerprint)
+        return JSONResponse({"ok": False, "error": "Too many invalid quote submissions. Please try again in 15 minutes."}, status_code=429)
+    if _attempt_limited(db, accepted_fingerprint, max_attempts=30):
+        return JSONResponse({"ok": False, "error": "Quote submission limit reached. Please try again later or contact us directly."}, status_code=429)
     try:
         payload = await request.json()
     except Exception:
+        _record_failed_attempt(db, fingerprint)
         return JSONResponse({"ok": False, "error": "Invalid request data."}, status_code=400)
 
     if not isinstance(payload, dict):
+        _record_failed_attempt(db, fingerprint)
         return JSONResponse({"ok": False, "error": "Quote request must be a JSON object."}, status_code=400)
     details = payload.get("details")
     item_ids = payload.get("item_ids") or []
     if not isinstance(details, dict) or not isinstance(item_ids, list) or len(item_ids) > 200:
+        _record_failed_attempt(db, fingerprint)
         return JSONResponse({"ok": False, "error": "Invalid customer or item data."}, status_code=400)
     if "requested_dishes" in payload and not isinstance(payload["requested_dishes"], list):
+        _record_failed_attempt(db, fingerprint)
         return JSONResponse({"ok": False, "error": "Invalid requested dish data."}, status_code=400)
     raw_item_comments = payload.get("item_comments") or {}
     raw_item_variants = payload.get("item_variants") or {}
@@ -1545,6 +1479,7 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
         errors["items"] = "Add at least one menu item or request a dish."
 
     if errors:
+        _record_failed_attempt(db, fingerprint)
         return JSONResponse({"ok": False, "errors": errors, "error": "Please fix the following details."}, status_code=422)
 
     items = db.scalars(
@@ -1646,44 +1581,59 @@ async def create_quote(request: Request, db: Session = Depends(get_db)):
             status_code=500,
         )
     db.refresh(order)
+    # Do not log customer contact details or tokens. This line helps distinguish
+    # a successful database commit from notification delivery and later deletion.
+    logging.getLogger("uvicorn.error").info("Quote persisted: order=%s row_id=%s", order.order_number, order.id)
+    try:
+        _record_failed_attempt(db, accepted_fingerprint)
+    except Exception:
+        logging.exception("Failed to update accepted quote throttle after save")
+    # A notification provider must never turn a committed order into an apparent
+    # HTTP failure, which prompts customers to retry and creates duplicates.
+    try:
+        _clear_attempts(db, fingerprint)
+    except Exception:
+        logging.exception("Failed to clear quote validation throttle after save")
 
-    sent, notify_message = await notify_admin_new_quote(
-        order.order_number,
-        customer.name,
-        adults + kids,
-        admin_order_url(request, order.id),
+    async def _notify_safely(label: str, awaitable):
+        try:
+            return await awaitable
+        except Exception:
+            logging.exception("Post-commit %s notification failed for order id=%s", label, order.id)
+            return False, "Order saved, but notification delivery failed."
+
+    sent, notify_message = await _notify_safely(
+        "admin WhatsApp",
+        notify_admin_new_quote(
+            order.order_number, customer.name, adults + kids,
+            admin_order_url(request, order.id),
+        ),
     )
-    email_sent, email_message = await notify_admin_new_quote_email(
-        order.order_number,
-        customer.name,
-        customer.phone,
-        order.event_name,
-        order.event_date.strftime("%d %b %Y"),
-        event_day(order),
-        order.event_time.strftime("%I:%M %p").lstrip("0"),
-        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "",
-        adults + kids,
-        admin_order_url(request, order.id),
-        admin_notification_emails(db),
+    email_sent, email_message = await _notify_safely(
+        "admin email",
+        notify_admin_new_quote_email(
+            order.order_number, customer.name, customer.phone, order.event_name,
+            order.event_date.strftime("%d %b %Y"), event_day(order),
+            order.event_time.strftime("%I:%M %p").lstrip("0"),
+            order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "",
+            adults + kids, admin_order_url(request, order.id),
+            admin_notification_emails(db),
+        ),
     )
     selected_names = [item_by_id[item_id].name for item_id in unique_ids if item_id in item_by_id]
     received_local = local_datetime(order.created_at)
-    customer_email_sent, customer_email_message = await notify_customer_request_received_email(
-        customer.email,
-        customer.name,
-        order.order_number,
-        order.event_name,
-        order.event_date.strftime("%d %b %Y"),
-        event_day(order),
-        order.event_time.strftime("%I:%M %p").lstrip("0"),
-        order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
-        adults,
-        kids,
-        selected_names + requested_dishes,
-        public_order_url(request, order.public_token),
-        received_local.strftime("%d %b %Y · %H:%M") if received_local else "",
-        business(db).phone,
-        f"{order.address}, {order.eircode}".strip(", "),
+    customer_email_sent, customer_email_message = await _notify_safely(
+        "customer email",
+        notify_customer_request_received_email(
+            customer.email, customer.name, order.order_number, order.event_name,
+            order.event_date.strftime("%d %b %Y"), event_day(order),
+            order.event_time.strftime("%I:%M %p").lstrip("0"),
+            order.delivery_time.strftime("%I:%M %p").lstrip("0") if order.delivery_time else "—",
+            adults, kids, selected_names + requested_dishes,
+            public_order_url(request, order.public_token),
+            received_local.strftime("%d %b %Y · %H:%M") if received_local else "",
+            business(db).phone, f"{order.address}, {order.eircode}".strip(", "),
+        ),
     )
     return {
         "ok": True,
@@ -3049,14 +2999,13 @@ def admin_order_detail(order_id: int, request: Request, db: Session = Depends(ge
         void_block_reason = "This order has payments, expenses or invoice history and cannot be voided. Use Cancelled instead."
     else:
         void_block_reason = ""
-    can_delete = not order.payments and not order.expenses and not order.invoice_sent_at
     catalog_items = [item for item in canonical_import_items(db) if item.active]
     return render(
         request, db, "admin/order_detail.html", admin=admin, order=order, groups=order_groups(order),
         statuses=EDITABLE_STATUSES, public_url=purl, whatsapp_share_url=whatsapp_share_url,
         customer_whatsapp_url=customer_whatsapp_url, mailto_url=mailto_url,
         finance=finance_summary(order), pricing=pricing_breakdown(order),
-        can_void=can_void, can_delete=can_delete, void_reason_options=VOID_REASON_OPTIONS,
+        can_void=can_void, void_reason_options=VOID_REASON_OPTIONS,
         void_block_reason=void_block_reason,
         customer_changes=read_customer_quote_changes(order),
         changed_ids={str(x.get("id")) for x in (read_customer_quote_changes(order) or {}).get("added", [])},
@@ -3873,34 +3822,22 @@ def admin_order_void(
 
 
 @app.post("/admin/orders/{order_id}/delete")
-def admin_order_delete(
+def admin_order_delete_disabled(
     order_id: int,
     request: Request,
-    confirmation: str = Form(...),
     csrf_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    """Prevent accidental permanent deletion of customer enquiries.
+
+    Intentionally retains a denial endpoint so historical forms/bookmarks cannot
+    delete orders. Use void/cancel instead, or the offline archive-first reset.
+    """
     admin, redirect = admin_or_redirect(request, db)
     if redirect:
         return redirect
     check_csrf(request, csrf_token)
-    order = db.scalar(
-        select(QuoteRequest)
-        .where(QuoteRequest.id == order_id)
-        .options(selectinload(QuoteRequest.payments), selectinload(QuoteRequest.expenses))
-    )
-    if not order:
-        raise HTTPException(status_code=404)
-    if order.payments or order.expenses or order.invoice_sent_at:
-        return RedirectResponse(
-            f"/admin/orders/{order_id}?error=This+order+has+financial+or+invoice+history+and+cannot+be+permanently+deleted",
-            status_code=303,
-        )
-    if confirmation.strip().upper() != order.order_number.upper():
-        return RedirectResponse(f"/admin/orders/{order_id}?error=Type+the+exact+order+ID+to+delete+it", status_code=303)
-    db.delete(order)
-    db.commit()
-    return RedirectResponse("/admin/orders?deleted=1", status_code=303)
+    raise HTTPException(status_code=403, detail="Permanent order deletion is disabled. Use Void or Cancelled instead.")
 
 
 @app.post("/admin/requested-dishes/{dish_id}")

@@ -10,10 +10,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import BusinessSettings, Customer, Expense, ExpensePayment, Menu, Payment, QuoteItem, QuoteRequest, StatusHistory
-from scripts.archive_reset_customer_orders import (
+from scripts.reset_active_data import (
     ARCHIVE_TABLE, archive_and_reset, can_archive_reset, snapshot,
 )
-from scripts.reset_customer_orders import reset_counts
+from scripts.reset_active_data import reset_counts
 
 
 def database():
